@@ -79,9 +79,35 @@ The Discovery & Action Loops
 Tauri v2
 
 ## Frontend Layer
-- **Language:** TypeScript
+- **Language:** Rust
 - **UI Library:** React
 - **Build Engine:** Vite
+- **Core Component Foundations:** shadcn/ui + Tailwind CSS
+- **Iconography:** Lucide React (Native companion library for shadcn primitives)
+- **Asynchronous State & Cache Engine:** TanStack Query (React Query - Orchestrates asynchronous IPC bridge calls and cache invalidation)
+- **Date Formatting:** date-fns
+- **Data & Grid Engines:** 
+  - TanStack Table (Headless sorting, filtering, and table state)
+  - TanStack Virtual (DOM virtualization to prevent memory bloat on large datasets)
+- **Geospatial & Mapping:**
+  - MapLibre GL JS (WebGL/WebGPU accelerated engine for local data layers and real-time canvas rendering)
+  - OpenFreeMap (Zero-tracking, API-keyless public OpenStreetMap vector tiles for high-precision street and shop basemaps)
+- **Media Optimization:** 
+  - Tauri Native Custom Asset Protocol (`asset://` URI engine for zero-clone, local-disk media streaming)
+  - Interfaced with TanStack Virtual for smooth, un-cached 60fps photo-grid scrolling
+- **Data Visualization:** Recharts
+- **Form & Input Validation:** React Hook Form + Zod (Strict schema validation for settings and document generation)
+- **Localization:** Native Intl APIs
+- **i18n:** i18next + react-i18next
+- **Testing:** 
+  - **Component Level:** Vitest + React Testing Library + @tauri-apps/api/mocks
+  - **E2E Fast Loop:** Playwright (Headless web-mode emulation)
+  - **E2E Native Loop:** WebDriverIO + @wdio/tauri-service (Production binary automation)
+
+# Backend
+- **Language:** TypeScript
+- **Database driver:** r2d2 + r2d2_sqlite
+- **Hashing:** argon2
 - **Core Component Foundations:** shadcn/ui + Tailwind CSS
 - **Iconography:** Lucide React (Native companion library for shadcn primitives)
 - **Asynchronous State & Cache Engine:** TanStack Query (React Query - Orchestrates asynchronous IPC bridge calls and cache invalidation)
@@ -109,8 +135,63 @@ IPC Bridge: Tauri Context
 Backend: Rust
 Storage: SQLite Database
 
+Authentication and encryption:
+We use the Envelope Encryption for authentication (authn) and data security.
+Data Encryption Key (DEK): key used to encrypt data itself 
+Key Encryption Key (KEK): key used to encrypt (or wrap) the DEK. The process of encrypting a key with another key is known as envelope encryption
+
+Key rotation:
+KEK:
+Cost: low (no db write)
+Strategy: upon passphrase change, suspected incident, app maintenance
+DEK:
+Cost: high (full db rewrite)
+Strategy: event driven rotation, upon suspected incident, backup (each backup should have its own DEK), major migration
 
 
+┌────────────────────────────────────────────────────────┐
+│             Profile Creation (One-Time Setup)          │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                            ▼
+        Generate Random 256-bit MEK (Database Key)
+                            │
+            ┌───────────────┴───────────────┐
+            ▼                               ▼
+ [Passphrase + Argon2id]         [Recovery Code + Argon2id]
+            │                               │
+            ▼                               ▼
+    Produces Key A                  Produces Key B
+            │                               │
+            ▼                               ▼
+ Encrypts MEK -> Slot 1          Encrypts MEK -> Slot 2
+
+
+Authentication Model: Streamlined Single-Factor Master Passphrase (Argon2id + SQLCipher) with optional OS-level Biometric Quick-Unlock (Touch ID / Windows Hello via tauri-plugin-biometric). No cloud or TOTP MFA required.
+
+Master Passphrase + Argon2id (Mandatory Core):
+
+    This is the single mathematical key that encrypts and decrypts the database.
+
+    As long as the user picks a decent passphrase, SQLCipher is uncrackable offline.
+
+Biometric / Hardware Quick-Unlock (Optional UX Convenience):
+
+    Do not use Touch ID / Windows Hello as a forced second factor. Use it as an optional convenience token.
+
+    The user enters their long passphrase once when setting up the app. The derived key is stored securely in the OS Secure Enclave / TPM chip.
+
+    On day-to-day app launches or after a 5-minute idle timeout, the user simply taps Touch ID or scans Windows Hello to unlock the vault instantly, without typing their 20-character passphrase every time.
+
+
+### Key Envelope & Account Recovery
+- **Key Architecture:** Master Encryption Key (MEK) Envelope pattern.
+  - SQLCipher is encrypted using a random 256-bit MEK.
+  - MEK is dual-wrapped using AES-256-GCM and stored in `profile_header.json`:
+    - **Slot 1 (Passphrase):** Wrapped using `Argon2id(Passphrase, Salt)`.
+    - **Slot 2 (Recovery):** Wrapped using `Argon2id(BIP-39 Seed Phrase, Salt)`.
+- **Passphrase Reset:** Decrypting Slot 2 via the 24-word Recovery Kit reveals the MEK, enabling zero-re-encryption passphrase updates.
+- **Data Loss Boundary:** Zero-knowledge model. Loss of both Passphrase and Recovery Kit renders the database irrecoverable. Users retain the option to delete the profile container and re-ingest raw local source files (`.zip`/`.json`).
 
 
 # Third party tools
@@ -190,3 +271,7 @@ authn and authz:
 
 Open questions:
 - How can I get my tracker data stored in the cloud?
+
+
+References:
+https://docs.cloud.google.com/kms/docs/envelope-encryption
