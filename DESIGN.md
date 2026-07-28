@@ -1,79 +1,3 @@
-
-The Archive Ingestion Pipeline
-```text
-                     [Local Data Archives]
-                     (Google, Spotify .zip)
-                               │
-                               ▼
-                         [DropZone UI]
-                      (Vite + React / TS)
-                               │
-                               ▼
-                       [Tauri IPC Bridge]
-                     (Validated Local Path)
-                               │
-                               ▼
-                        [Command Router]
-                         (Rust Backend)
-                               │
-                               ▼
-                       [Stream Unzipper]
-                     (In-Memory Buffers)
-                               │
-                               ▼
-                       [Serde ETL Parser]
-                     (Dogsheep-mapped Logic)
-                               │
-                               ▼
-                     [Local SQLite Database]
-```
-
-The Discovery & Action Loops
-```text
-                     [Dashboard Interface]
-                               │
-     ┌─────────────────────────┴─────────────────────────┐
-     ▼                                                   ▼
-[Trigger Discovery Scan]                          [Request GDPR Erasure]
-     │                                                   │
-     ▼                                                   ▼
-[Tauri IPC Bridge]                                [Tauri IPC Bridge]
-     │                                                   │
-     ▼                                                   ▼
-[Paperweight Sidecar]                             [Query Local Registry]
- (Local IMAP Binary)                              (Datenanfragen Data)
-     │                                                   │
-     ▼                                                   ▼
-[Extract Sender Headers]                          [Rust Mailer Component]
-     │                                                   │
-     ▼                                                   ▼
-[Local SQLite Database]                          [Native OS Mail Client]
- (Populates Inventory)                           (Prefilled French Text)
-```
-
-
-## Architectural Subsystems Breakdown
-
-### 1. Frontend Layer (Vite + React / TypeScript)
-* Run entirely within the native operating system's Webview container (WebKit on macOS, WebView2 on Windows).
-* Responsibilities include rendering the unified footprint analytics dashboard, handling file system drag-and-drop hooks for corporate archives, and executing full-text search filters.
-
-### 2. Inter-Process Communication (IPC) Bridge
-* Uses Tauri's strict, compile-time whitelisting to expose system capabilities to the frontend frontend using a secure message-passing architecture. 
-* Prevents arbitrary code execution by scoping file access exclusively to user-selected paths.
-
-### 3. Native Core Layer (Rust)
-* **In-Memory Stream Unzipper:** Efficiently opens large user archives (e.g., multi-gigabyte Google Takeouts) and streams file buffers directly to memory without clogging the disk.
-* **ETL Engine (Serde):** Translates raw, unstandardized JSON data arrays (modeled after open-source Dogsheep blueprints) into explicit structures optimized for transactional databases.
-* **OS Intent Client:** Maps company profiles to generated text complying with French GDPR standards, initiating a secure local `mailto:` handler to hand off execution to the user's native email application.
-
-### 4. Storage Layer (SQLite Embedded)
-* Stored as a single flat file in the application's local user data folder. 
-* **Datenanfragen Registry:** Pre-seeded via static build schemas tracking corporate Data Protection Officer (DPO) points of contact.
-* **Ingested Service Data:** Dynamically structured relational tables grouping communication logs, location data, and tracking metrics extracted from verified third-party exports.
-
-
-
 # Tech stack
 ## App Shell & Packaging Engine
 Tauri v2
@@ -104,70 +28,43 @@ Tauri v2
   - **E2E Fast Loop:** Playwright (Headless web-mode emulation)
   - **E2E Native Loop:** WebDriverIO + @wdio/tauri-service (Production binary automation)
 
-# Backend
-- **Language:** TypeScript
+## Backend
+- **Language:** Rust
 - **Database driver:** r2d2 + r2d2_sqlite
-- **Hashing:** argon2
-- **Core Component Foundations:** shadcn/ui + Tailwind CSS
-- **Iconography:** Lucide React (Native companion library for shadcn primitives)
-- **Asynchronous State & Cache Engine:** TanStack Query (React Query - Orchestrates asynchronous IPC bridge calls and cache invalidation)
-- **Date Formatting:** date-fns
-- **Data & Grid Engines:** 
-  - TanStack Table (Headless sorting, filtering, and table state)
-  - TanStack Virtual (DOM virtualization to prevent memory bloat on large datasets)
-- **Geospatial & Mapping:**
-  - MapLibre GL JS (WebGL/WebGPU accelerated engine for local data layers and real-time canvas rendering)
-  - OpenFreeMap (Zero-tracking, API-keyless public OpenStreetMap vector tiles for high-precision street and shop basemaps)
-- **Media Optimization:** 
-  - Tauri Native Custom Asset Protocol (`asset://` URI engine for zero-clone, local-disk media streaming)
-  - Interfaced with TanStack Virtual for smooth, un-cached 60fps photo-grid scrolling
-- **Data Visualization:** Recharts
-- **Form & Input Validation:** React Hook Form + Zod (Strict schema validation for settings and document generation)
-- **Localization:** Native Intl APIs
-- **i18n:** i18next + react-i18next
-- **Testing:** 
-  - **Component Level:** Vitest + React Testing Library + @tauri-apps/api/mocks
-  - **E2E Fast Loop:** Playwright (Headless web-mode emulation)
-  - **E2E Native Loop:** WebDriverIO + @wdio/tauri-service (Production binary automation)
+- **Key Derivation Function:** argon2
 
+## Application Shell & Inter-Process Communication (IPC) Bridge
+Framework: Tauri v2
 
-IPC Bridge: Tauri Context
-Backend: Rust
-Storage: SQLite Database
+## Storage
+Framework: SQLCipher
 
-Authentication and encryption:
+# Authentication and encryption:
 We use the Envelope Encryption for authentication (authn) and data security.
 Data Encryption Key (DEK): key used to encrypt data itself 
 Key Encryption Key (KEK): key used to encrypt (or wrap) the DEK. The process of encrypting a key with another key is known as envelope encryption
 
-Key rotation:
-KEK:
-Cost: low (no db write)
-Strategy: upon passphrase change, suspected incident, app maintenance
+### Key rotation:
+KEK:  
+- Cost: low (no db write)
+- Strategy: 
+  - User passphrase: no mandatory calendar expiration
+  - Transparent refresh: opportunistic salt and Argon2id parameter updates executed automatically in Rust memory during successful login events
+
 DEK:
-Cost: high (full db rewrite)
-Strategy: event driven rotation, upon suspected incident, backup (each backup should have its own DEK), major migration
+- Cost: high (full db rewrite)
+- Strategy: event driven rotation, upon suspected incident, backup (each backup should have its own DEK), major migration
+
+KEK salt and DEK are saved in the same directory as the user's database in `profile_header.json`.
+```text
+~/.myapp/profiles/alice/
+├── profile_header.json   <-- The Key Envelope (Contains Wrapped DEKs & KDF Parameters)
+└── vault.db              <-- SQLCipher Database (Payload encrypted by raw DEK)
+```
 
 
-┌────────────────────────────────────────────────────────┐
-│             Profile Creation (One-Time Setup)          │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-        Generate Random 256-bit MEK (Database Key)
-                            │
-            ┌───────────────┴───────────────┐
-            ▼                               ▼
- [Passphrase + Argon2id]         [Recovery Code + Argon2id]
-            │                               │
-            ▼                               ▼
-    Produces Key A                  Produces Key B
-            │                               │
-            ▼                               ▼
- Encrypts MEK -> Slot 1          Encrypts MEK -> Slot 2
-
-
-Authentication Model: Streamlined Single-Factor Master Passphrase (Argon2id + SQLCipher) with optional OS-level Biometric Quick-Unlock (Touch ID / Windows Hello via tauri-plugin-biometric). No cloud or TOTP MFA required.
+### Authentication Model
+Streamlined Single-Factor Master Passphrase (Argon2id + SQLCipher) with optional OS-level Biometric Quick-Unlock (Touch ID / Windows Hello via tauri-plugin-biometric). No cloud or TOTP MFA required.
 
 Master Passphrase + Argon2id (Mandatory Core):
 
