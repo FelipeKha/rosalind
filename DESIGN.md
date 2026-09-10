@@ -1,4 +1,6 @@
-# Personal Data Platform — Design
+# Rosalind — Design
+
+**Project:** Rosalind
 
 ## 1. Vision
 
