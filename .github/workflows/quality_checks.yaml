@@ -44,6 +44,7 @@ jobs:
         uses: hadolint/hadolint-action@v3.5.0
         with:
             dockerfile: Dockerfile
+            recursive: true
 
       - name: Build docker image
         run: docker build -t rosalind -f backend/Dockerfile .
