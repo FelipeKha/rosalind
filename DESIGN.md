@@ -165,18 +165,157 @@ Development and CI environments should be reproducible from the lock file.
 
 Do not introduce Conda unless a future requirement makes it necessary.
 
-### Code quality
+### Quality gates
 
-The baseline CI checks should include:
+Rosalind should use a layered quality-gate system covering code quality, testing, security, containers, scripts, and database integrity.
+
+The baseline Python checks are:
 
 ```text
-ruff check
-ruff format --check
-mypy
-pytest
+format
+lint
+typecheck
+tests
 ```
 
-These checks should run automatically in CI and locally before changes are merged.
+Additional checks should cover security and the other artifacts in the repository.
+
+#### Python security
+
+Use:
+
+- **Bandit** — static analysis for common Python security issues
+- **pip-audit** — vulnerability scanning of Python dependencies
+
+These should run locally and in CI.
+
+#### Secret scanning
+
+Use **Gitleaks** to detect accidentally committed secrets such as:
+
+- API keys
+- OAuth credentials
+- database credentials
+- tokens
+- private keys
+
+Secret scanning should be authoritative in CI and may also run locally.
+
+#### Docker
+
+Dockerfiles should be linted with **Hadolint**.
+
+Built container images should be scanned with **Trivy** for vulnerabilities and relevant configuration/security issues.
+
+```text
+Dockerfile
+    ↓
+Hadolint
+
+Docker image
+    ↓
+Trivy
+```
+
+#### Shell scripts
+
+If the repository contains shell scripts, they should be checked with:
+
+- **ShellCheck** — correctness and common shell pitfalls
+- **shfmt** — shell script formatting
+
+#### CLI client
+
+The CLI is a separate client project and should have its own quality gates.
+
+If implemented in Python, its baseline checks should include:
+
+```text
+Ruff format
+Ruff lint
+mypy
+pytest
+Bandit
+pip-audit
+```
+
+CLI-specific tests should cover:
+
+- command invocation
+- argument parsing
+- exit codes
+- stdout/stderr behavior
+- API errors
+- configuration
+- authentication
+
+Typer, if used, belongs to the CLI project and is not a backend dependency.
+
+#### Database and migrations
+
+CI should verify that the database schema can be created and migrated successfully from an empty PostgreSQL database.
+
+At minimum:
+
+```text
+empty PostgreSQL
+    ↓
+alembic upgrade head
+    ↓
+integration tests
+```
+
+Use `alembic check` to detect unexpected schema drift.
+
+#### Data/import quality
+
+Provider fixture tests and import tests should verify domain-specific invariants in addition to schema validation.
+
+Examples:
+
+```text
+provider IDs are unique
+required fields are present
+dates are valid
+normalization is idempotent
+re-importing identical data creates no duplicates
+```
+
+Import health checks should also detect suspicious changes in record counts or structure, as described in the ingestion architecture.
+
+### Quality-gate organization
+
+Developers should not need to remember every individual command. The project task runner should expose a small number of canonical commands:
+
+```text
+just check
+just test
+just security
+just containers
+just ci
+```
+
+A recommended division is:
+
+| Check | Local `just check` | CI |
+|---|:---:|:---:|
+| Ruff format | ✓ | ✓ |
+| Ruff lint | ✓ | ✓ |
+| mypy | ✓ | ✓ |
+| pytest | ✓ | ✓ |
+| Bandit | ✓ | ✓ |
+| pip-audit | ✓ | ✓ |
+| ShellCheck | ✓ | ✓ |
+| shfmt | ✓ | ✓ |
+| Hadolint | ✓ | ✓ |
+| Gitleaks | Optional | ✓ |
+| Trivy | — | ✓ |
+| Database migration tests | — | ✓ |
+| End-to-end tests | — | ✓ |
+
+The exact grouping can evolve as execution time and repository complexity increase.
+
+OWASP ZAP is intentionally not part of the initial quality-gate stack. Dynamic API security testing can be evaluated later when the API and deployment environment have matured.
 
 ### Developer task runner
 
@@ -1819,6 +1958,13 @@ Python 3.13+
 ├── mypy                  static typing
 ├── just                  developer task runner
 ├── pre-commit            optional local Git hooks
+├── Bandit                Python security linting
+├── pip-audit             Python dependency vulnerability scanning
+├── Gitleaks              secret scanning
+├── Hadolint              Dockerfile linting
+├── Trivy                 container/image security scanning
+├── ShellCheck            shell script linting
+├── shfmt                 shell script formatting
 └── structlog             structured logging
 ```
 
