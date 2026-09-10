@@ -82,12 +82,12 @@ Biometric / Hardware Quick-Unlock (Optional UX Convenience):
 
 
 ### Key Envelope & Account Recovery
-- **Key Architecture:** Master Encryption Key (MEK) Envelope pattern.
-  - SQLCipher is encrypted using a random 256-bit MEK.
-  - MEK is dual-wrapped using AES-256-GCM and stored in `profile_header.json`:
+- **Key Architecture:** Data Encryption Key (DEK) Envelope pattern.
+  - SQLCipher is encrypted using a random 256-bit DEK.
+  - DEK is dual-wrapped using AES-256-GCM and stored in `profile_header.json`:
     - **Slot 1 (Passphrase):** Wrapped using `Argon2id(Passphrase, Salt)`.
     - **Slot 2 (Recovery):** Wrapped using `Argon2id(BIP-39 Seed Phrase, Salt)`.
-- **Passphrase Reset:** Decrypting Slot 2 via the 24-word Recovery Kit reveals the MEK, enabling zero-re-encryption passphrase updates.
+- **Passphrase Reset:** Decrypting Slot 2 via the 24-word Recovery Kit reveals the DEK, enabling zero-re-encryption passphrase updates.
 - **Data Loss Boundary:** Zero-knowledge model. Loss of both Passphrase and Recovery Kit renders the database irrecoverable. Users retain the option to delete the profile container and re-ingest raw local source files (`.zip`/`.json`).
 
 
