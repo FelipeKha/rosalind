@@ -38,7 +38,7 @@ The architecture and canonical data model are defined in `DESIGN.md`.
 
 ### Backend
 
-- **Language:** Python 3.13+
+- **Language:** Python 3.14+
 - **Location:** `backend/`
 - **Environment:** `uv`
 - **API:** FastAPI

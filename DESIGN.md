@@ -118,7 +118,7 @@ The backend should remain a single application initially rather than being split
 
 | Concern | Technology |
 |---|---|
-| Python/runtime | Python 3.13+ |
+| Python/runtime | Python 3.14+ |
 | Environment and dependencies | `uv` |
 | API | FastAPI |
 | Validation / API schemas | Pydantic v2 |
@@ -1936,7 +1936,7 @@ The goal is to build a **reliable personal-data substrate that both traditional 
 The initial Rosalind backend stack is intentionally small:
 
 ```text
-Python 3.13+
+Python 3.14+
 │
 ├── uv                    environment / dependencies
 │
