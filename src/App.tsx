@@ -1,50 +1,81 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+
+import { useProfiles, useSession } from "@/lib/queries";
+import type { CreateProfileResult } from "@/lib/tauri";
+import { CreateProfileScreen } from "@/features/auth/CreateProfileScreen";
+import { RecoveryKitScreen } from "@/features/auth/RecoveryKitScreen";
+import { ResetScreen } from "@/features/auth/ResetScreen";
+import { UnlockScreen } from "@/features/auth/UnlockScreen";
+import { UnlockedScreen } from "@/features/auth/UnlockedScreen";
+
+type View = "signin" | "reset";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const session = useSession();
+  const profiles = useProfiles();
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  const [pendingRecovery, setPendingRecovery] = useState<CreateProfileResult | null>(
+    null,
+  );
+  const [view, setView] = useState<View>("signin");
+
+  if (session.isLoading || profiles.isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
+
+  if (pendingRecovery) {
+    return (
+      <Centered>
+        <RecoveryKitScreen
+          phrase={pendingRecovery.recovery_phrase}
+          onDone={() => setPendingRecovery(null)}
+        />
+      </Centered>
+    );
+  }
+
+  if (session.data && !session.data.locked && session.data.profile_name) {
+    return (
+      <Centered>
+        <UnlockedScreen profileName={session.data.profile_name} />
+      </Centered>
+    );
+  }
+
+  const profileList = profiles.data ?? [];
+
+  if (profileList.length === 0) {
+    return (
+      <Centered>
+        <CreateProfileScreen onCreated={setPendingRecovery} />
+      </Centered>
+    );
+  }
+
+  if (view === "reset") {
+    return (
+      <Centered>
+        <ResetScreen profiles={profileList} onBack={() => setView("signin")} />
+      </Centered>
+    );
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <Centered>
+      <UnlockScreen profiles={profileList} onReset={() => setView("reset")} />
+    </Centered>
+  );
+}
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+function Centered({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
+      {children}
+    </div>
   );
 }
 
