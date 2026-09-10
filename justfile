@@ -61,21 +61,18 @@ shfmt:
 docker-lint:
     hadolint backend/Dockerfile
 
+docker-scan:
+    trivy fs .
+
+containers: docker-lint docker-scan
+
 
 # ==============================================================================
 # Secrets
 # ==============================================================================
 
 secrets:
-    gitleaks detect
-
-
-# ==============================================================================
-# Container security
-# ==============================================================================
-
-container-security:
-    trivy fs .
+    gitleaks git .
 
 
 # ==============================================================================
@@ -97,10 +94,12 @@ typecheck:
 test:
     just backend-test
 
-security: backend-security secrets
+security:
+    just backend-security
 
-containers: docker-lint container-security
 
-check: format-check lint typecheck test security
+# Fast local quality gate
+check: format-check lint typecheck test security secrets
 
-ci: check shellcheck shfmt containers
+# Complete CI quality gate
+ci: format-check lint typecheck test security shellcheck shfmt containers
