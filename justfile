@@ -102,4 +102,4 @@ security:
 check: format-check lint typecheck test security shellcheck shfmt containers secrets
 
 # Complete CI quality gate
-ci: format-check lint typecheck test security shellcheck shfmt containers
+ci: format-check lint typecheck test security shellcheck shfmt

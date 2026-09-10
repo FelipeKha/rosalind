@@ -40,6 +40,24 @@ jobs:
       - name: Run quality checks
         run: just ci
 
+      - name: Hadolint Dockerfile lint
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+            dockerfile: Dockerfile
+
+      - name: Build docker image
+        run: docker build -t rosalind -f backend/Dockerfile .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: rosalind
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
       - name: Scan for secrets
         uses: gitleaks/gitleaks-action@v3
         env:
