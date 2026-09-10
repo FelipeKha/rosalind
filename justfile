@@ -48,10 +48,10 @@ backend-serve:
 # ==============================================================================
 
 shellcheck:
-    shellcheck scripts/**/*.sh
+    find . -type f -name '*.sh' -not -path './.git/*' -exec shellcheck {} +
 
 shfmt:
-    shfmt -d scripts/
+    find . -type f -name '*.sh' -not -path './.git/*' -exec shfmt -d {} +
 
 
 # ==============================================================================
@@ -99,7 +99,7 @@ security:
 
 
 # Fast local quality gate
-check: format-check lint typecheck test security secrets
+check: format-check lint typecheck test security shellcheck shfmt containers secrets
 
 # Complete CI quality gate
 ci: format-check lint typecheck test security shellcheck shfmt containers
