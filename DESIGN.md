@@ -112,14 +112,176 @@ Reasons:
 - Suitable for I/O-heavy ingestion workloads
 - Easy to introduce optimized components later if required
 
-Likely stack:
+The backend should remain a single application initially rather than being split into microservices.
 
-- FastAPI
-- Pydantic
-- SQLAlchemy
-- Alembic
-- PostgreSQL
-- pgvector when semantic search is introduced
+### Proposed Python stack
+
+| Concern | Technology |
+|---|---|
+| Python/runtime | Python 3.13+ |
+| Environment and dependencies | `uv` |
+| API | FastAPI |
+| Validation / API schemas | Pydantic v2 |
+| Configuration | pydantic-settings |
+| Database abstraction | SQLAlchemy 2 |
+| PostgreSQL driver | psycopg 3 |
+| Database migrations | Alembic |
+| HTTP client | httpx |
+| Testing | pytest |
+| Property-based testing | Hypothesis |
+| Integration-test infrastructure | Testcontainers |
+| Formatting / linting | Ruff |
+| Static type checking | mypy |
+| Structured logging | structlog |
+
+The backend should keep clear boundaries between:
+
+```text
+API schemas        → Pydantic
+Domain objects     → Python classes / dataclasses
+Persistence models → SQLAlchemy
+Configuration      → pydantic-settings
+```
+
+Pydantic should primarily be used at system boundaries and for validation rather than becoming the representation of every internal object.
+
+### Environment management
+
+Use `uv` for:
+
+- Python version management
+- Virtual environments
+- Dependency installation
+- Dependency locking
+
+The repository should contain:
+
+```text
+pyproject.toml
+uv.lock
+```
+
+Development and CI environments should be reproducible from the lock file.
+
+Do not introduce Conda unless a future requirement makes it necessary.
+
+### Code quality
+
+The baseline CI checks should include:
+
+```text
+ruff check
+ruff format --check
+mypy
+pytest
+```
+
+These checks should run automatically in CI and locally before changes are merged.
+
+### Testing strategy
+
+Testing should be divided into several layers:
+
+```text
+tests/
+├── unit/
+├── integration/
+├── api/
+├── e2e/
+└── fixtures/
+```
+
+**Unit tests**
+
+Test pure domain and transformation logic without external infrastructure:
+
+- Provider parsing
+- Normalization
+- Canonicalization
+- Entity resolution
+- Hashing
+- Deduplication
+- Date/time handling
+
+**Provider fixture tests**
+
+Maintain representative provider export fixtures and test that adapters continue to produce the expected source representation and canonical output.
+
+These tests act as compatibility contracts for provider formats.
+
+**Integration tests**
+
+Use a real PostgreSQL instance rather than extensively mocking database behavior.
+
+Test:
+
+```text
+service
+  ↓
+SQLAlchemy
+  ↓
+PostgreSQL
+```
+
+Use Testcontainers or an equivalent containerized PostgreSQL environment for repeatable tests.
+
+**API tests**
+
+Use pytest with httpx to exercise the FastAPI application without requiring a separately running HTTP server.
+
+**End-to-end tests**
+
+Maintain a small number of tests covering the complete pipeline:
+
+```text
+provider fixture
+    ↓
+ingestion
+    ↓
+validation
+    ↓
+staging
+    ↓
+canonicalization
+    ↓
+PostgreSQL
+    ↓
+API
+    ↓
+expected result
+```
+
+**Property-based tests**
+
+Use Hypothesis selectively for important invariants, particularly where transformations must be stable or idempotent.
+
+Examples:
+
+```text
+normalize(normalize(x)) == normalize(x)
+
+re-importing identical data creates no duplicates
+
+canonicalization preserves required information
+```
+
+Do not introduce a large testing framework beyond these layers until the project requires it.
+
+### Background processing
+
+Imports may become long-running operations. The initial architecture should therefore leave room for background jobs:
+
+```text
+API
+ ↓
+create import
+ ↓
+background processing
+ ↓
+parse → validate → stage → normalize → commit
+```
+
+Do not introduce Celery/Redis by default. Rosalind is initially a self-hosted personal-data system, so infrastructure should remain minimal. Add a dedicated job system only when the workload requires it.
 
 Do not introduce Rust initially.
 
@@ -145,20 +307,85 @@ Use PostgreSQL for:
 - JSONB for provider-specific information
 - pgvector for semantic search when needed
 
+Recommended database stack:
+
+```text
+SQLAlchemy 2
+    ↓
+psycopg 3
+    ↓
+PostgreSQL
+```
+
+Use Alembic for schema migrations.
+
 Do not make a vector database the primary source of truth.
 
-## Client
+## Clients
 
-**CLI first**
+Clients are separate applications from the backend.
 
-The first user-facing client should be a CLI that communicates with the backend.
+The backend must expose a client-independent API and must not contain CLI-specific presentation or interaction logic.
 
-Potential future clients:
+Initial architecture:
 
-1. CLI
+```text
+┌──────────────────┐
+│   Rosalind CLI   │
+│   client         │
+└────────┬─────────┘
+         │ HTTP/API
+         ▼
+┌──────────────────┐
+│ Rosalind Backend │
+│                  │
+│ FastAPI          │
+│ Domain           │
+│ Ingestion        │
+│ Persistence      │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│   PostgreSQL     │
+└──────────────────┘
+```
+
+The CLI is therefore **not part of the Python backend**.
+
+The CLI should have its own project/package and communicate with Rosalind through the public API. It should not import backend internals or directly access the database.
+
+The CLI may use a Python CLI framework such as Typer, but that dependency belongs to the **CLI client**, not the backend.
+
+Potential clients:
+
+1. CLI — first client
 2. AI-agent interface
 3. Browser/web UI
-4. Desktop/mobile app
+4. Native desktop/mobile applications
+5. Third-party applications
+
+The same backend API should serve all of them.
+
+### Client independence invariant
+
+The backend should remain usable if the CLI is completely replaced.
+
+For example:
+
+```text
+CLI ───────────────┐
+                   │
+AI agent ──────────┤
+                   ▼
+              Public API
+                   │
+Browser ───────────┤
+                   │
+Desktop app ───────┘
+```
+
+No backend functionality should depend on a particular client being present.
 
 ---
 
@@ -1384,11 +1611,13 @@ Build:
 
 - PostgreSQL
 - SQLAlchemy
+- psycopg
 - Alembic
 - FastAPI
-- CLI
+- Backend configuration with pydantic-settings
 - Import tracking
 - Raw source storage
+- Separate CLI client communicating through the API
 
 ### Phase 2 — Google Contacts
 
@@ -1476,3 +1705,48 @@ and produce a compact, explainable answer with provenance.
 The goal is therefore not simply to build a database of personal data.
 
 The goal is to build a **reliable personal-data substrate that both traditional software and AI agents can query and reason over.**
+---
+
+# 31. Canonical Backend Stack
+
+The initial Rosalind backend stack is intentionally small:
+
+```text
+Python 3.13+
+│
+├── uv                    environment / dependencies
+│
+├── FastAPI               HTTP API
+├── Pydantic v2           validation / API schemas
+├── pydantic-settings     configuration
+│
+├── SQLAlchemy 2          database abstraction
+├── psycopg 3             PostgreSQL driver
+├── Alembic               migrations
+│
+├── httpx                 HTTP client
+│
+├── pytest                testing
+├── Hypothesis            property-based testing
+├── Testcontainers        integration-test infrastructure
+│
+├── Ruff                  formatting / linting
+├── mypy                  static typing
+└── structlog             structured logging
+```
+
+The CLI is a separate client project. If implemented in Python, it may use Typer, but Typer is **not a backend dependency**.
+
+The architectural priority is to keep these implementation choices replaceable while preserving the core Rosalind contracts:
+
+```text
+canonical data model
++
+provider adapters
++
+provenance
++
+idempotent ingestion
++
+client-independent API
+```
