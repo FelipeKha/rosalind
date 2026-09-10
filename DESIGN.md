@@ -178,6 +178,91 @@ pytest
 
 These checks should run automatically in CI and locally before changes are merged.
 
+### Developer task runner
+
+Use **`just`** as the project task runner for common development commands.
+
+The purpose of `just` is to provide a simple, consistent interface for developers to run backend development and quality checks without having to remember individual commands.
+
+Example `justfile`:
+
+```makefile
+check:
+    uv run ruff check .
+    uv run ruff format --check .
+    uv run mypy .
+    uv run pytest
+
+test:
+    uv run pytest
+
+lint:
+    uv run ruff check .
+    uv run ruff format --check .
+
+typecheck:
+    uv run mypy .
+
+format:
+    uv run ruff format .
+
+serve:
+    uv run uvicorn rosalind.api.app:app --reload
+
+ci: lint typecheck test
+```
+
+Typical local usage:
+
+```bash
+just check
+just test
+just format
+just serve
+```
+
+`just` is developer tooling and is not part of the Rosalind backend runtime.
+
+This should remain distinct from the Rosalind CLI:
+
+```text
+Developer tooling
+    │
+    └── just
+          ├── check
+          ├── test
+          ├── lint
+          ├── format
+          └── serve
+
+Rosalind CLI
+    │
+    └── separate client
+          ├── import
+          ├── people
+          └── search
+
+Rosalind Backend
+    │
+    └── FastAPI
+```
+
+### Local Git hooks
+
+Consider **pre-commit** for fast checks that should run automatically before a commit.
+
+Pre-commit should primarily run quick formatting and linting checks. The complete test suite should not necessarily run on every commit if it becomes slow.
+
+The authoritative full quality gate remains:
+
+```bash
+just check
+```
+
+and the same checks should run in CI.
+
+`just` and `pre-commit` are development tools and must not become dependencies of the production backend.
+
 ### Testing strategy
 
 Testing should be divided into several layers:
@@ -1732,6 +1817,8 @@ Python 3.13+
 │
 ├── Ruff                  formatting / linting
 ├── mypy                  static typing
+├── just                  developer task runner
+├── pre-commit            optional local Git hooks
 └── structlog             structured logging
 ```
 
