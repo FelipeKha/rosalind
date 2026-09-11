@@ -16,31 +16,57 @@ default:
 # ==============================================================================
 
 backend-install:
-    uv sync --directory backend
+    cd backend && uv sync
 
 backend-format:
-    uv run --directory backend ruff format .
-
-backend-format-check:
-    uv run --directory backend ruff format --check .
+    cd backend && just format
 
 backend-lint:
-    uv run --directory backend ruff check .
+    cd backend && just lint
 
 backend-typecheck:
-    uv run --directory backend mypy .
+    cd backend && just typecheck
 
 backend-test:
-    uv run --directory backend pytest
+    cd backend && just test
 
 backend-security:
-    uv run --directory backend bandit -r src
-    uv run --directory backend pip-audit
+    cd backend && just security
 
-backend-check: backend-format-check backend-lint backend-typecheck backend-test backend-security
+backend-check:
+    cd backend && just check
 
 backend-serve:
-    uv run --directory backend uvicorn rosalind.api.app:app --reload
+    cd backend && just serve
+
+
+# ==============================================================================
+# CLI
+# ==============================================================================
+
+cli-install:
+    cd cli && uv sync
+
+cli-format:
+    cd cli && just format
+
+cli-lint:
+    cd cli && just lint
+
+cli-typecheck:
+    cd cli && just typecheck
+
+cli-test:
+    cd cli && just test
+
+cli-security:
+    cd cli && just security
+
+cli-check:
+    cd cli && just check
+
+cli-run *ARGS:
+    cd cli && just run {{ARGS}}
 
 
 # ==============================================================================
@@ -80,27 +106,12 @@ secrets:
 # Quality gates
 # ==============================================================================
 
-format:
-    just backend-format
+check:
+    just backend-check
+    just cli-check
+    just shellcheck
+    just shfmt
+    just containers
+    just secrets
 
-format-check:
-    just backend-format-check
-
-lint:
-    just backend-lint
-
-typecheck:
-    just backend-typecheck
-
-test:
-    just backend-test
-
-security:
-    just backend-security
-
-
-# Fast local quality gate
-check: format-check lint typecheck test security shellcheck shfmt containers secrets
-
-# Complete CI quality gate
-ci: format-check lint typecheck test security shellcheck shfmt
+ci: check
