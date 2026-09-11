@@ -62,7 +62,8 @@ docker-lint:
     hadolint backend/Dockerfile
 
 docker-scan:
-    trivy fs .
+    docker build --pull -t rosalind backend
+    trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed rosalind
 
 containers: docker-lint docker-scan
 
