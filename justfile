@@ -114,4 +114,8 @@ check:
     just containers
     just secrets
 
-ci: check
+ci: 
+    just backend-check
+    just cli-check
+    just shellcheck
+    just shfmt
