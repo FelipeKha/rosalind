@@ -20,5 +20,6 @@ RUN uv sync --locked && \
     rm -rf /usr/local/lib/python3.14/ensurepip \
            /usr/local/lib/python3.14/site-packages/pip*
 
-# Presuming there is a `my_app` command provided by the project
-CMD ["uv", "run", "my_app"]
+EXPOSE 8000
+
+CMD ["uv", "run", "uvicorn", "rosalind.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
