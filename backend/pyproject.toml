@@ -8,7 +8,11 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.16.0",
     "fastapi>=0.141.0",
+    "psycopg[binary]>=3.2.0",
+    "pydantic-settings>=2.6.0",
+    "sqlalchemy>=2.0.0",
     "uvicorn[standard]>=0.53.0",
 ]
 
@@ -24,4 +28,5 @@ dev = [
     "pip-audit>=2.10.1",
     "pytest>=9.1.1",
     "ruff>=0.16.6",
+    "testcontainers>=4.10.0",
 ]

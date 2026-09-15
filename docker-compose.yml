@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rosalind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rosalind}
+      POSTGRES_DB: ${POSTGRES_DB:-rosalind}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-rosalind} -d ${POSTGRES_DB:-rosalind}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: server -dir=/data -s3
+    environment:
+      AWS_ACCESS_KEY_ID: ${ROSALIND_S3_ACCESS_KEY:-rosalind}
+      AWS_SECRET_ACCESS_KEY: ${ROSALIND_S3_SECRET_KEY:-rosalind}
+    ports:
+      - "8333:8333"
+    volumes:
+      - seaweedfs_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  seaweedfs_data:
