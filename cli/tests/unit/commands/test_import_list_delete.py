@@ -32,6 +32,8 @@ def test_list_imports(monkeypatch) -> None:
     result = runner.invoke(app, ["import", "list"])
     assert result.exit_code == 0
     assert "imp-1" in result.stdout
+    assert "ID\tSOURCE\tTYPE\tSTATUS\tCREATED\tFILES\tSIZE" in result.stdout
+    assert "\t2026-09-" in result.stdout
 
 
 def test_list_imports_error(monkeypatch) -> None:

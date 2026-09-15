@@ -88,10 +88,13 @@ def list_imports() -> None:
         typer.echo("No imports found.")
         return
 
+    typer.echo("ID\tSOURCE\tTYPE\tSTATUS\tCREATED\tFILES\tSIZE")
+
     for item in imports:
         typer.echo(
             f"{item['import_id']}\t{item['source']}\t{item['type']}\t"
-            f"{item['status']}\t{item['file_count']} files\t"
+            f"{item['status']}\t{_format.format_datetime(item['created_at'])}\t"
+            f"{item['file_count']} files\t"
             f"{_format.human_size(cast(int, item['total_size']))}"
         )
 
