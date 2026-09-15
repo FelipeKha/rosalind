@@ -1,14 +1,14 @@
 from typer.testing import CliRunner
 
 from cli import app
-from cli.commands import show
+from cli.commands import import_commands
 
 runner = CliRunner()
 
 
 def test_show_import(monkeypatch) -> None:
     monkeypatch.setattr(
-        show.client,
+        import_commands.client,
         "get_import",
         lambda import_id: {
             "import_id": import_id,
@@ -30,7 +30,7 @@ def test_show_import(monkeypatch) -> None:
             ],
         },
     )
-    result = runner.invoke(app, ["show", "imp-1"])
+    result = runner.invoke(app, ["import", "show", "imp-1"])
     assert result.exit_code == 0
     assert "imp-1" in result.stdout
     assert "Contacts/contacts.json" in result.stdout
@@ -38,9 +38,9 @@ def test_show_import(monkeypatch) -> None:
 
 def test_show_import_error(monkeypatch) -> None:
     def raise_error(import_id: str) -> dict[str, object]:
-        raise show.client.ApiClientError("boom")
+        raise import_commands.client.ApiClientError("boom")
 
-    monkeypatch.setattr(show.client, "get_import", raise_error)
-    result = runner.invoke(app, ["show", "imp-1"])
+    monkeypatch.setattr(import_commands.client, "get_import", raise_error)
+    result = runner.invoke(app, ["import", "show", "imp-1"])
     assert result.exit_code == 1
     assert "Failed to get import" in result.stderr
