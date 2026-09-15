@@ -89,6 +89,17 @@ cli-run *ARGS:
 
 
 # ==============================================================================
+# End-to-end tests
+# ==============================================================================
+
+e2e-install:
+    cd e2e && uv sync
+
+e2e-test:
+    cd e2e && uv run pytest
+
+
+# ==============================================================================
 # Shell scripts
 # ==============================================================================
 
@@ -133,8 +144,9 @@ check:
     just containers
     just secrets
 
-ci: 
+ci:
     just backend-check
     just cli-check
+    just e2e-test
     just shellcheck
     just shfmt

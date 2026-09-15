@@ -2019,3 +2019,7 @@ idempotent ingestion
 +
 client-independent API
 ```
+
+
+### Sources
+[Martin G. Skjæveland, Krisztian Balog, Nolwenn Bernard, Weronika Łajewska, Trond Linjordet, *An ecosystem for personal knowledge graphs: A survey and research roadmap*, AI Open, 27 Feb 2024](https://www.sciencedirect.com/science/article/pii/S2666651024000044?via%3Dihub)
