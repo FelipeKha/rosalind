@@ -91,3 +91,28 @@ def test_reimport_is_a_distinct_observation(
     _assert_import_completed(backend_base_url, second_id, expected_files)
     _assert_objects_uploaded(s3_client, first_id, expected_files)
     _assert_objects_uploaded(s3_client, second_id, expected_files)
+
+
+def test_delete_import_end_to_end(
+    takeout_fixture: Path,
+    backend_base_url: str,
+    s3_client,
+    run_cli: Callable[[Path], subprocess.CompletedProcess[str]],
+    run_rosalind: Callable[[list[str]], subprocess.CompletedProcess[str]],
+) -> None:
+    expected_files = _fixture_files(takeout_fixture)
+
+    result = run_cli(takeout_fixture)
+    assert result.returncode == 0, result.stderr
+    import_id = _import_id_from_stdout(result.stdout)
+
+    deleted = run_rosalind(["import", "delete", import_id, "--yes"])
+    assert deleted.returncode == 0, deleted.stderr
+
+    response = httpx.get(f"{backend_base_url}/imports/{import_id}")
+    assert response.status_code == 404
+
+    listing = s3_client.list_objects_v2(
+        Bucket="rosalind", Prefix=f"imports/{import_id}/"
+    )
+    assert listing.get("KeyCount") == 0

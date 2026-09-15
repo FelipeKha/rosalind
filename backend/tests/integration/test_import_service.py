@@ -72,3 +72,31 @@ def test_complete_import_rejects_invalid_sha256(db_session: Session) -> None:
 def test_get_import_unknown_id(db_session: Session) -> None:
     with pytest.raises(ImportNotFoundError):
         service.get_import(db_session, uuid.uuid4())
+
+
+def test_list_imports_returns_all(db_session: Session) -> None:
+    first = service.create_import(db_session, "google", "takeout")
+    second = service.create_import(db_session, "apple", "takeout")
+
+    imports = service.list_imports(db_session)
+
+    assert {imp.id for imp in imports} == {first.id, second.id}
+
+
+def test_list_imports_empty(db_session: Session) -> None:
+    assert service.list_imports(db_session) == []
+
+
+def test_delete_import(db_session: Session) -> None:
+    imp = service.create_import(db_session, "google", "takeout")
+    service.complete_import(db_session, imp.id, [_entry()])
+
+    service.delete_import(db_session, imp.id)
+
+    with pytest.raises(ImportNotFoundError):
+        service.get_import(db_session, imp.id)
+
+
+def test_delete_import_unknown_id(db_session: Session) -> None:
+    with pytest.raises(ImportNotFoundError):
+        service.delete_import(db_session, uuid.uuid4())

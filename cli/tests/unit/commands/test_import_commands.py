@@ -3,7 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from cli import app
-from cli.commands import import_google
+from cli.commands import import_commands
 
 runner = CliRunner()
 
@@ -18,7 +18,7 @@ class _FakeStorage:
 
 def _stub_backend(monkeypatch) -> None:
     monkeypatch.setattr(
-        import_google.client,
+        import_commands.client,
         "create_import",
         lambda source, type_: {
             "import_id": "imp-1",
@@ -27,7 +27,7 @@ def _stub_backend(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(
-        import_google.client,
+        import_commands.client,
         "complete_import",
         lambda import_id, manifest: {
             "import_id": "imp-1",
@@ -41,15 +41,15 @@ def _stub_backend(monkeypatch) -> None:
     )
 
 
-def test_import_google_success(monkeypatch, tmp_path) -> None:
+def test_import_create_google_success(monkeypatch, tmp_path) -> None:
     (tmp_path / "Contacts").mkdir()
     (tmp_path / "Contacts" / "contacts.json").write_text("{}")
 
     _stub_backend(monkeypatch)
     fake = _FakeStorage()
-    monkeypatch.setattr(import_google, "S3ObjectStorage", lambda: fake)
+    monkeypatch.setattr(import_commands, "S3ObjectStorage", lambda: fake)
 
-    result = runner.invoke(app, ["import", "google", str(tmp_path)])
+    result = runner.invoke(app, ["import", "create", "google", str(tmp_path)])
 
     assert result.exit_code == 0
     assert "Import completed" in result.stdout
@@ -62,28 +62,28 @@ def test_import_google_success(monkeypatch, tmp_path) -> None:
     ]
 
 
-def test_import_google_missing_path(monkeypatch) -> None:
-    result = runner.invoke(app, ["import", "google", "/does/not/exist"])
+def test_import_create_google_missing_path(monkeypatch) -> None:
+    result = runner.invoke(app, ["import", "create", "google", "/does/not/exist"])
     assert result.exit_code == 1
     assert "does not exist" in result.stderr
 
 
-def test_import_google_path_is_not_directory(monkeypatch, tmp_path) -> None:
+def test_import_create_google_path_is_not_directory(monkeypatch, tmp_path) -> None:
     file_path = tmp_path / "file.txt"
     file_path.write_text("x")
-    result = runner.invoke(app, ["import", "google", str(file_path)])
+    result = runner.invoke(app, ["import", "create", "google", str(file_path)])
     assert result.exit_code == 1
     assert "not a directory" in result.stderr
 
 
-def test_import_google_create_import_fails(monkeypatch, tmp_path) -> None:
+def test_import_create_google_create_import_fails(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        import_google.client,
+        import_commands.client,
         "create_import",
         lambda source, type_: (_ for _ in ()).throw(
-            import_google.client.ApiClientError("boom")
+            import_commands.client.ApiClientError("boom")
         ),
     )
-    result = runner.invoke(app, ["import", "google", str(tmp_path)])
+    result = runner.invoke(app, ["import", "create", "google", str(tmp_path)])
     assert result.exit_code == 1
     assert "Failed to create import" in result.stderr

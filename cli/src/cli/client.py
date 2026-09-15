@@ -47,3 +47,40 @@ def complete_import(import_id: str, manifest: dict[str, object]) -> dict[str, ob
         raise ApiClientError(f"unable to complete import: {exc}") from exc
 
     return response.json()
+
+
+def list_imports() -> list[dict[str, object]]:
+    try:
+        response = httpx.get(
+            f"{config.api_url()}/imports",
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"unable to list imports: {exc}") from exc
+
+    return response.json()["imports"]
+
+
+def get_import(import_id: str) -> dict[str, object]:
+    try:
+        response = httpx.get(
+            f"{config.api_url()}/imports/{import_id}",
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"unable to get import: {exc}") from exc
+
+    return response.json()
+
+
+def delete_import(import_id: str) -> None:
+    try:
+        response = httpx.delete(
+            f"{config.api_url()}/imports/{import_id}",
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"unable to delete import: {exc}") from exc

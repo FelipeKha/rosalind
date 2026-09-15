@@ -3,10 +3,10 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from rosalind import config, models
+from rosalind import config, models, object_storage
 from rosalind.api.schemas import imports as schemas
 from rosalind.db import get_db
 from rosalind.ingestion import manifest, service
@@ -14,6 +14,16 @@ from rosalind.ingestion import manifest, service
 router = APIRouter(prefix="/imports", tags=["imports"])
 
 SessionDep = Annotated[Session, Depends(get_db)]
+
+
+@router.get("", response_model=schemas.ImportListResponse)
+def list_imports(
+    db: SessionDep,
+) -> schemas.ImportListResponse:
+    imports = service.list_imports(db)
+    return schemas.ImportListResponse(
+        imports=[_to_summary(import_) for import_ in imports]
+    )
 
 
 @router.post(
@@ -69,6 +79,22 @@ def get_import(
         **_to_summary(import_).model_dump(),
         files=[_to_file(f) for f in import_.files],
     )
+
+
+@router.delete(
+    "/{import_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_import(
+    import_id: uuid.UUID,
+    db: SessionDep,
+) -> Response:
+    import_ = service.get_import(db, import_id)
+    object_storage.delete_objects(
+        config.settings.s3_bucket, [f.storage_key for f in import_.files]
+    )
+    service.delete_import(db, import_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _to_summary(import_: models.Import) -> schemas.ImportSummaryResponse:

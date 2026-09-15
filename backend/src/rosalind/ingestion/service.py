@@ -72,6 +72,22 @@ def get_import(db: Session, import_id: uuid.UUID) -> models.Import:
     return import_
 
 
+def list_imports(db: Session) -> list[models.Import]:
+    return list(
+        db.scalars(
+            select(models.Import).order_by(models.Import.created_at.desc())
+        ).all()
+    )
+
+
+def delete_import(db: Session, import_id: uuid.UUID) -> None:
+    import_ = db.get(models.Import, import_id)
+    if import_ is None:
+        raise ImportNotFoundError(f"import {import_id} not found")
+    db.delete(import_)
+    db.commit()
+
+
 def _validate_entries(
     files: Sequence[manifest.FileEntry],
 ) -> list[tuple[str, str]]:

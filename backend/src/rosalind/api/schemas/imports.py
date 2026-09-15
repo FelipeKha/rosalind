@@ -46,5 +46,9 @@ class ImportSummaryResponse(BaseModel):
     import_hash: str | None = None
 
 
+class ImportListResponse(BaseModel):
+    imports: list[ImportSummaryResponse]
+
+
 class ImportDetailResponse(ImportSummaryResponse):
     files: list[FileResponse]

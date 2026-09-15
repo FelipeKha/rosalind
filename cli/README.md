@@ -17,7 +17,10 @@ uv sync
 ```bash
 uv run rosalind --help
 uv run rosalind status
-uv run rosalind import google ~/Downloads/Takeout
+uv run rosalind import create google ~/Downloads/Takeout
+uv run rosalind import list
+uv run rosalind show <import_id>
+uv run rosalind import delete <import_id>
 ```
 
 ## Configuration

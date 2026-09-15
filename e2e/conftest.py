@@ -77,13 +77,15 @@ def postgres_container(network: Network) -> Iterator[PostgresContainer]:
 
 
 @pytest.fixture(scope="session")
-def s3_endpoint() -> Iterator[str]:
+def s3_endpoint(network: Network) -> Iterator[str]:
     try:
         container = (
             DockerContainer("chrislusf/seaweedfs:latest")
             .with_command("server -dir=/data -s3")
             .with_env("AWS_ACCESS_KEY_ID", S3_ACCESS_KEY)
             .with_env("AWS_SECRET_ACCESS_KEY", S3_SECRET_KEY)
+            .with_network(network)
+            .with_network_aliases("seaweedfs")
             .with_exposed_ports(8333)
         )
         container.waiting_for(LogMessageWaitStrategy("Start Seaweed S3 API Server"))
@@ -101,7 +103,9 @@ def s3_endpoint() -> Iterator[str]:
 
 @pytest.fixture(scope="session")
 def backend_base_url(
-    network: Network, postgres_container: PostgresContainer
+    network: Network,
+    postgres_container: PostgresContainer,
+    s3_endpoint: str,
 ) -> Iterator[str]:
     image = DockerImage(path=str(BACKEND_DIR), tag=BACKEND_IMAGE)
     image.build()
@@ -113,6 +117,10 @@ def backend_base_url(
     container = DockerContainer(BACKEND_IMAGE)
     container.with_network(network)
     container.with_env("ROSALIND_DATABASE_URL", database_url)
+    container.with_env("ROSALIND_S3_ENDPOINT", "http://seaweedfs:8333")
+    container.with_env("ROSALIND_S3_ACCESS_KEY", S3_ACCESS_KEY)
+    container.with_env("ROSALIND_S3_SECRET_KEY", S3_SECRET_KEY)
+    container.with_env("ROSALIND_S3_REGION", S3_REGION)
     container.with_command(
         "sh -lc 'uv run alembic upgrade head && "
         "uv run uvicorn rosalind.api.app:app --host 0.0.0.0 --port 8000'"
@@ -172,9 +180,25 @@ def run_cli(cli_env: dict[str, str]):
                 str(CLI_DIR),
                 "rosalind",
                 "import",
+                "create",
                 "google",
                 str(path),
             ],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return _run
+
+
+@pytest.fixture(scope="session")
+def run_rosalind(cli_env: dict[str, str]):
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, **cli_env}
+        return subprocess.run(
+            ["uv", "run", "--directory", str(CLI_DIR), "rosalind", *args],
             env=env,
             capture_output=True,
             text=True,
