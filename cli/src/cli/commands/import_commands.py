@@ -88,15 +88,28 @@ def list_imports() -> None:
         typer.echo("No imports found.")
         return
 
-    typer.echo("ID\tSOURCE\tTYPE\tSTATUS\tCREATED\tFILES\tSIZE")
-
-    for item in imports:
-        typer.echo(
-            f"{item['import_id']}\t{item['source']}\t{item['type']}\t"
-            f"{item['status']}\t{_format.format_datetime(item['created_at'])}\t"
-            f"{item['file_count']} files\t"
-            f"{_format.human_size(cast(int, item['total_size']))}"
+    headers = ("ID", "SOURCE", "TYPE", "STATUS", "CREATED", "FILES", "SIZE")
+    rows = [
+        (
+            str(item["import_id"]),
+            str(item["source"]),
+            str(item["type"]),
+            str(item["status"]),
+            _format.format_datetime(item["created_at"]),
+            f"{item['file_count']} files",
+            _format.human_size(cast(int, item["total_size"])),
         )
+        for item in imports
+    ]
+
+    widths = [
+        max(len(headers[i]), *(len(row[i]) for row in rows))
+        for i in range(len(headers))
+    ]
+
+    typer.echo("  ".join(header.ljust(width) for header, width in zip(headers, widths)))
+    for row in rows:
+        typer.echo("  ".join(cell.ljust(width) for cell, width in zip(row, widths)))
 
 
 @import_app.command("delete")
