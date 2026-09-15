@@ -740,6 +740,42 @@ version = 2
 
 ---
 
+## 5.3 Import upload flow (Step 3)
+
+Raw provider files are stored in object storage (S3-compatible, SeaweedFS locally)
+before any semantic parsing happens. The CLI is responsible for the data plane;
+the backend owns the import lifecycle and is the authoritative source of truth
+for import metadata.
+
+```text
+CLI ──1. POST /imports/google/takeout────────────────► API
+  ▲                                                    │ creates import (uploading)
+  │                                                    │ returns import_id + bucket + storage_prefix
+  │◄───────────────────────────────────────────────────┘
+CLI ──2. walk directory, collect metadata, SHA-256 (local)
+CLI ──3. upload each file (boto3) ────────────────────► object storage
+CLI ──4. POST /imports/{id}/complete (manifest) ──────► API
+                                                       │ validates + persists import_files
+                                                       │ computes import_hash, marks completed
+                                                       ▼
+                                                 PostgreSQL (imports, import_files)
+```
+
+Key properties:
+
+- The CLI reads file bytes to hash and upload, but does **not** parse/interpret
+  their contents.
+- The backend derives `storage_key = imports/<import_id>/<path>` and recomputes
+  `file_count`, `total_size`, and a deterministic `import_hash` from the
+  manifest rather than trusting client-supplied totals.
+- Each import is a distinct observation; the same Takeout imported twice produces
+  two `data_import` rows (reconciliation happens in later steps).
+- Object storage is the retention store for original files; PostgreSQL stores
+  only import metadata at this stage. Canonical/source-record tables arrive in
+  later steps.
+
+---
+
 # 6. Raw Source Records
 
 Provider data should be preserved before canonicalization.
@@ -1983,3 +2019,7 @@ idempotent ingestion
 +
 client-independent API
 ```
+
+
+### Sources
+[Martin G. Skjæveland, Krisztian Balog, Nolwenn Bernard, Weronika Łajewska, Trond Linjordet, *An ecosystem for personal knowledge graphs: A survey and research roadmap*, AI Open, 27 Feb 2024](https://www.sciencedirect.com/science/article/pii/S2666651024000044?via%3Dihub)

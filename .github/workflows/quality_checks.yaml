@@ -40,6 +40,9 @@ jobs:
       - name: Install CLI dependencies
         run: uv sync --directory cli --locked
 
+      - name: Install e2e dependencies
+        run: uv sync --directory e2e --locked
+
       - name: Run quality checks
         run: just ci
 

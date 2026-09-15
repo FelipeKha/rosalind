@@ -31,5 +31,13 @@ check: lint typecheck test security
 serve:
     uv run uvicorn rosalind.api.app:app --reload
 
+# Apply database migrations
+migrate:
+    uv run alembic upgrade head
+
+# Generate a new database migration
+revision *ARGS:
+    uv run alembic revision --autogenerate {{ARGS}}
+
 # Run the complete CI-quality suite
 ci: check
