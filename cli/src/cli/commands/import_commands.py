@@ -36,9 +36,16 @@ def create_google(path: Path) -> None:
     storage_prefix = str(created["storage_prefix"])
     bucket = str(created["bucket"])
 
-    typer.echo("Discovering and hashing files...")
-    files = discovery.discover(path)
-    typer.echo(f"Discovered {len(files)} files.")
+    typer.echo("Discovering files...")
+    paths = discovery.discover_paths(path)
+    typer.echo(f"Discovered {len(paths)} files.")
+
+    with typer.progressbar(
+        paths,
+        label="Hashing",
+        item_show_func=lambda entry: entry.name if entry else "",
+    ) as progress:
+        files = [discovery.file_info(entry, path) for entry in progress]
 
     storage = S3ObjectStorage()
     try:

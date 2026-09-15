@@ -18,23 +18,28 @@ class FileInfo:
     sha256: str
 
 
+def discover_paths(root: Path) -> list[Path]:
+    return [
+        entry
+        for entry in sorted(root.rglob("*"))
+        if not entry.is_symlink() and entry.is_file()
+    ]
+
+
+def file_info(entry: Path, root: Path) -> FileInfo:
+    relative = entry.relative_to(root).as_posix()
+    return FileInfo(
+        path=relative,
+        local_path=entry,
+        format=_format_of(entry),
+        size=entry.stat().st_size,
+        modified_at=_modified_at(entry),
+        sha256=sha256_file(entry),
+    )
+
+
 def discover(root: Path) -> list[FileInfo]:
-    files: list[FileInfo] = []
-    for entry in sorted(root.rglob("*")):
-        if entry.is_symlink() or not entry.is_file():
-            continue
-        relative = entry.relative_to(root).as_posix()
-        files.append(
-            FileInfo(
-                path=relative,
-                local_path=entry,
-                format=_format_of(entry),
-                size=entry.stat().st_size,
-                modified_at=_modified_at(entry),
-                sha256=sha256_file(entry),
-            )
-        )
-    return files
+    return [file_info(entry, root) for entry in discover_paths(root)]
 
 
 def sha256_file(path: Path) -> str:
