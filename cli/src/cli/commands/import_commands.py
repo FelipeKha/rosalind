@@ -36,17 +36,23 @@ def create_google(path: Path) -> None:
     storage_prefix = str(created["storage_prefix"])
     bucket = str(created["bucket"])
 
+    typer.echo("Discovering and hashing files...")
     files = discovery.discover(path)
+    typer.echo(f"Discovered {len(files)} files.")
 
     storage = S3ObjectStorage()
-    typer.echo(f"Uploading {len(files)} files to {bucket}...")
     try:
-        for info in files:
-            storage.upload_file(
-                info.local_path,
-                bucket,
-                f"{storage_prefix}/{info.path}",
-            )
+        with typer.progressbar(
+            files,
+            label="Uploading",
+            item_show_func=lambda info: info.path if info else "",
+        ) as progress:
+            for info in progress:
+                storage.upload_file(
+                    info.local_path,
+                    bucket,
+                    f"{storage_prefix}/{info.path}",
+                )
     except Exception as exc:  # boto3 raises several client error types
         typer.echo(f"Upload failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
