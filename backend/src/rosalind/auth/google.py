@@ -16,14 +16,9 @@ from googleapiclient.discovery import Resource, build  # type: ignore[import-unt
 
 from rosalind import config
 
-TOKEN_URI = "https://oauth2.googleapis.com/token"  # nosec B105
-AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 
-SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/userinfo.email",
-]
+def _scopes() -> list[str]:
+    return [s.strip() for s in config.settings.google_scopes.split(",") if s.strip()]
 
 
 def to_naive_utc(expiry: datetime | None) -> datetime | None:
@@ -53,8 +48,8 @@ def _client_config() -> dict[str, Any]:
         "web": {
             "client_id": client_id,
             "client_secret": client_secret,
-            "auth_uri": AUTH_URI,
-            "token_uri": TOKEN_URI,
+            "auth_uri": config.settings.google_auth_uri,
+            "token_uri": config.settings.google_token_uri,
             "redirect_uris": [config.settings.google_redirect_uri],
         }
     }
@@ -64,7 +59,7 @@ def build_authorization_url(state: str) -> str:
     """Return the URL the user must visit to authorize Rosalind."""
     flow = Flow.from_client_config(
         _client_config(),
-        scopes=SCOPES,
+        scopes=_scopes(),
         redirect_uri=config.settings.google_redirect_uri,
     )
     kwargs: dict[str, str] = {
@@ -81,7 +76,7 @@ def exchange_code(state: str, code: str) -> Credentials:
     """Exchange an authorization code for credentials (incl. refresh token)."""
     flow = Flow.from_client_config(
         _client_config(),
-        scopes=SCOPES,
+        scopes=_scopes(),
         redirect_uri=config.settings.google_redirect_uri,
         state=state,
     )
@@ -99,7 +94,7 @@ def build_credentials(
     return Credentials(
         token=access_token,
         refresh_token=refresh_token,
-        token_uri=TOKEN_URI,
+        token_uri=config.settings.google_token_uri,
         client_id=config.settings.google_client_id,
         client_secret=config.settings.google_client_secret,
         scopes=scopes,
