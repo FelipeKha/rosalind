@@ -13,11 +13,35 @@ from rosalind.auth import google as google_auth
 from rosalind.auth import service as auth_service
 
 ALL_PERSON_FIELDS = (
-    "addresses,ageRanges,biographies,birthdays,calendarUrls,clientData,"
-    "coverPhotos,emailAddresses,events,externalIds,genders,imClients,"
-    "interests,locales,locations,memberships,metadata,miscKeywords,names,"
-    "nicknames,occupations,organizations,phoneNumbers,photos,relations,"
-    "sipAddresses,skills,urls,userDefined"
+    "addresses,"
+    "ageRanges,"
+    "biographies,"
+    "birthdays,"
+    "calendarUrls,"
+    "clientData,"
+    "coverPhotos,"
+    "emailAddresses,"
+    "events,"
+    "externalIds,"
+    "genders,"
+    "imClients,"
+    "interests,"
+    "locales,"
+    "locations,"
+    "memberships,"
+    "metadata,"
+    "miscKeywords,"
+    "names,"
+    "nicknames,"
+    "occupations,"
+    "organizations,"
+    "phoneNumbers,"
+    "photos,"
+    "relations,"
+    "sipAddresses,"
+    "skills,"
+    "urls,"
+    "userDefined",
 )
 
 
@@ -33,7 +57,9 @@ def fetch_profile(credentials: Credentials) -> dict[str, Any]:
     service = google_auth.build_people_service(credentials)
     return (
         service.people()
-        .get(resourceName="people/me", personFields=ALL_PERSON_FIELDS)
+        .get(
+            resourceName="people/me", personFields=",".join(ALL_PERSON_FIELDS)
+        )
         .execute()
     )
 
@@ -41,6 +67,8 @@ def fetch_profile(credentials: Credentials) -> dict[str, Any]:
 def import_profile(db: Session) -> ProfileImportResult:
     account, credentials = auth_service.load_credentials(db, "google")
     person = fetch_profile(credentials)
+
+    print(person)
 
     display_name = _display_name(person)
     if display_name:
