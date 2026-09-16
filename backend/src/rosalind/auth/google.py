@@ -55,13 +55,19 @@ def _client_config() -> dict[str, Any]:
     }
 
 
-def build_authorization_url(state: str) -> str:
-    """Return the URL the user must visit to authorize Rosalind."""
-    flow = Flow.from_client_config(
-        _client_config(),
-        scopes=_scopes(),
-        redirect_uri=config.settings.google_redirect_uri,
-    )
+def _build_flow(state: str | None = None, code_verifier: str | None = None) -> Flow:
+    kwargs: dict[str, Any] = {"redirect_uri": config.settings.google_redirect_uri}
+    if state is not None:
+        kwargs["state"] = state
+    if code_verifier is not None:
+        kwargs["code_verifier"] = code_verifier
+        kwargs["autogenerate_code_verifier"] = False
+    return Flow.from_client_config(_client_config(), scopes=_scopes(), **kwargs)
+
+
+def build_authorization_url(state: str) -> tuple[str, str]:
+    """Return the URL the user must visit and its PKCE code verifier."""
+    flow = _build_flow()
     kwargs: dict[str, str] = {
         "access_type": "offline",
         "include_granted_scopes": "true",
@@ -69,17 +75,16 @@ def build_authorization_url(state: str) -> str:
     if config.settings.google_auth_prompt:
         kwargs["prompt"] = config.settings.google_auth_prompt
     auth_url, _ = flow.authorization_url(state=state, **kwargs)
-    return auth_url
+
+    code_verifier = flow.code_verifier
+    if code_verifier is None:
+        raise ValueError("failed to generate a PKCE code verifier")
+    return auth_url, code_verifier
 
 
-def exchange_code(state: str, code: str) -> Credentials:
+def exchange_code(state: str, code: str, code_verifier: str | None) -> Credentials:
     """Exchange an authorization code for credentials (incl. refresh token)."""
-    flow = Flow.from_client_config(
-        _client_config(),
-        scopes=_scopes(),
-        redirect_uri=config.settings.google_redirect_uri,
-        state=state,
-    )
+    flow = _build_flow(state=state, code_verifier=code_verifier)
     flow.fetch_token(code=code)
     return flow.credentials
 

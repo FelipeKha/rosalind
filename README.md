@@ -16,6 +16,12 @@ cp .env.example .env    # optional; defaults match the compose file
 just up                 # starts PostgreSQL + SeaweedFS
 ```
 
+When you run recipes through `just`, the root `.env` file is loaded into the
+environment (see `set dotenv-load` in the `justfile`). This feeds both
+`docker compose` and the backend/CLI processes, so values such as
+`ROSALIND_DATABASE_URL`, the S3 settings, and the Google OAuth credentials are
+picked up automatically. Already-exported shell variables take precedence.
+
 This starts:
 
 | Service    | Address             |

@@ -27,12 +27,14 @@ def _fake_credentials() -> Credentials:
 
 def _stub_google(monkeypatch) -> None:
     monkeypatch.setattr(
-        auth_service.google_auth, "build_authorization_url", lambda state: FAKE_AUTH_URL
+        auth_service.google_auth,
+        "build_authorization_url",
+        lambda state: (FAKE_AUTH_URL, "code-verifier"),
     )
     monkeypatch.setattr(
         auth_service.google_auth,
         "exchange_code",
-        lambda state, code: _fake_credentials(),
+        lambda state, code, code_verifier: _fake_credentials(),
     )
     monkeypatch.setattr(
         auth_service.google_auth,

@@ -2,6 +2,8 @@
 #
 # Run `just` to see available recipes.
 
+set dotenv-load := true
+
 
 # ==============================================================================
 # General

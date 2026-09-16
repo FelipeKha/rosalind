@@ -43,15 +43,16 @@ def start_connect(db: Session, provider: str = "google") -> ConnectStart:
     db.flush()
 
     state = secrets.token_urlsafe(32)
+    auth_url, code_verifier = google_auth.build_authorization_url(state)
     db.add(
         models.OAuthAuthRequest(
             state=state,
             source_account_id=account.id,
+            code_verifier=code_verifier,
             expires_at=datetime.now(UTC) + _AUTH_REQUEST_TTL,
         )
     )
 
-    auth_url = google_auth.build_authorization_url(state)
     db.commit()
     return ConnectStart(source_account_id=account.id, auth_url=auth_url, state=state)
 
@@ -60,9 +61,11 @@ def complete_connect(db: Session, state: str, code: str) -> models.SourceAccount
     request = db.get(models.OAuthAuthRequest, state)
     if request is None or request.expires_at < datetime.now(UTC):
         raise InvalidStateError("authorization request is unknown or expired")
+    if request.consumed_at is not None:
+        raise InvalidStateError("authorization request was already consumed")
 
     try:
-        credentials = google_auth.exchange_code(state, code)
+        credentials = google_auth.exchange_code(state, code, request.code_verifier)
         userinfo = google_auth.fetch_userinfo(credentials)
     except ProviderError:
         raise
@@ -80,6 +83,7 @@ def complete_connect(db: Session, state: str, code: str) -> models.SourceAccount
     _upsert_credential(account, credentials, provider="google")
 
     request.status = STATUS_CONNECTED
+    request.consumed_at = datetime.now(UTC)
     db.commit()
     return account
 

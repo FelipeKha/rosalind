@@ -18,7 +18,7 @@ def _configure(monkeypatch) -> None:
 def test_build_authorization_url_requests_offline_access(monkeypatch) -> None:
     _configure(monkeypatch)
 
-    auth_url = google_auth.build_authorization_url(state="state-123")
+    auth_url, code_verifier = google_auth.build_authorization_url(state="state-123")
 
     query = parse_qs(urlparse(auth_url).query)
     assert query["access_type"] == ["offline"]
@@ -26,12 +26,21 @@ def test_build_authorization_url_requests_offline_access(monkeypatch) -> None:
     assert query["state"] == ["state-123"]
     assert query["redirect_uri"] == ["http://localhost:8000/auth/google/callback"]
     assert "prompt" not in query
+    assert code_verifier
+
+
+def test_build_authorization_url_generates_code_verifier(monkeypatch) -> None:
+    _configure(monkeypatch)
+
+    _, code_verifier = google_auth.build_authorization_url(state="state-123")
+
+    assert len(code_verifier) >= 43
 
 
 def test_build_authorization_url_omits_prompt_by_default(monkeypatch) -> None:
     _configure(monkeypatch)
 
-    auth_url = google_auth.build_authorization_url(state="state-123")
+    auth_url, _ = google_auth.build_authorization_url(state="state-123")
     assert "prompt=" not in auth_url
 
 
@@ -39,6 +48,14 @@ def test_build_authorization_url_honors_prompt_config(monkeypatch) -> None:
     _configure(monkeypatch)
     monkeypatch.setattr(config.settings, "google_auth_prompt", "consent")
 
-    auth_url = google_auth.build_authorization_url(state="state-123")
+    auth_url, _ = google_auth.build_authorization_url(state="state-123")
     query = parse_qs(urlparse(auth_url).query)
     assert query["prompt"] == ["consent"]
+
+
+def test_build_flow_preserves_provided_code_verifier(monkeypatch) -> None:
+    _configure(monkeypatch)
+
+    flow = google_auth._build_flow(code_verifier="provided-verifier")
+
+    assert flow.code_verifier == "provided-verifier"
