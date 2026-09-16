@@ -2027,5 +2027,6 @@ client-independent API
 ## Google
 [Google Support, How to download your Google data](https://support.google.com/accounts/answer/3024190?hl=en)
 [Google Support, Share a copy of your data with a third party](https://support.google.com/accounts/answer/14452558?hl=en&ref_topic=7188671&sjid=7433463273840062300-EU#country_avail)
-[Google Developers Documentation, REST Resource: people](https://developers.google.com/people/api/rest/v1/people#Person.Source)
+[Google Developers Documentation, REST Resource: people](https://developers.google.com/people/api/rest/v1/people#Pource)
+[Google Developers Documentation, REST Resource: people](https://developers.google.com/people/api/rest/v1/people)
 [Google Developers Documentation, Develop on Google Workspace](https://developers.google.com/workspace/guides/get-started)

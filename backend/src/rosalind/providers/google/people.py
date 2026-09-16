@@ -12,35 +12,36 @@ from sqlalchemy.orm import Session
 from rosalind.auth import google as google_auth
 from rosalind.auth import service as auth_service
 
-ALL_PERSON_FIELDS = (
-    "addresses,"
-    "ageRanges,"
-    "biographies,"
-    "birthdays,"
-    "calendarUrls,"
-    "clientData,"
-    "coverPhotos,"
-    "emailAddresses,"
-    "events,"
-    "externalIds,"
-    "genders,"
-    "imClients,"
-    "interests,"
-    "locales,"
-    "locations,"
-    "memberships,"
-    "metadata,"
-    "miscKeywords,"
-    "names,"
-    "nicknames,"
-    "occupations,"
-    "organizations,"
-    "phoneNumbers,"
-    "photos,"
-    "relations,"
-    "sipAddresses,"
-    "skills,"
-    "urls,"
+# https://developers.google.com/people/api/rest/v1/people/get
+GOOGLE_PERSON_FIELDS = (
+    "addresses",
+    "ageRanges",
+    "biographies",
+    "birthdays",
+    "calendarUrls",
+    "clientData",
+    "coverPhotos",
+    "emailAddresses",
+    "events",
+    "externalIds",
+    "genders",
+    "imClients",
+    "interests",
+    "locales",
+    "locations",
+    "memberships",
+    "metadata",
+    "miscKeywords",
+    "names",
+    "nicknames",
+    "occupations",
+    "organizations",
+    "phoneNumbers",
+    "photos",
+    "relations",
+    "sipAddresses",
+    "skills",
+    "urls",
     "userDefined",
 )
 
@@ -58,7 +59,8 @@ def fetch_profile(credentials: Credentials) -> dict[str, Any]:
     return (
         service.people()
         .get(
-            resourceName="people/me", personFields=",".join(ALL_PERSON_FIELDS)
+            resourceName="people/me",
+            personFields=",".join(GOOGLE_PERSON_FIELDS),
         )
         .execute()
     )
