@@ -10,6 +10,7 @@ from rosalind import config, models, object_storage
 from rosalind.api.schemas import imports as schemas
 from rosalind.db import get_db
 from rosalind.ingestion import manifest, service
+from rosalind.providers.google import people as google_people
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -40,6 +41,20 @@ def create_google_takeout(
         bucket=config.settings.s3_bucket,
         storage_prefix=manifest.storage_prefix(import_.id),
         status=import_.status,
+    )
+
+
+@router.post(
+    "/google/profile",
+    response_model=schemas.GoogleProfileImportResponse,
+)
+def import_google_profile(db: SessionDep) -> schemas.GoogleProfileImportResponse:
+    result = google_people.import_profile(db)
+    return schemas.GoogleProfileImportResponse(
+        status=result.status,
+        account=result.account,
+        display_name=result.display_name,
+        fetched_at=result.fetched_at,
     )
 
 

@@ -49,3 +49,6 @@ just revision "msg"    # autogenerate a new migration
 | GET    | `/imports`                  | List all imports                               |
 | GET    | `/imports/{id}`             | Fetch an import and its files                  |
 | DELETE | `/imports/{id}`             | Delete an import and its raw objects           |
+| POST   | `/auth/google/connect`      | Start a Google OAuth authorization             |
+| GET    | `/auth/google/status`       | Check an authorization request status          |
+| DELETE | `/auth/google`              | Revoke and remove stored Google credentials    |

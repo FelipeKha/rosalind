@@ -2021,5 +2021,12 @@ client-independent API
 ```
 
 
-### Sources
+# Sources
 [Martin G. Skjæveland, Krisztian Balog, Nolwenn Bernard, Weronika Łajewska, Trond Linjordet, *An ecosystem for personal knowledge graphs: A survey and research roadmap*, AI Open, 27 Feb 2024](https://www.sciencedirect.com/science/article/pii/S2666651024000044?via%3Dihub)
+
+## Google
+[Google Support, How to download your Google data](https://support.google.com/accounts/answer/3024190?hl=en)
+[Google Support, Share a copy of your data with a third party](https://support.google.com/accounts/answer/14452558?hl=en&ref_topic=7188671&sjid=7433463273840062300-EU#country_avail)
+[Google Developers Documentation, REST Resource: people](https://developers.google.com/people/api/rest/v1/people#Pource)
+[Google Developers Documentation, REST Resource: people](https://developers.google.com/people/api/rest/v1/people)
+[Google Developers Documentation, Develop on Google Workspace](https://developers.google.com/workspace/guides/get-started)

@@ -21,6 +21,9 @@ uv run rosalind import create google ~/Downloads/Takeout
 uv run rosalind import list
 uv run rosalind import show <import_id>
 uv run rosalind import delete <import_id>
+uv run rosalind google connect
+uv run rosalind google import profile
+uv run rosalind google disconnect
 ```
 
 ## Configuration

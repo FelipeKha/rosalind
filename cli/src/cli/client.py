@@ -84,3 +84,56 @@ def delete_import(import_id: str) -> None:
         response.raise_for_status()
     except httpx.HTTPError as exc:
         raise ApiClientError(f"unable to delete import: {exc}") from exc
+
+
+def connect_google() -> dict[str, object]:
+    try:
+        response = httpx.post(
+            f"{config.api_url()}/auth/google/connect",
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"unable to start Google authorization: {exc}") from exc
+
+    return response.json()
+
+
+def google_auth_status(state: str) -> dict[str, object]:
+    try:
+        response = httpx.get(
+            f"{config.api_url()}/auth/google/status",
+            params={"state": state},
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"unable to check authorization status: {exc}") from exc
+
+    return response.json()
+
+
+def import_google_profile() -> dict[str, object]:
+    try:
+        response = httpx.post(
+            f"{config.api_url()}/imports/google/profile",
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"unable to import Google profile: {exc}") from exc
+
+    return response.json()
+
+
+def disconnect_google() -> dict[str, object]:
+    try:
+        response = httpx.delete(
+            f"{config.api_url()}/auth/google",
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"unable to disconnect Google: {exc}") from exc
+
+    return response.json()
