@@ -139,12 +139,15 @@ secrets:
 # ==============================================================================
 
 check:
+    just backend-format
     just backend-check
+    just cli-format
     just cli-check
     just shellcheck
     just shfmt
     just containers
     just secrets
+    just e2e-test
 
 ci:
     just backend-check
