@@ -52,3 +52,10 @@ class ImportListResponse(BaseModel):
 
 class ImportDetailResponse(ImportSummaryResponse):
     files: list[FileResponse]
+
+
+class GoogleProfileImportResponse(BaseModel):
+    status: str
+    account: str | None = None
+    display_name: str | None = None
+    fetched_at: datetime

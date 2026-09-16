@@ -1,9 +1,11 @@
 import typer
 
 from cli.commands import status
+from cli.commands.google_commands import google_app
 from cli.commands.import_commands import import_app
 
 
 def register(app: typer.Typer) -> None:
     app.command()(status.status)
     app.add_typer(import_app, name="import")
+    app.add_typer(google_app, name="google")

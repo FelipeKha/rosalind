@@ -1420,6 +1420,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "boto3" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "google-api-python-client" },
     { name = "google-auth-httplib2" },
@@ -1446,6 +1447,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.16.0" },
     { name = "boto3", specifier = ">=1.35.0" },
+    { name = "cryptography", specifier = ">=44.0.0" },
     { name = "fastapi", specifier = ">=0.141.0" },
     { name = "google-api-python-client", specifier = ">=2.200.0" },
     { name = "google-auth-httplib2", specifier = ">=0.4.2" },

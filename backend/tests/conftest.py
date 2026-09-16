@@ -1,14 +1,23 @@
 from collections.abc import Iterator
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.community.postgres import PostgresContainer
 
+from rosalind import config
 from rosalind.api.app import app
 from rosalind.db import get_db
 from rosalind.models import Base
+
+
+@pytest.fixture(autouse=True)
+def _encryption_key(monkeypatch) -> None:
+    monkeypatch.setattr(
+        config.settings, "token_encryption_key", Fernet.generate_key().decode()
+    )
 
 
 @pytest.fixture(scope="session")

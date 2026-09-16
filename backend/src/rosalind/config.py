@@ -13,5 +13,12 @@ class Settings(BaseSettings):
     s3_secret_key: str = "rosalind"
     s3_region: str = "us-east-1"
 
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+    google_auth_prompt: str | None = None
+
+    token_encryption_key: str | None = None
+
 
 settings = Settings()
