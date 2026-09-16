@@ -16,10 +16,19 @@ from googleapiclient.discovery import Resource, build  # type: ignore[import-unt
 
 from rosalind import config
 
+# https://developers.google.com/identity/protocols/oauth2/scopes?utm_source=chatgpt.com
 GOOGLE_SCOPES = [
     "openid",
-    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/contacts.readonly",
+    "https://www.googleapis.com/auth/directory.readonly",
+    "https://www.googleapis.com/auth/user.addresses.read",
+    "https://www.googleapis.com/auth/user.birthday.read",
+    "https://www.googleapis.com/auth/user.emails.read",
+    "https://www.googleapis.com/auth/user.gender.read",
+    "https://www.googleapis.com/auth/user.organization.read",
+    "https://www.googleapis.com/auth/user.phonenumbers.read",
     "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
 ]
 
 
@@ -57,14 +66,20 @@ def _client_config() -> dict[str, Any]:
     }
 
 
-def _build_flow(state: str | None = None, code_verifier: str | None = None) -> Flow:
-    kwargs: dict[str, Any] = {"redirect_uri": config.settings.google_redirect_uri}
+def _build_flow(
+    state: str | None = None, code_verifier: str | None = None
+) -> Flow:
+    kwargs: dict[str, Any] = {
+        "redirect_uri": config.settings.google_redirect_uri
+    }
     if state is not None:
         kwargs["state"] = state
     if code_verifier is not None:
         kwargs["code_verifier"] = code_verifier
         kwargs["autogenerate_code_verifier"] = False
-    return Flow.from_client_config(_client_config(), scopes=GOOGLE_SCOPES, **kwargs)
+    return Flow.from_client_config(
+        _client_config(), scopes=GOOGLE_SCOPES, **kwargs
+    )
 
 
 def build_authorization_url(state: str) -> tuple[str, str]:
@@ -84,7 +99,9 @@ def build_authorization_url(state: str) -> tuple[str, str]:
     return auth_url, code_verifier
 
 
-def exchange_code(state: str, code: str, code_verifier: str | None) -> Credentials:
+def exchange_code(
+    state: str, code: str, code_verifier: str | None
+) -> Credentials:
     """Exchange an authorization code for credentials (incl. refresh token)."""
     flow = _build_flow(state=state, code_verifier=code_verifier)
     flow.fetch_token(code=code)
@@ -116,9 +133,13 @@ def refresh(credentials: Credentials) -> Credentials:
 
 def fetch_userinfo(credentials: Credentials) -> dict[str, str]:
     """Fetch the authenticated user's id, email, and name."""
-    service = build("oauth2", "v2", credentials=credentials, cache_discovery=False)
+    service = build(
+        "oauth2", "v2", credentials=credentials, cache_discovery=False
+    )
     return service.userinfo().get().execute()
 
 
 def build_people_service(credentials: Credentials) -> Resource:
-    return build("people", "v1", credentials=credentials, cache_discovery=False)
+    return build(
+        "people", "v1", credentials=credentials, cache_discovery=False
+    )
