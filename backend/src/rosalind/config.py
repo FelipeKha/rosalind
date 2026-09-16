@@ -19,10 +19,6 @@ class Settings(BaseSettings):
     google_auth_prompt: str | None = None
     google_token_uri: str = "https://oauth2.googleapis.com/token"  # nosec B105
     google_auth_uri: str = "https://accounts.google.com/o/oauth2/auth"
-    google_scopes: str = (
-        "openid,https://www.googleapis.com/auth/userinfo.profile,"
-        "https://www.googleapis.com/auth/userinfo.email"
-    )
 
     token_encryption_key: str | None = None
 

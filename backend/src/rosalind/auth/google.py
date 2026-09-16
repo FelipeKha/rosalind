@@ -16,9 +16,11 @@ from googleapiclient.discovery import Resource, build  # type: ignore[import-unt
 
 from rosalind import config
 
-
-def _scopes() -> list[str]:
-    return [s.strip() for s in config.settings.google_scopes.split(",") if s.strip()]
+GOOGLE_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/userinfo.email",
+]
 
 
 def to_naive_utc(expiry: datetime | None) -> datetime | None:
@@ -62,7 +64,7 @@ def _build_flow(state: str | None = None, code_verifier: str | None = None) -> F
     if code_verifier is not None:
         kwargs["code_verifier"] = code_verifier
         kwargs["autogenerate_code_verifier"] = False
-    return Flow.from_client_config(_client_config(), scopes=_scopes(), **kwargs)
+    return Flow.from_client_config(_client_config(), scopes=GOOGLE_SCOPES, **kwargs)
 
 
 def build_authorization_url(state: str) -> tuple[str, str]:
