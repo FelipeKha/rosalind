@@ -124,3 +124,16 @@ def import_google_profile() -> dict[str, object]:
         raise ApiClientError(f"unable to import Google profile: {exc}") from exc
 
     return response.json()
+
+
+def disconnect_google() -> dict[str, object]:
+    try:
+        response = httpx.delete(
+            f"{config.api_url()}/auth/google",
+            timeout=DEFAULT_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ApiClientError(f"unable to disconnect Google: {exc}") from exc
+
+    return response.json()

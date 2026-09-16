@@ -67,3 +67,22 @@ def test_connect_google_raises_on_error(monkeypatch) -> None:
 
     with pytest.raises(client.ApiClientError):
         client.connect_google()
+
+
+def test_disconnect_google_deletes_endpoint(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_delete(url: str, timeout: float) -> httpx.Response:
+        captured["url"] = url
+        return httpx.Response(
+            200,
+            json={"status": "disconnected", "revoked": True},
+            request=httpx.Request("DELETE", url),
+        )
+
+    monkeypatch.setattr(client.httpx, "delete", fake_delete)
+
+    result = client.disconnect_google()
+
+    assert result == {"status": "disconnected", "revoked": True}
+    assert captured["url"] == "http://localhost:8000/auth/google"

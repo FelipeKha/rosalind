@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -19,6 +20,8 @@ STATUS_PENDING = "pending"
 STATUS_CONNECTED = "connected"
 STATUS_EXPIRED = "expired"
 STATUS_NOT_FOUND = "not_found"
+STATUS_DISCONNECTED = "disconnected"
+STATUS_ALREADY_DISCONNECTED = "already_disconnected"
 
 _AUTH_REQUEST_TTL = timedelta(minutes=10)
 
@@ -35,6 +38,12 @@ class AuthStatus:
     status: str
     source_account_id: uuid.UUID | None = None
     display_name: str | None = None
+
+
+@dataclass
+class DisconnectResult:
+    status: str
+    revoked: bool
 
 
 def start_connect(db: Session, provider: str = "google") -> ConnectStart:
@@ -109,6 +118,44 @@ def get_status(db: Session, state: str) -> AuthStatus:
     return AuthStatus(
         status=STATUS_PENDING, source_account_id=request.source_account_id
     )
+
+
+def disconnect(db: Session, provider: str = "google") -> DisconnectResult:
+    """Revoke and remove stored credentials for a provider.
+
+    Revocation at the provider is best-effort; local credentials are removed
+    regardless so the backend no longer holds a live grant. Source accounts and
+    any already-imported data are intentionally left untouched.
+    """
+    credentials = db.scalars(
+        select(models.OAuthCredential).where(
+            models.OAuthCredential.provider == provider
+        )
+    ).all()
+    if not credentials:
+        return DisconnectResult(status=STATUS_ALREADY_DISCONNECTED, revoked=False)
+
+    revoked = False
+    for credential in credentials:
+        token = _revokable_token(credential)
+        if token is not None:
+            with suppress(ProviderError):
+                google_auth.revoke(token)
+                revoked = True
+        db.delete(credential)
+
+    db.commit()
+    return DisconnectResult(status=STATUS_DISCONNECTED, revoked=revoked)
+
+
+def _revokable_token(credential: models.OAuthCredential) -> str | None:
+    encrypted = credential.refresh_token_encrypted or credential.access_token_encrypted
+    if encrypted is None:
+        return None
+    try:
+        return security.decrypt_secret(encrypted)
+    except security.SecurityError:
+        return None
 
 
 def load_credentials(

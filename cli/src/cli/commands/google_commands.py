@@ -50,6 +50,26 @@ def import_profile() -> None:
     typer.echo(f"Imported Google profile for {display}.")
 
 
+@google_app.command("disconnect")
+def disconnect() -> None:
+    """Revoke Rosalind's access to your Google account."""
+    try:
+        result = client.disconnect_google()
+    except client.ApiClientError as exc:
+        typer.echo(f"Failed to disconnect Google: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if result.get("status") == "already_disconnected":
+        typer.echo("Google is not connected.")
+    elif result.get("revoked"):
+        typer.echo("Disconnected from Google.")
+    else:
+        typer.echo(
+            "Disconnected locally; Google token revocation failed. "
+            "You may revoke access in your Google account settings."
+        )
+
+
 def _poll_status(state: str, timeout: float = 120.0, interval: float = 1.0) -> None:
     deadline = time.monotonic() + timeout
     while True:

@@ -57,3 +57,42 @@ def test_import_profile_reports_backend_error(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "Failed to import Google profile" in result.stderr
+
+
+def test_disconnect_prints_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        google_commands.client,
+        "disconnect_google",
+        lambda: {"status": "disconnected", "revoked": True},
+    )
+
+    result = runner.invoke(app, ["google", "disconnect"])
+
+    assert result.exit_code == 0
+    assert "Disconnected from Google." in result.stdout
+
+
+def test_disconnect_already_disconnected(monkeypatch) -> None:
+    monkeypatch.setattr(
+        google_commands.client,
+        "disconnect_google",
+        lambda: {"status": "already_disconnected", "revoked": False},
+    )
+
+    result = runner.invoke(app, ["google", "disconnect"])
+
+    assert result.exit_code == 0
+    assert "Google is not connected." in result.stdout
+
+
+def test_disconnect_reports_backend_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        google_commands.client,
+        "disconnect_google",
+        lambda: (_ for _ in ()).throw(google_commands.client.ApiClientError("boom")),
+    )
+
+    result = runner.invoke(app, ["google", "disconnect"])
+
+    assert result.exit_code == 1
+    assert "Failed to disconnect Google" in result.stderr

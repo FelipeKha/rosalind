@@ -91,6 +91,7 @@ Set it as `ROSALIND_TOKEN_ENCRYPTION_KEY`.
 cd cli
 uv run rosalind google connect          # opens a browser, stores credentials
 uv run rosalind google import profile   # fetches your People API profile
+uv run rosalind google disconnect       # revokes access and removes stored credentials
 ```
 
 The Google authorization flow requests offline access so the backend can

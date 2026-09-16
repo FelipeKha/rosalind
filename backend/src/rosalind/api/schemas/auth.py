@@ -14,3 +14,8 @@ class AuthStatusResponse(BaseModel):
     status: str
     source_account_id: uuid.UUID | None = None
     display_name: str | None = None
+
+
+class DisconnectResponse(BaseModel):
+    status: str
+    revoked: bool

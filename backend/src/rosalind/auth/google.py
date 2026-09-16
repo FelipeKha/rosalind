@@ -9,12 +9,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import requests
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow  # type: ignore[import-untyped]
 from googleapiclient.discovery import Resource, build  # type: ignore[import-untyped]
 
 from rosalind import config
+from rosalind.auth.errors import ProviderError
+
+GOOGLE_REVOKE_URI = "https://oauth2.googleapis.com/revoke"
 
 # https://developers.google.com/identity/protocols/oauth2/scopes?utm_source=chatgpt.com
 GOOGLE_SCOPES = [
@@ -66,20 +70,14 @@ def _client_config() -> dict[str, Any]:
     }
 
 
-def _build_flow(
-    state: str | None = None, code_verifier: str | None = None
-) -> Flow:
-    kwargs: dict[str, Any] = {
-        "redirect_uri": config.settings.google_redirect_uri
-    }
+def _build_flow(state: str | None = None, code_verifier: str | None = None) -> Flow:
+    kwargs: dict[str, Any] = {"redirect_uri": config.settings.google_redirect_uri}
     if state is not None:
         kwargs["state"] = state
     if code_verifier is not None:
         kwargs["code_verifier"] = code_verifier
         kwargs["autogenerate_code_verifier"] = False
-    return Flow.from_client_config(
-        _client_config(), scopes=GOOGLE_SCOPES, **kwargs
-    )
+    return Flow.from_client_config(_client_config(), scopes=GOOGLE_SCOPES, **kwargs)
 
 
 def build_authorization_url(state: str) -> tuple[str, str]:
@@ -99,9 +97,7 @@ def build_authorization_url(state: str) -> tuple[str, str]:
     return auth_url, code_verifier
 
 
-def exchange_code(
-    state: str, code: str, code_verifier: str | None
-) -> Credentials:
+def exchange_code(state: str, code: str, code_verifier: str | None) -> Credentials:
     """Exchange an authorization code for credentials (incl. refresh token)."""
     flow = _build_flow(state=state, code_verifier=code_verifier)
     flow.fetch_token(code=code)
@@ -131,15 +127,25 @@ def refresh(credentials: Credentials) -> Credentials:
     return credentials
 
 
+def revoke(token: str) -> None:
+    """Revoke a token at Google so it can no longer be used or refreshed."""
+    try:
+        response = GoogleRequest().session.post(
+            GOOGLE_REVOKE_URI,
+            data={"token": token},
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ProviderError(f"failed to revoke Google token: {exc}") from exc
+
+
 def fetch_userinfo(credentials: Credentials) -> dict[str, str]:
     """Fetch the authenticated user's id, email, and name."""
-    service = build(
-        "oauth2", "v2", credentials=credentials, cache_discovery=False
-    )
+    service = build("oauth2", "v2", credentials=credentials, cache_discovery=False)
     return service.userinfo().get().execute()
 
 
 def build_people_service(credentials: Credentials) -> Resource:
-    return build(
-        "people", "v1", credentials=credentials, cache_discovery=False
-    )
+    return build("people", "v1", credentials=credentials, cache_discovery=False)

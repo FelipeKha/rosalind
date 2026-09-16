@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from google.oauth2.credentials import Credentials
 
 from rosalind.auth import service as auth_service
+from rosalind.auth.errors import ProviderError
 from rosalind.providers.google import people as google_people
 
 FAKE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth?foo=bar"
@@ -129,3 +130,59 @@ def test_import_profile_returns_confirmation(
 def test_import_profile_requires_credentials(api_client: TestClient) -> None:
     response = api_client.post("/imports/google/profile")
     assert response.status_code == 409
+
+
+def test_disconnect_removes_credentials(api_client: TestClient, monkeypatch) -> None:
+    _stub_google(monkeypatch)
+    revoke_calls: list[str] = []
+    monkeypatch.setattr(
+        auth_service.google_auth, "revoke", lambda token: revoke_calls.append(token)
+    )
+
+    state = _connect(api_client)["state"]
+    api_client.get(
+        "/auth/google/callback", params={"state": state, "code": "auth-code"}
+    )
+
+    response = api_client.delete("/auth/google")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "disconnected"
+    assert body["revoked"] is True
+    assert revoke_calls == ["refresh-token"]
+
+    assert api_client.post("/imports/google/profile").status_code == 409
+
+
+def test_disconnect_revocation_failure_still_removes(
+    api_client: TestClient, monkeypatch
+) -> None:
+    _stub_google(monkeypatch)
+
+    def boom(token: str) -> None:
+        raise ProviderError("network down")
+
+    monkeypatch.setattr(auth_service.google_auth, "revoke", boom)
+
+    state = _connect(api_client)["state"]
+    api_client.get(
+        "/auth/google/callback", params={"state": state, "code": "auth-code"}
+    )
+
+    response = api_client.delete("/auth/google")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "disconnected"
+    assert body["revoked"] is False
+
+    assert api_client.post("/imports/google/profile").status_code == 409
+
+
+def test_disconnect_already_disconnected(api_client: TestClient, monkeypatch) -> None:
+    _stub_google(monkeypatch)
+
+    response = api_client.delete("/auth/google")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "already_disconnected"
+    assert body["revoked"] is False

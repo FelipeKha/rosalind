@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from google.oauth2.credentials import Credentials
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rosalind import models
@@ -63,3 +64,22 @@ def test_load_credentials_refreshes_expired_token(
     _, credentials = auth_service.load_credentials(db_session, "google")
 
     assert credentials.token == "refreshed-access-token"
+
+
+def test_disconnect_removes_credentials_keeps_account(
+    db_session: Session, monkeypatch
+) -> None:
+    future = datetime.now(UTC) + timedelta(hours=1)
+    account = _create_account_with_credentials(db_session, future)
+    revoked: list[str] = []
+    monkeypatch.setattr(
+        auth_service.google_auth, "revoke", lambda token: revoked.append(token)
+    )
+
+    result = auth_service.disconnect(db_session, "google")
+
+    assert result.status == "disconnected"
+    assert result.revoked is True
+    assert revoked == ["refresh-token"]
+    assert db_session.get(models.SourceAccount, account.id) is not None
+    assert db_session.scalars(select(models.OAuthCredential)).all() == []

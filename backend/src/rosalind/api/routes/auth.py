@@ -37,3 +37,9 @@ def status(state: str, db: SessionDep) -> schemas.AuthStatusResponse:
         source_account_id=result.source_account_id,
         display_name=result.display_name,
     )
+
+
+@router.delete("", response_model=schemas.DisconnectResponse)
+def disconnect(db: SessionDep) -> schemas.DisconnectResponse:
+    result = service.disconnect(db, "google")
+    return schemas.DisconnectResponse(status=result.status, revoked=result.revoked)
