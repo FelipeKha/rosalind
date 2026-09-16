@@ -83,11 +83,31 @@ def complete_connect(db: Session, state: str, code: str) -> models.SourceAccount
             f"failed to exchange Google authorization code: {exc}"
         ) from exc
 
-    account = db.get(models.SourceAccount, request.source_account_id)
-    if account is None:
-        raise InvalidStateError("authorization request references an unknown account")
+    account_identifier = userinfo.get("id")
+    if not account_identifier:
+        raise ProviderError("Google userinfo did not include an account id")
 
-    account.account_identifier = userinfo.get("id")
+    account = db.scalar(
+        select(models.SourceAccount).where(
+            models.SourceAccount.provider == "google",
+            models.SourceAccount.account_identifier == account_identifier,
+        )
+    )
+
+    if account is not None:
+        pending = db.get(models.SourceAccount, request.source_account_id)
+        request.source_account_id = account.id
+        db.flush()
+        if pending is not None and pending.id != account.id:
+            db.delete(pending)
+    else:
+        account = db.get(models.SourceAccount, request.source_account_id)
+        if account is None:
+            raise InvalidStateError(
+                "authorization request references an unknown account"
+            )
+        account.account_identifier = account_identifier
+
     account.display_name = userinfo.get("name")
     _upsert_credential(account, credentials, provider="google")
 
@@ -197,10 +217,15 @@ def _upsert_credential(
     credentials: Credentials,
     provider: str,
 ) -> None:
-    credential = next(
-        (c for c in account.credentials if c.provider == provider),
-        None,
-    )
+    session = Session.object_session(account)
+    if session is None:
+        raise ProviderError("source account is not attached to a session")
+    credential = session.scalars(
+        select(models.OAuthCredential).where(
+            models.OAuthCredential.source_account_id == account.id,
+            models.OAuthCredential.provider == provider,
+        )
+    ).first()
     if credential is None:
         credential = models.OAuthCredential(provider=provider)
         account.credentials.append(credential)

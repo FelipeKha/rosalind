@@ -83,3 +83,86 @@ def test_disconnect_removes_credentials_keeps_account(
     assert revoked == ["refresh-token"]
     assert db_session.get(models.SourceAccount, account.id) is not None
     assert db_session.scalars(select(models.OAuthCredential)).all() == []
+
+
+def _stub_oauth(monkeypatch, identifier: str = "12345", name: str = "Jane Doe") -> None:
+    monkeypatch.setattr(
+        auth_service.google_auth,
+        "build_authorization_url",
+        lambda state: ("https://accounts.google.com/auth", "code-verifier"),
+    )
+    monkeypatch.setattr(
+        auth_service.google_auth,
+        "exchange_code",
+        lambda state, code, code_verifier: _credentials(
+            datetime.now(UTC) + timedelta(hours=1)
+        ),
+    )
+    monkeypatch.setattr(
+        auth_service.google_auth,
+        "fetch_userinfo",
+        lambda credentials: {"id": identifier, "name": name},
+    )
+
+
+def _complete(db: Session) -> models.SourceAccount:
+    start = auth_service.start_connect(db, "google")
+    return auth_service.complete_connect(db, start.state, "auth-code")
+
+
+def test_complete_connect_reuses_existing_account(
+    db_session: Session, monkeypatch
+) -> None:
+    existing = models.SourceAccount(provider="google", account_identifier="12345")
+    db_session.add(existing)
+    db_session.commit()
+
+    _stub_oauth(monkeypatch)
+
+    account = _complete(db_session)
+
+    assert account.id == existing.id
+    assert account.display_name == "Jane Doe"
+
+    google_accounts = db_session.scalars(
+        select(models.SourceAccount).where(models.SourceAccount.provider == "google")
+    ).all()
+    assert len(google_accounts) == 1
+    assert google_accounts[0].account_identifier == "12345"
+    assert db_session.scalars(select(models.OAuthCredential)).all()
+
+
+def test_complete_connect_creates_account_when_none_exists(
+    db_session: Session, monkeypatch
+) -> None:
+    _stub_oauth(monkeypatch)
+
+    account = _complete(db_session)
+
+    assert account.account_identifier == "12345"
+    assert account.display_name == "Jane Doe"
+    assert db_session.scalars(select(models.OAuthCredential)).all()
+
+
+def test_disconnect_then_reconnect_reuses_account(
+    db_session: Session, monkeypatch
+) -> None:
+    _stub_oauth(monkeypatch)
+    monkeypatch.setattr(auth_service.google_auth, "revoke", lambda token: None)
+
+    first = _complete(db_session)
+    first_id = first.id
+
+    result = auth_service.disconnect(db_session, "google")
+    assert result.status == "disconnected"
+    assert db_session.get(models.SourceAccount, first_id) is not None
+    assert db_session.scalars(select(models.OAuthCredential)).all() == []
+
+    second = _complete(db_session)
+
+    assert second.id == first_id
+    google_accounts = db_session.scalars(
+        select(models.SourceAccount).where(models.SourceAccount.provider == "google")
+    ).all()
+    assert len(google_accounts) == 1
+    assert len(db_session.scalars(select(models.OAuthCredential)).all()) == 1

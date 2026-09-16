@@ -186,3 +186,39 @@ def test_disconnect_already_disconnected(api_client: TestClient, monkeypatch) ->
     body = response.json()
     assert body["status"] == "already_disconnected"
     assert body["revoked"] is False
+
+
+def test_reconnect_reuses_account(api_client: TestClient, monkeypatch) -> None:
+    _stub_google(monkeypatch)
+    monkeypatch.setattr(auth_service.google_auth, "revoke", lambda token: None)
+    monkeypatch.setattr(
+        google_people,
+        "fetch_profile",
+        lambda credentials: {
+            "resourceName": "people/12345",
+            "names": [{"displayName": "Jane Doe"}],
+        },
+    )
+
+    first_state = _connect(api_client)["state"]
+    api_client.get(
+        "/auth/google/callback", params={"state": first_state, "code": "auth-code"}
+    )
+    first_account_id = api_client.get(
+        "/auth/google/status", params={"state": first_state}
+    ).json()["source_account_id"]
+
+    api_client.delete("/auth/google")
+
+    second_state = _connect(api_client)["state"]
+    api_client.get(
+        "/auth/google/callback", params={"state": second_state, "code": "auth-code"}
+    )
+
+    status = api_client.get("/auth/google/status", params={"state": second_state})
+    body = status.json()
+    assert body["status"] == "connected"
+    assert body["source_account_id"] == first_account_id
+
+    response = api_client.post("/imports/google/profile")
+    assert response.status_code == 200
