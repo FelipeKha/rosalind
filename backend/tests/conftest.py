@@ -3,7 +3,7 @@ from collections.abc import Iterator
 import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.community.postgres import PostgresContainer
 
@@ -37,6 +37,10 @@ def postgres_url() -> Iterator[str]:
 
 def _make_engine(url: str) -> Engine:
     engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS raw"))
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS core"))
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS agent"))
     Base.metadata.create_all(engine)
     return engine
 
