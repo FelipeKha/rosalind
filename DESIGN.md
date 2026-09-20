@@ -2,27 +2,31 @@
 
 **Project:** Rosalind
 
-## 1. Vision
+---
+
+# 1. Vision
 
 Build a self-hosted personal data warehouse that ingests personal data from different providers (Google, Apple, Meta, Microsoft, etc.), normalizes it into a stable canonical model, and exposes it through a client-independent API.
 
 The platform should ultimately support multiple clients:
 
-- CLI — first client
-- AI agents
-- Browser/web UI
-- Native desktop/mobile applications
-- Other applications integrating through the API
+* CLI — first client
+* AI agents
+* Browser/web UI
+* Native desktop/mobile applications
+* Other applications integrating through the API
 
 The central architectural principle is:
 
 > **The data server is the product; clients are consumers of the data server.**
 
+Rosalind is therefore not primarily a collection of import scripts or an AI application. It is a reliable personal-data substrate that preserves source evidence, builds a provider-independent canonical model, and exposes that model to software and AI agents.
+
 ---
 
-## 2. Core Architectural Principles
+# 2. Core Architectural Principles
 
-### 2.1 Canonical personal-data model
+## 2.1 Canonical personal-data model
 
 All provider-specific data is mapped into a common internal model.
 
@@ -34,26 +38,52 @@ Apple Contact  ──┼──> Canonical Person
 Meta Contact   ──┘
 ```
 
-"Canonical" means the standard internal representation used by the platform, independent of the provider's original format.
+"Canonical" means the standard internal representation used by Rosalind, independent of the provider's original format.
 
 The canonical model is not the raw source of truth. Raw provider data is retained separately.
 
-### 2.2 Raw data is immutable
+The first version of the canonical people model does **not** distinguish between "me" and "other people."
 
-Every import is preserved.
+All people are represented using the same `core.person` model.
 
-A new Google Takeout is treated as another observation of the same underlying source data, not as a replacement of the previous Takeout.
+The concept of "me" is an account-level relationship to a person and is therefore intentionally outside the person entity itself. This keeps the model suitable for future multi-user and person-sharing scenarios.
 
-This makes the canonical database rebuildable if normalization or entity-resolution logic changes.
+---
 
-### 2.3 Provider formats are isolated
+## 2.2 Raw data is immutable
+
+Provider observations are preserved in the `raw` schema.
+
+A raw source record represents an immutable observation of a provider object.
+
+A new import containing a changed representation of the same provider object creates another raw record. An identical observation is deduplicated using `payload_sha256`.
+
+This means:
+
+```text
+Provider object
+      │
+      ├── observation A
+      ├── observation B
+      └── observation C
+```
+
+can be preserved without overwriting historical evidence.
+
+Raw records are never cascade-deleted because a canonical person or fact is deleted.
+
+The raw layer is the audit trail from which canonical data can be rebuilt.
+
+---
+
+## 2.3 Provider formats are isolated
 
 Provider-specific formats must never leak into the canonical model.
 
 Use:
 
 ```text
-Provider export
+Provider export/API response
     ↓
 Provider adapter/parser
     ↓
@@ -66,7 +96,93 @@ Canonical model
 
 Each provider adapter is independently versioned.
 
-### 2.4 Client independence
+The canonical model should not contain concepts whose only purpose is to accommodate one provider's representation.
+
+Provider-specific metadata that is useful but has no canonical representation remains available through the raw source record and provenance layer.
+
+---
+
+## 2.4 Source identity is distinct from canonical identity
+
+A provider's identifier is not the canonical identity of an entity.
+
+For example:
+
+```text
+Google / people/c123
+Apple  / ABC123
+```
+
+may both refer to:
+
+```text
+Person / 123
+```
+
+Therefore:
+
+```text
+provider identifier
+       ↓
+source_identity
+       ↓
+canonical person
+```
+
+`core.source_identity` represents the identity of an object within a specific external source account.
+
+`core.person` represents Rosalind's canonical entity.
+
+This distinction allows entity-resolution logic to improve without modifying historical source data.
+
+---
+
+## 2.5 Provenance is first-class
+
+Canonical facts must remain traceable to the source evidence that supports them.
+
+For example:
+
+```text
+Person
+  │
+  └── canonical email
+        │
+        ├── Google assertion
+        ├── Gmail assertion
+        └── shared-profile assertion
+```
+
+A canonical fact may have multiple independent assertions supporting it.
+
+Source-level metadata such as:
+
+* primary status
+* verification status
+* source timestamps
+* source-specific metadata
+
+belongs to the assertion, not to the canonical fact.
+
+Canonical decisions such as:
+
+* which email is primary
+* which name is primary
+* which birthday is canonical
+
+belong to the canonical fact tables.
+
+This deliberately separates:
+
+> "What did the provider say?"
+
+from:
+
+> "What does Rosalind currently believe?"
+
+---
+
+## 2.6 Client independence
 
 The backend exposes an API/domain layer independent of any particular client.
 
@@ -86,10 +202,10 @@ Future clients use the same backend:
 
 ```text
                  Personal Data Server
-                         │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-         CLI         AI agent        Browser/App
+                        │
+            ┌───────────┼───────────┐
+            ▼           ▼           ▼
+           CLI      AI agent     Browser/App
 ```
 
 The backend must not depend on the CLI's implementation.
@@ -104,35 +220,35 @@ The backend must not depend on the CLI's implementation.
 
 Reasons:
 
-- Excellent data-processing ecosystem
-- Strong JSON/Pydantic support
-- Excellent AI/LLM ecosystem
-- Good HTTP/API tooling
-- Fast development
-- Suitable for I/O-heavy ingestion workloads
-- Easy to introduce optimized components later if required
+* Excellent data-processing ecosystem
+* Strong JSON/Pydantic support
+* Excellent AI/LLM ecosystem
+* Good HTTP/API tooling
+* Fast development
+* Suitable for I/O-heavy ingestion workloads
+* Easy to introduce optimized components later if required
 
 The backend should remain a single application initially rather than being split into microservices.
 
 ### Proposed Python stack
 
-| Concern | Technology |
-|---|---|
-| Python/runtime | Python 3.14+ |
-| Environment and dependencies | `uv` |
-| API | FastAPI |
-| Validation / API schemas | Pydantic v2 |
-| Configuration | pydantic-settings |
-| Database abstraction | SQLAlchemy 2 |
-| PostgreSQL driver | psycopg 3 |
-| Database migrations | Alembic |
-| HTTP client | httpx |
-| Testing | pytest |
-| Property-based testing | Hypothesis |
-| Integration-test infrastructure | Testcontainers |
-| Formatting / linting | Ruff |
-| Static type checking | mypy |
-| Structured logging | structlog |
+| Concern                         | Technology        |
+| ------------------------------- | ----------------- |
+| Python/runtime                  | Python 3.14+      |
+| Environment and dependencies    | `uv`              |
+| API                             | FastAPI           |
+| Validation / API schemas        | Pydantic v2       |
+| Configuration                   | pydantic-settings |
+| Database abstraction            | SQLAlchemy 2      |
+| PostgreSQL driver               | psycopg 3         |
+| Database migrations             | Alembic           |
+| HTTP client                     | httpx             |
+| Testing                         | pytest            |
+| Property-based testing          | Hypothesis        |
+| Integration-test infrastructure | Testcontainers    |
+| Formatting / linting            | Ruff              |
+| Static type checking            | mypy              |
+| Structured logging              | structlog         |
 
 The backend should keep clear boundaries between:
 
@@ -145,14 +261,16 @@ Configuration      → pydantic-settings
 
 Pydantic should primarily be used at system boundaries and for validation rather than becoming the representation of every internal object.
 
-### Environment management
+---
+
+## Environment management
 
 Use `uv` for:
 
-- Python version management
-- Virtual environments
-- Dependency installation
-- Dependency locking
+* Python version management
+* Virtual environments
+* Dependency installation
+* Dependency locking
 
 The repository should contain:
 
@@ -165,7 +283,9 @@ Development and CI environments should be reproducible from the lock file.
 
 Do not introduce Conda unless a future requirement makes it necessary.
 
-### Quality gates
+---
+
+## Quality gates
 
 Rosalind should use a layered quality-gate system covering code quality, testing, security, containers, scripts, and database integrity.
 
@@ -180,28 +300,28 @@ tests
 
 Additional checks should cover security and the other artifacts in the repository.
 
-#### Python security
+### Python security
 
 Use:
 
-- **Bandit** — static analysis for common Python security issues
-- **pip-audit** — vulnerability scanning of Python dependencies
+* **Bandit** — static analysis for common Python security issues
+* **pip-audit** — vulnerability scanning of Python dependencies
 
 These should run locally and in CI.
 
-#### Secret scanning
+### Secret scanning
 
 Use **Gitleaks** to detect accidentally committed secrets such as:
 
-- API keys
-- OAuth credentials
-- database credentials
-- tokens
-- private keys
+* API keys
+* OAuth credentials
+* database credentials
+* tokens
+* private keys
 
 Secret scanning should be authoritative in CI and may also run locally.
 
-#### Docker
+### Docker
 
 Dockerfiles should be linted with **Hadolint**.
 
@@ -217,14 +337,14 @@ Docker image
 Trivy
 ```
 
-#### Shell scripts
+### Shell scripts
 
 If the repository contains shell scripts, they should be checked with:
 
-- **ShellCheck** — correctness and common shell pitfalls
-- **shfmt** — shell script formatting
+* **ShellCheck** — correctness and common shell pitfalls
+* **shfmt** — shell script formatting
 
-#### CLI client
+### CLI client
 
 The CLI is a separate client project and should have its own quality gates.
 
@@ -239,19 +359,9 @@ Bandit
 pip-audit
 ```
 
-CLI-specific tests should cover:
-
-- command invocation
-- argument parsing
-- exit codes
-- stdout/stderr behavior
-- API errors
-- configuration
-- authentication
-
 Typer, if used, belongs to the CLI project and is not a backend dependency.
 
-#### Database and migrations
+### Database and migrations
 
 CI should verify that the database schema can be created and migrated successfully from an empty PostgreSQL database.
 
@@ -267,7 +377,7 @@ integration tests
 
 Use `alembic check` to detect unexpected schema drift.
 
-#### Data/import quality
+### Data/import quality
 
 Provider fixture tests and import tests should verify domain-specific invariants in addition to schema validation.
 
@@ -281,49 +391,15 @@ normalization is idempotent
 re-importing identical data creates no duplicates
 ```
 
-Import health checks should also detect suspicious changes in record counts or structure, as described in the ingestion architecture.
+Import health checks should also detect suspicious changes in record counts or structure.
 
-### Quality-gate organization
+---
 
-Developers should not need to remember every individual command. The project task runner should expose a small number of canonical commands:
-
-```text
-just check
-just test
-just security
-just containers
-just ci
-```
-
-A recommended division is:
-
-| Check | Local `just check` | CI |
-|---|:---:|:---:|
-| Ruff format | ✓ | ✓ |
-| Ruff lint | ✓ | ✓ |
-| mypy | ✓ | ✓ |
-| pytest | ✓ | ✓ |
-| Bandit | ✓ | ✓ |
-| pip-audit | ✓ | ✓ |
-| ShellCheck | ✓ | ✓ |
-| shfmt | ✓ | ✓ |
-| Hadolint | ✓ | ✓ |
-| Gitleaks | Optional | ✓ |
-| Trivy | — | ✓ |
-| Database migration tests | — | ✓ |
-| End-to-end tests | — | ✓ |
-
-The exact grouping can evolve as execution time and repository complexity increase.
-
-OWASP ZAP is intentionally not part of the initial quality-gate stack. Dynamic API security testing can be evaluated later when the API and deployment environment have matured.
-
-### Developer task runner
+## Developer task runner
 
 Use **`just`** as the project task runner for common development commands.
 
-The purpose of `just` is to provide a simple, consistent interface for developers to run backend development and quality checks without having to remember individual commands.
-
-Example `justfile`:
+Example:
 
 ```makefile
 check:
@@ -362,31 +438,9 @@ just serve
 
 `just` is developer tooling and is not part of the Rosalind backend runtime.
 
-This should remain distinct from the Rosalind CLI:
+---
 
-```text
-Developer tooling
-    │
-    └── just
-          ├── check
-          ├── test
-          ├── lint
-          ├── format
-          └── serve
-
-Rosalind CLI
-    │
-    └── separate client
-          ├── import
-          ├── people
-          └── search
-
-Rosalind Backend
-    │
-    └── FastAPI
-```
-
-### Local Git hooks
+## Local Git hooks
 
 Consider **pre-commit** for fast checks that should run automatically before a commit.
 
@@ -400,9 +454,9 @@ just check
 
 and the same checks should run in CI.
 
-`just` and `pre-commit` are development tools and must not become dependencies of the production backend.
+---
 
-### Testing strategy
+## Testing strategy
 
 Testing should be divided into several layers:
 
@@ -415,25 +469,25 @@ tests/
 └── fixtures/
 ```
 
-**Unit tests**
+### Unit tests
 
 Test pure domain and transformation logic without external infrastructure:
 
-- Provider parsing
-- Normalization
-- Canonicalization
-- Entity resolution
-- Hashing
-- Deduplication
-- Date/time handling
+* Provider parsing
+* Normalization
+* Canonicalization
+* Entity resolution
+* Hashing
+* Deduplication
+* Date/time handling
 
-**Provider fixture tests**
+### Provider fixture tests
 
 Maintain representative provider export fixtures and test that adapters continue to produce the expected source representation and canonical output.
 
 These tests act as compatibility contracts for provider formats.
 
-**Integration tests**
+### Integration tests
 
 Use a real PostgreSQL instance rather than extensively mocking database behavior.
 
@@ -449,11 +503,11 @@ PostgreSQL
 
 Use Testcontainers or an equivalent containerized PostgreSQL environment for repeatable tests.
 
-**API tests**
+### API tests
 
 Use pytest with httpx to exercise the FastAPI application without requiring a separately running HTTP server.
 
-**End-to-end tests**
+### End-to-end tests
 
 Maintain a small number of tests covering the complete pipeline:
 
@@ -475,7 +529,7 @@ API
 expected result
 ```
 
-**Property-based tests**
+### Property-based tests
 
 Use Hypothesis selectively for important invariants, particularly where transformations must be stable or idempotent.
 
@@ -489,9 +543,9 @@ re-importing identical data creates no duplicates
 canonicalization preserves required information
 ```
 
-Do not introduce a large testing framework beyond these layers until the project requires it.
+---
 
-### Background processing
+## Background processing
 
 Imports may become long-running operations. The initial architecture should therefore leave room for background jobs:
 
@@ -511,25 +565,29 @@ Do not introduce Rust initially.
 
 Rust can be considered later for measured bottlenecks such as:
 
-- Very large-file parsing
-- Hashing
-- Compression
-- Encryption
-- CPU-intensive transformations
-- Memory-intensive local processing
+* Very large-file parsing
+* Hashing
+* Compression
+* Encryption
+* CPU-intensive transformations
+* Memory-intensive local processing
 
-## Database
+---
 
-**PostgreSQL**
+# 4. Database
+
+## PostgreSQL
+
+**PostgreSQL** is the primary datastore.
 
 Use PostgreSQL for:
 
-- Canonical relational data
-- Source/import metadata
-- Provenance
-- Full-text search
-- JSONB for provider-specific information
-- pgvector for semantic search when needed
+* Canonical relational data
+* Source/import metadata
+* Provenance
+* Full-text search
+* JSONB for provider-specific source data
+* `pgvector` for semantic search when needed
 
 Recommended database stack:
 
@@ -545,7 +603,11 @@ Use Alembic for schema migrations.
 
 Do not make a vector database the primary source of truth.
 
-## Clients
+PostgreSQL is intentionally used as the common substrate for structured data, provenance, search, and eventually vector retrieval rather than introducing separate databases prematurely.
+
+---
+
+# 5. Clients
 
 Clients are separate applications from the backend.
 
@@ -579,8 +641,6 @@ The CLI is therefore **not part of the Python backend**.
 
 The CLI should have its own project/package and communicate with Rosalind through the public API. It should not import backend internals or directly access the database.
 
-The CLI may use a Python CLI framework such as Typer, but that dependency belongs to the **CLI client**, not the backend.
-
 Potential clients:
 
 1. CLI — first client
@@ -595,15 +655,13 @@ The same backend API should serve all of them.
 
 The backend should remain usable if the CLI is completely replaced.
 
-For example:
-
 ```text
 CLI ───────────────┐
                    │
 AI agent ──────────┤
                    ▼
-              Public API
-                   │
+               Public API
+                   ▲
 Browser ───────────┤
                    │
 Desktop app ───────┘
@@ -613,74 +671,62 @@ No backend functionality should depend on a particular client being present.
 
 ---
 
-# 4. High-Level Architecture
+# 6. High-Level Architecture
+
+Raw source persistence is deliberately the first durable step after a payload is received. Provider-specific parsing and canonicalization happen after the raw observation has been recorded.
 
 ```text
                        External data providers
               ┌────────────┬────────────┬────────────┐
               │            │            │            │
            Google        Apple         Meta        Others
-              │            │            │
-              └────────────┼────────────┘
+              │            │            │            │
+              └────────────┼────────────┴────────────┘
                            ▼
-                    Import / ingestion
-                           │
-                           ▼
-                    Provider adapters
+                     Import / ingestion
                            │
                            ▼
-                 Source representation
+                    Raw source records
                            │
                            ▼
-                 Validation + staging
+                 Provider validation / parsing
                            │
                            ▼
-                  Entity resolution
+                Provider-independent observations
                            │
                            ▼
-                    Canonical model
+                   Canonicalization /
+                   entity resolution
                            │
-             ┌─────────────┼──────────────┐
-             ▼             ▼              ▼
-          REST/API      Search/AI      CLI client
+                           ▼
+                      Core data model
                            │
-                           ├── structured retrieval
-                           ├── full-text search
-                           └── semantic search
+                  ┌─────────┼──────────┐
+                  ▼         ▼          ▼
+               REST/API  Search/AI  CLI client
+                           │
+                   ┌────────┼────────┐
+                   ▼        ▼        ▼
+               structured  FTS     vectors
+               retrieval          when needed
 ```
 
----
+The important failure-domain boundary is:
 
-# 5. Source / Import Layer
+```text
+Evidence ingestion              Semantic processing
+       │                               │
+       ▼                               ▼
+raw.source_record       →       validation / mapping / canonicalization
+```
 
-## 5.1 Source accounts
+A provider format change must never cause the original payload to be discarded merely because provider validation or mapping failed.
+
+# 7. Source / Import Layer
+
+## 7.1 Source accounts
 
 A source account represents an account at an external provider.
-
-```sql
-CREATE TYPE source_provider AS ENUM (
-    'google',
-    'apple',
-    'meta',
-    'microsoft',
-    'linkedin',
-    'other'
-);
-
-CREATE TABLE source_account (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    provider source_provider NOT NULL,
-
-    account_identifier TEXT,
-
-    display_name TEXT,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    metadata JSONB NOT NULL DEFAULT '{}'
-);
-```
 
 Examples:
 
@@ -691,120 +737,110 @@ Apple iCloud
 Microsoft work
 ```
 
+`public.source_account` remains the provider/account credential concept.
+
+The canonical person model does not depend on a single provider account.
+
+A source account may produce many source records and source identities.
+
 ---
 
-## 5.2 Data imports
+## 7.2 Data imports
 
 Every Takeout/export is an independent import.
 
-```sql
-CREATE TABLE data_import (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+Import metadata tracks:
 
-    source_account_id UUID NOT NULL
-        REFERENCES source_account(id),
+* source account
+* lifecycle
+* parser and parser version
+* file-level hashes
+* import-level metadata
+* observation timing
 
-    provider TEXT NOT NULL,
-
-    started_at TIMESTAMPTZ NOT NULL,
-    completed_at TIMESTAMPTZ,
-
-    source_created_at TIMESTAMPTZ,
-
-    status TEXT NOT NULL,
-
-    file_hash TEXT,
-
-    parser_name TEXT,
-    parser_version TEXT,
-
-    metadata JSONB NOT NULL DEFAULT '{}'
-);
-```
-
-Example:
-
-```text
-Import A
-Google
-2026-09-01
-parser = google_contacts
-version = 2
-
-Import B
-Google
-2026-09-08
-parser = google_contacts
-version = 2
-```
+An identical provider object may be encountered by multiple imports. Reconciliation at the raw level is based on content identity, while canonicalization determines whether observations represent the same underlying entity.
 
 ---
 
-## 5.3 Import upload flow (Step 3)
+## 7.3 Import upload flow
 
-Raw provider files are stored in object storage (S3-compatible, SeaweedFS locally)
-before any semantic parsing happens. The CLI is responsible for the data plane;
-the backend owns the import lifecycle and is the authoritative source of truth
-for import metadata.
+Raw provider files are stored in object storage before semantic parsing happens.
+
+The CLI is responsible for the data plane; the backend owns the import lifecycle and is authoritative for import metadata.
 
 ```text
-CLI ──1. POST /imports/google/takeout────────────────► API
-  ▲                                                    │ creates import (uploading)
-  │                                                    │ returns import_id + bucket + storage_prefix
-  │◄───────────────────────────────────────────────────┘
-CLI ──2. walk directory, collect metadata, SHA-256 (local)
-CLI ──3. upload each file (boto3) ────────────────────► object storage
-CLI ──4. POST /imports/{id}/complete (manifest) ──────► API
-                                                       │ validates + persists import_files
-                                                       │ computes import_hash, marks completed
-                                                       ▼
-                                                 PostgreSQL (imports, import_files)
+CLI ──1. POST /imports/google/takeout──────────────► API
+  ▲                                                │ creates import
+  │                                                │
+  │◄───────────────────────────────────────────────┘
+  │
+  ├─ 2. walk directory
+  ├─ 3. collect metadata + SHA-256
+  ├─ 4. upload files ─────────────────────────────► object storage
+  └─ 5. POST /imports/{id}/complete ─────────────► API
+                                                   │
+                                                   ▼
+                                               PostgreSQL
 ```
 
 Key properties:
 
-- The CLI reads file bytes to hash and upload, but does **not** parse/interpret
-  their contents.
-- The backend derives `storage_key = imports/<import_id>/<path>` and recomputes
-  `file_count`, `total_size`, and a deterministic `import_hash` from the
-  manifest rather than trusting client-supplied totals.
-- Each import is a distinct observation; the same Takeout imported twice produces
-  two `data_import` rows (reconciliation happens in later steps).
-- Object storage is the retention store for original files; PostgreSQL stores
-  only import metadata at this stage. Canonical/source-record tables arrive in
-  later steps.
+* The CLI reads file bytes to hash and upload, but does **not** parse or interpret their contents.
+* The backend derives storage keys and authoritative import statistics.
+* Each import remains a distinct observation.
+* Canonical reconciliation happens after raw data has been accepted.
+* Original files remain in object storage independently from canonical entities.
 
 ---
 
-# 6. Raw Source Records
+# 8. Raw Source Records
 
-Provider data should be preserved before canonicalization.
+The `raw` schema is the immutable evidence layer.
+
+## 8.1 Design goals
+
+The raw layer must:
+
+* preserve provider data as received;
+* retain historical observations;
+* avoid provider-to-canonical information loss;
+* allow canonicalization logic to be rerun;
+* provide an audit trail;
+* remain independent from downstream entity deletion.
+
+The raw layer is deliberately source-oriented rather than domain-oriented.
+
+---
+
+## 8.2 `raw.source_record`
+
+The first implementation uses one immutable row per distinct observed source payload.
+
+Conceptually:
 
 ```sql
-CREATE TABLE source_record (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    import_id UUID NOT NULL
-        REFERENCES data_import(id),
+CREATE TABLE raw.source_record (
+    id UUID PRIMARY KEY,
 
     source_account_id UUID NOT NULL
-        REFERENCES source_account(id),
+        REFERENCES public.source_account(id)
+        ON DELETE RESTRICT,
 
-    entity_type TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    external_id TEXT NOT NULL,
 
-    provider_id TEXT NOT NULL,
+    source_etag TEXT,
+    source_updated_at TIMESTAMPTZ,
+    observed_at TIMESTAMPTZ NOT NULL,
 
-    data JSONB NOT NULL,
-
-    content_hash TEXT NOT NULL,
-
-    first_seen_at TIMESTAMPTZ NOT NULL,
-    last_seen_at TIMESTAMPTZ NOT NULL,
+    payload JSONB NOT NULL,
+    payload_sha256 TEXT NOT NULL,
 
     UNIQUE (
         source_account_id,
-        entity_type,
-        provider_id
+        resource_type,
+        external_id,
+        payload_sha256
     )
 );
 ```
@@ -813,904 +849,926 @@ The combination:
 
 ```text
 source_account
-entity_type
-provider_id
+resource_type
+external_id
 ```
 
-is the source identity of an object.
+identifies a source object within a provider account.
 
-For example:
+`payload_sha256` identifies the exact observed representation.
+
+This means:
 
 ```text
-Google / contact / people/c123
+same source object
++
+same payload
+=
+same raw observation
+```
+
+An identical re-import therefore does not create another raw payload row.
+
+The import itself may still be recorded separately at the import layer.
+
+---
+
+## 8.3 Why raw data is retained
+
+Raw data is intentionally independent from the canonical model.
+
+Suppose a future version of entity resolution changes how a Google Person is mapped:
+
+```text
+Old canonicalization
+    Google Person → Person A
+
+New canonicalization
+    Google Person → Person B
+```
+
+The raw record should not need to change.
+
+The raw layer allows the system to recompute canonical data from historical evidence.
+
+It is therefore treated as an append-only evidence layer.
+
+---
+
+# 9. Canonical Person Model
+
+The canonical people model is divided into:
+
+```text
+core.person
+core.source_identity
+core.source_assertion
+```
+
+plus attribute-specific fact tables.
+
+The model intentionally distinguishes:
+
+```text
+Person
+    = canonical real-world entity
+
+Source identity
+    = identity of that entity in an external source
+
+Source assertion
+    = a statement/evidence observed in a source record
+
+Canonical fact
+    = Rosalind's current resolved representation of that attribute
 ```
 
 ---
 
-# 7. Source Record Versions
+# 10. `core.person`
 
-Do not overwrite historical provider data.
+`core.person` is intentionally minimal:
 
 ```sql
-CREATE TABLE source_record_version (
+CREATE TABLE core.person (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    source_record_id UUID NOT NULL
-        REFERENCES source_record(id),
-
-    import_id UUID NOT NULL
-        REFERENCES data_import(id),
-
-    data JSONB NOT NULL,
-
-    content_hash TEXT NOT NULL,
-
-    observed_at TIMESTAMPTZ NOT NULL,
-
-    UNIQUE(source_record_id, content_hash)
-);
-```
-
-This allows:
-
-```text
-Google people/c123
-
-Version 1 — Sep 1
-John Smith
-john@gmail.com
-
-Version 2 — Sep 8
-John Smith
-john@gmail.com
-john.smith@company.com
-```
-
-If a subsequent Takeout contains exactly the same object, the content hash prevents a duplicate version.
-
----
-
-# 8. Import Strategy
-
-A new Takeout should be treated as an incremental reconciliation of observations.
-
-For every source object:
-
-```python
-content_hash = sha256(canonical_json(source_object))
-```
-
-Then:
-
-```python
-existing = find_source_record(
-    account_id,
-    entity_type,
-    provider_id
-)
-
-if existing is None:
-    create_source_record(...)
-    create_version(...)
-
-elif existing.content_hash != content_hash:
-    create_version(...)
-    update_source_record(...)
-
-else:
-    # Already seen; no new version required.
-    record_observation(...)
-```
-
-Important properties:
-
-- Imports are idempotent.
-- Re-importing the same Takeout does not duplicate data.
-- Changed source objects create new versions.
-- New source objects are added.
-- Existing canonical entities are not recreated merely because a new Takeout was imported.
-
----
-
-# 9. Handling Deletions
-
-A missing object in a later Takeout must **not automatically be interpreted as deletion**.
-
-Reasons include:
-
-- Export incompleteness
-- Provider export changes
-- Filtering
-- Different export options
-- Actual deletion
-
-Therefore track:
-
-```text
-last_seen_import_id
-last_seen_at
-```
-
-and potentially:
-
-```text
-possibly_deleted_from_source
-```
-
-Only treat an object as definitively deleted when the source provides reliable deletion semantics.
-
-Never delete the raw source record merely because it disappeared from an export.
-
----
-
-# 10. Provider Adapter Architecture
-
-Provider-specific parsers should be isolated and versioned.
-
-Recommended structure:
-
-```text
-backend/
-└── ingestion/
-    ├── framework/
-    │   ├── parser.py
-    │   ├── registry.py
-    │   ├── validation.py
-    │   └── staging.py
-    │
-    ├── google/
-    │   ├── contacts/
-    │   │   ├── v1.py
-    │   │   └── v2.py
-    │   ├── gmail/
-    │   └── calendar/
-    │
-    ├── apple/
-    │   ├── contacts/
-    │   ├── mail/
-    │   └── calendar/
-    │
-    └── meta/
-        ├── contacts/
-        └── messages/
-```
-
-A parser should have a common interface:
-
-```python
-class Parser(Protocol):
-    provider: str
-    object_type: str
-    version: str
-
-    def can_parse(self, data: RawImport) -> bool:
-        ...
-
-    def parse(self, data: RawImport) -> list[SourceObject]:
-        ...
-```
-
-Use a parser registry to select the correct adapter.
-
----
-
-# 11. Intermediate Source Representation
-
-Avoid going directly from provider format to canonical data.
-
-Instead:
-
-```text
-Google JSON
-    ↓
-Google adapter
-    ↓
-Source representation
-    ↓
-Canonicalization
-    ↓
-Canonical model
-```
-
-For example:
-
-```json
-{
-  "provider": "google",
-  "object_type": "contact",
-  "provider_id": "people/c123",
-
-  "name": {
-    "given": "John",
-    "family": "Smith"
-  },
-
-  "emails": [
-    {
-      "address": "john@gmail.com",
-      "label": "home"
-    }
-  ]
-}
-```
-
-Apple's representation of the same contact should produce the same source-level structure.
-
-This makes the canonicalization layer provider-independent.
-
----
-
-# 12. Validation and Schema Evolution
-
-Use Pydantic models for provider-specific formats.
-
-Example:
-
-```python
-from pydantic import BaseModel, ConfigDict
-
-
-class GoogleName(BaseModel):
-    givenName: str | None = None
-    familyName: str | None = None
-
-
-class GoogleEmail(BaseModel):
-    value: str
-    type: str | None = None
-
-
-class GoogleContact(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    resourceName: str
-    names: list[GoogleName] = []
-    emailAddresses: list[GoogleEmail] = []
-```
-
-Important rule:
-
-### Additive provider changes
-
-If Google adds a field:
-
-```text
-newField
-```
-
-do not necessarily fail the import.
-
-Preserve unknown fields.
-
-### Breaking provider changes
-
-If a required field disappears or the structure fundamentally changes:
-
-```text
-validation → failure
-```
-
-Do not write corrupted canonical data.
-
-Instead quarantine the import.
-
----
-
-# 13. Import State Machine
-
-Imports should be processed through explicit stages:
-
-```text
-RECEIVED
-   ↓
-SCANNING
-   ↓
-PARSING
-   ↓
-VALIDATING
-   ↓
-STAGING
-   ↓
-NORMALIZING
-   ↓
-ENTITY_RESOLUTION
-   ↓
-COMMITTING
-   ↓
-COMMITTED
-```
-
-Failure state:
-
-```text
-VALIDATING
-     ↓
-QUARANTINED
-```
-
-An invalid import must never corrupt the existing canonical database.
-
-The canonical database should only be updated after the relevant import has successfully passed validation/staging.
-
----
-
-# 14. Import Health Checks
-
-Schema validation alone is insufficient.
-
-Calculate import statistics:
-
-```text
-Import #18
-
-Contacts:           1,842
-Emails:             82,431
-Calendar events:    12,293
-
-New contacts:       4
-Modified contacts:  17
-
-Validation errors:  0
-```
-
-Compare with previous imports.
-
-Flag suspicious changes such as:
-
-```text
-Previous contacts: 1,842
-Current contacts:      23
-```
-
-This could indicate a provider format change even if the JSON technically validates.
-
-Suspicious imports should be quarantined or require explicit approval rather than silently replacing good data.
-
----
-
-# 15. Golden Test Fixtures
-
-Maintain representative real-world export fixtures:
-
-```text
-tests/
-└── fixtures/
-    ├── google/
-    │   ├── contacts/
-    │   │   ├── export_2025.json
-    │   │   └── export_2026.json
-    │   ├── gmail/
-    │   └── calendar/
-    │
-    ├── apple/
-    └── meta/
-```
-
-Test both:
-
-1. Provider parsing
-2. Expected canonical output
-
-Example:
-
-```python
-def test_google_contacts_parser():
-    raw = load_fixture(
-        "google/contacts/export_2026.json"
-    )
-
-    contacts = parse_google_contacts(raw)
-
-    assert len(contacts) == 123
-```
-
-And:
-
-```python
-def test_google_contact_normalization():
-    raw = load_fixture(...)
-
-    result = normalize_google_contacts(raw)
-
-    assert result == load_expected(
-        "google/contact_expected.json"
-    )
-```
-
-These tests are effectively compatibility contracts for each provider.
-
----
-
-# 16. Canonical Identity Model
-
-Distinguish **source identity** from **canonical identity**.
-
-Source identity:
-
-```text
-Google / people/c123
-Apple / ABC123
-```
-
-Canonical identity:
-
-```text
-Person / 123
-```
-
-Mapping:
-
-```text
-Google people/c123 ──┐
-                     ├──> Person 123
-Apple ABC123 ────────┘
-```
-
-This allows entity-resolution logic to improve without changing the raw source data.
-
----
-
-# 17. Canonical People Model
-
-## Person
-
-```sql
-CREATE TABLE person (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    given_name TEXT,
-    family_name TEXT,
-
-    display_name TEXT,
-
-    birth_date DATE,
-
-    notes TEXT,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-## Email address
+The first version does **not** put fields such as `display_name`, `email`, `gender`, or `birth_date` directly on `person`.
 
-```sql
-CREATE TABLE email_address (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    address TEXT NOT NULL,
-
-    normalized_address TEXT NOT NULL,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE(normalized_address)
-);
-```
-
-## Person/email relationship
-
-```sql
-CREATE TABLE person_email (
-    person_id UUID NOT NULL
-        REFERENCES person(id)
-        ON DELETE CASCADE,
-
-    email_id UUID NOT NULL
-        REFERENCES email_address(id)
-        ON DELETE CASCADE,
-
-    label TEXT,
-
-    is_primary BOOLEAN DEFAULT false,
-
-    confidence NUMERIC(4,3),
-
-    PRIMARY KEY (person_id, email_id)
-);
-```
-
-## Phone
-
-```sql
-CREATE TABLE phone_number (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    number TEXT NOT NULL,
-
-    normalized_number TEXT NOT NULL,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    UNIQUE(normalized_number)
-);
-
-CREATE TABLE person_phone (
-    person_id UUID NOT NULL
-        REFERENCES person(id),
-
-    phone_id UUID NOT NULL
-        REFERENCES phone_number(id),
-
-    label TEXT,
-
-    is_primary BOOLEAN DEFAULT false,
-
-    confidence NUMERIC(4,3),
-
-    PRIMARY KEY (person_id, phone_id)
-);
-```
-
----
-
-# 18. Identity Model
-
-```sql
-CREATE TABLE identity (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    person_id UUID NOT NULL
-        REFERENCES person(id),
-
-    provider source_provider NOT NULL,
-
-    provider_user_id TEXT,
-
-    username TEXT,
-
-    profile_url TEXT,
-
-    metadata JSONB NOT NULL DEFAULT '{}',
-
-    UNIQUE(provider, provider_user_id)
-);
-```
-
-Example:
-
-```text
-Person 123
-    ├── Google identity
-    ├── Apple identity
-    ├── LinkedIn identity
-    └── Meta identity
-```
-
----
-
-# 19. Provenance
-
-Every canonical entity should be traceable back to source data.
-
-```sql
-CREATE TABLE entity_source (
-    source_record_id UUID NOT NULL
-        REFERENCES source_record(id),
-
-    entity_type TEXT NOT NULL,
-
-    entity_id UUID NOT NULL,
-
-    match_method TEXT,
-
-    confidence NUMERIC(4,3),
-
-    PRIMARY KEY (
-        source_record_id,
-        entity_type,
-        entity_id
-    )
-);
-```
-
-This allows the system to answer:
-
-> "Why do we believe this is John Smith's email address?"
-
-Example lineage:
-
-```text
-Person 123
-    │
-    └── email = john@gmail.com
-             │
-             ├── Google contact people/c123
-             └── Email message 83921
-```
-
----
-
-# 20. Email Model
-
-Separate email messages from participants.
-
-## Email thread
-
-```sql
-CREATE TABLE email_thread (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    subject_normalized TEXT,
-
-    first_message_at TIMESTAMPTZ,
-
-    last_message_at TIMESTAMPTZ,
-
-    message_count INTEGER NOT NULL DEFAULT 0
-);
-```
-
-## Email message
-
-```sql
-CREATE TABLE email_message (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    internet_message_id TEXT,
-
-    subject TEXT,
-
-    body_text TEXT,
-
-    body_html TEXT,
-
-    sent_at TIMESTAMPTZ,
-
-    received_at TIMESTAMPTZ,
-
-    thread_id UUID
-        REFERENCES email_thread(id),
-
-    in_reply_to_id UUID,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    metadata JSONB NOT NULL DEFAULT '{}'
-);
-```
-
-## Participants
-
-```sql
-CREATE TYPE email_participant_type AS ENUM (
-    'from',
-    'to',
-    'cc',
-    'bcc',
-    'reply_to'
-);
-
-CREATE TABLE email_participant (
-    email_id UUID NOT NULL
-        REFERENCES email_message(id)
-        ON DELETE CASCADE,
-
-    email_address_id UUID NOT NULL
-        REFERENCES email_address(id),
-
-    participant_type email_participant_type NOT NULL,
-
-    position INTEGER,
-
-    PRIMARY KEY (
-        email_id,
-        email_address_id,
-        participant_type
-    )
-);
-```
-
-## Resolved person relationships
-
-```sql
-CREATE TABLE email_person (
-    email_id UUID NOT NULL
-        REFERENCES email_message(id),
-
-    person_id UUID NOT NULL
-        REFERENCES person(id),
-
-    role email_participant_type NOT NULL,
-
-    confidence NUMERIC(4,3),
-
-    PRIMARY KEY (email_id, person_id, role)
-);
-```
-
----
-
-# 21. Calendar Model
-
-## Calendar
-
-```sql
-CREATE TABLE calendar (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    source_account_id UUID
-        REFERENCES source_account(id),
-
-    name TEXT NOT NULL,
-
-    description TEXT,
-
-    timezone TEXT,
-
-    provider_calendar_id TEXT,
-
-    metadata JSONB NOT NULL DEFAULT '{}'
-);
-```
-
-## Event
-
-```sql
-CREATE TABLE calendar_event (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    calendar_id UUID NOT NULL
-        REFERENCES calendar(id),
-
-    provider_event_id TEXT,
-
-    title TEXT,
-
-    description TEXT,
-
-    location TEXT,
-
-    start_at TIMESTAMPTZ,
-
-    end_at TIMESTAMPTZ,
-
-    all_day BOOLEAN NOT NULL DEFAULT false,
-
-    status TEXT,
-
-    recurrence_rule TEXT,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    metadata JSONB NOT NULL DEFAULT '{}'
-);
-```
-
-## Event participants
-
-```sql
-CREATE TYPE event_participant_role AS ENUM (
-    'organizer',
-    'required',
-    'optional',
-    'resource'
-);
-
-CREATE TABLE event_participant (
-    event_id UUID NOT NULL
-        REFERENCES calendar_event(id)
-        ON DELETE CASCADE,
-
-    person_id UUID
-        REFERENCES person(id),
-
-    email_address_id UUID
-        REFERENCES email_address(id),
-
-    role event_participant_role,
-
-    response_status TEXT,
-
-    PRIMARY KEY (
-        event_id,
-        person_id,
-        email_address_id
-    )
-);
-```
-
-An event participant may initially be only an email address and later be resolved to a Person.
-
----
-
-# 22. Temporal Data
-
-Important data should preserve history rather than only current state.
+Those values are represented as canonical facts in dedicated tables.
 
 For example:
 
 ```text
-salary
-    €70k — Jan 2024 → Dec 2024
-    €80k — Jan 2025 → present
+Person
+  │
+  ├── names
+  ├── emails
+  ├── dates
+  ├── genders
+  └── locales
 ```
 
-Distinguish:
+This avoids maintaining multiple competing representations of the same fact.
 
-- event time / validity time
-- database observation time
+For example, there is no separate:
 
-This allows future queries such as:
+```text
+person.display_name
+```
 
-> "What did we know about this person at a particular point in time?"
+that could disagree with:
+
+```text
+person_name.display_name
+```
+
+The attribute tables are therefore the canonical fact layer.
 
 ---
 
-# 23. AI / Semantic Layer
+# 11. No `me` vs `other` person model
 
-AI-derived information should be separate from canonical facts.
+The initial model deliberately contains only one person type.
+
+There is no:
+
+```text
+me_person
+contact_person
+```
+
+and no:
+
+```text
+person.is_me
+```
+
+A person is simply:
+
+```text
+core.person
+```
+
+The fact that one person is the owner of a Rosalind account is an account-level relationship and will later be represented through an account's `self_person_id`.
+
+Conceptually:
+
+```text
+account
+   │
+   └── self_person_id ──> person
+```
+
+while contacts are simply other rows in `core.person`.
+
+This keeps the domain model symmetric and leaves room for future person sharing.
+
+For example, the same logical model can later support:
+
+```text
+Alice's account
+    └── self → Person A
+
+Bob's account
+    └── self → Person B
+```
+
+with both accounts independently storing and resolving people.
+
+A shared profile can then be represented as another source of information about a person rather than as a different class of person.
+
+---
+
+# 12. `core.source_identity`
+
+A source identity links a canonical person to an identity in a particular external source account.
+
+```sql
+CREATE TABLE core.source_identity (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    person_id UUID NOT NULL
+        REFERENCES core.person(id)
+        ON DELETE CASCADE,
+
+    source_account_id UUID NOT NULL
+        REFERENCES public.source_account(id)
+        ON DELETE RESTRICT,
+
+    source_type TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    resource_name TEXT,
+
+    UNIQUE (
+        source_account_id,
+        source_type,
+        external_id
+    )
+);
+```
+
+The source account is part of the identity scope.
+
+This is important because the same external identifier may have meaning only within a particular provider account.
+
+For example:
+
+```text
+Google account A / PROFILE / 123
+Google account B / PROFILE / 123
+```
+
+must not be assumed to be the same identity merely because `external_id` is equal.
+
+`resource_name` is retained as provider-specific identity metadata, but it is not used as Rosalind's canonical primary key.
+
+---
+
+# 13. `core.source_assertion`
+
+A source assertion records a specific statement observed in a raw source record.
+
+```sql
+CREATE TABLE core.source_assertion (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    source_record_id UUID NOT NULL
+        REFERENCES raw.source_record(id)
+        ON DELETE CASCADE,
+
+    source_identity_id UUID
+        REFERENCES core.source_identity(id)
+        ON DELETE RESTRICT,
+
+    field_path TEXT NOT NULL,
+
+    source_primary BOOLEAN,
+    source_verified BOOLEAN,
+
+    metadata JSONB
+);
+```
+
+An assertion may contain source-level metadata such as:
+
+```text
+source_primary
+source_verified
+provider-specific metadata
+```
+
+The assertion itself belongs to the raw observation.
+
+Therefore:
+
+```text
+source_record
+    ↓
+source_assertion
+```
+
+is part of the evidence chain.
+
+An assertion survives deletion of a canonical person or canonical fact.
+
+It is removed only when its raw source record is removed.
+
+The current schema uses:
+
+```text
+UNIQUE(source_record_id, field_path)
+```
+
+because a source assertion identifies a particular field location within a particular immutable source record.
+
+The field path is a locator into that specific snapshot. It is not the canonical identity of the fact.
+
+For example:
+
+```text
+source_record = R123
+field_path    = $.names[0]
+```
+
+means:
+
+> the value found at `$.names[0]` in raw snapshot `R123`.
+
+---
+
+# 14. Canonical Fact Tables
+
+Canonical person attributes are represented as dedicated relational tables.
+
+The first version includes:
+
+```text
+core.person_name
+core.person_email
+core.person_date
+core.person_gender
+core.person_locale
+```
+
+This allows each attribute to have its own:
+
+* validation rules;
+* normalization;
+* uniqueness constraints;
+* canonical primary-value semantics;
+* provenance links.
+
+---
+
+## 14.1 Names
+
+```sql
+CREATE TABLE core.person_name (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    person_id UUID NOT NULL
+        REFERENCES core.person(id)
+        ON DELETE CASCADE,
+
+    display_name TEXT,
+    given_name TEXT,
+    family_name TEXT,
+
+    is_primary BOOLEAN NOT NULL DEFAULT false
+);
+```
+
+Exactly one name may be canonical primary for a person:
+
+```sql
+CREATE UNIQUE INDEX person_name_one_primary
+ON core.person_name (person_id)
+WHERE is_primary;
+```
+
+Multiple names may coexist because different providers or source observations may contain legitimate variations.
+
+Value uniqueness is enforced so re-imports do not create duplicate name facts:
+
+```sql
+CREATE UNIQUE INDEX person_name_value
+ON core.person_name (person_id, display_name, given_name, family_name)
+NULLS NOT DISTINCT;
+```
+
+---
+
+## 14.2 Email addresses
+
+```sql
+CREATE TABLE core.person_email (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    person_id UUID NOT NULL
+        REFERENCES core.person(id)
+        ON DELETE CASCADE,
+
+    email TEXT NOT NULL,
+    email_normalized TEXT NOT NULL,
+
+    type TEXT,
+
+    is_primary BOOLEAN NOT NULL DEFAULT false,
+    is_verified BOOLEAN NOT NULL DEFAULT false,
+
+    UNIQUE (person_id, email_normalized)
+);
+```
+
+The normalized email is used for matching and uniqueness.
+
+The original representation is retained in `email`.
+
+A normalized column is deliberately used instead of PostgreSQL's `citext` extension. This keeps normalization explicit and controlled by application/domain logic rather than making database comparison semantics implicitly responsible for it.
+
+Indexes:
+
+```sql
+CREATE INDEX person_email_normalized_idx
+ON core.person_email (email_normalized);
+```
+
+Exactly one email may be canonical primary:
+
+```sql
+CREATE UNIQUE INDEX person_email_one_primary
+ON core.person_email (person_id)
+WHERE is_primary;
+```
+
+`is_verified` represents Rosalind's current canonical verification status. Provider-specific verification evidence remains on `source_assertion`.
+
+---
+
+## 14.3 Dates
+
+```sql
+CREATE TABLE core.person_date (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    person_id UUID NOT NULL
+        REFERENCES core.person(id)
+        ON DELETE CASCADE,
+
+    date_type TEXT NOT NULL DEFAULT 'birthday',
+
+    year INTEGER,
+    month INTEGER,
+    day INTEGER,
+
+    is_primary BOOLEAN NOT NULL DEFAULT false
+);
+```
+
+Dates are represented using separate components rather than PostgreSQL's `date` type because some providers support partial dates.
+
+For example:
+
+```text
+1991
+1991-01
+01-01
+1991-01-01
+```
+
+The canonical model should preserve that precision.
+
+Validation includes:
+
+```text
+month ∈ [1, 12]
+day ∈ [1, 31]
+day ⇒ month
+```
+
+Exactly one canonical primary date may exist for each person and date type:
+
+```sql
+CREATE UNIQUE INDEX person_date_one_primary
+ON core.person_date (person_id, date_type)
+WHERE is_primary;
+```
+
+The raw provider representation remains available in the raw source record.
+
+Value uniqueness is enforced so re-imports do not create duplicate date facts:
+
+```sql
+CREATE UNIQUE INDEX person_date_value
+ON core.person_date (person_id, date_type, year, month, day)
+NULLS NOT DISTINCT;
+```
+
+---
+
+## 14.4 Gender
+
+```sql
+CREATE TABLE core.person_gender (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    person_id UUID NOT NULL
+        REFERENCES core.person(id)
+        ON DELETE CASCADE,
+
+    value TEXT NOT NULL,
+
+    is_primary BOOLEAN NOT NULL DEFAULT false
+);
+```
+
+Exactly one canonical gender value may be primary:
+
+```sql
+CREATE UNIQUE INDEX person_gender_one_primary
+ON core.person_gender (person_id)
+WHERE is_primary;
+```
+
+The value remains `TEXT` rather than a PostgreSQL enum so that the canonical model does not become tightly coupled to a fixed provider ontology.
+
+Value uniqueness is enforced so re-imports do not create duplicate gender facts: `UNIQUE (person_id, value)`.
+
+---
+
+## 14.5 Locale
+
+```sql
+CREATE TABLE core.person_locale (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    person_id UUID NOT NULL
+        REFERENCES core.person(id)
+        ON DELETE CASCADE,
+
+    value TEXT NOT NULL,
+
+    is_primary BOOLEAN NOT NULL DEFAULT false
+);
+```
+
+Exactly one locale may be canonical primary:
+
+```sql
+CREATE UNIQUE INDEX person_locale_one_primary
+ON core.person_locale (person_id)
+WHERE is_primary;
+```
+
+Locale values are stored as locale identifiers such as:
+
+```text
+en-GB
+fr-FR
+```
+
+rather than being decomposed into separate language and country columns.
+
+Value uniqueness is enforced so re-imports do not create duplicate locale facts: `UNIQUE (person_id, value)`.
+
+---
+
+# 15. Fact / Assertion Link Tables
+
+Each canonical fact can be supported by one or more source assertions.
+
+The relationship is:
+
+```text
+Canonical fact
+      │
+      ├── Assertion A
+      ├── Assertion B
+      └── Assertion C
+```
+
+The current implementation uses one link table per fact type:
+
+```text
+person_name_assertion
+person_email_assertion
+person_date_assertion
+person_gender_assertion
+person_locale_assertion
+```
+
+Conceptually:
+
+```sql
+CREATE TABLE core.person_email_assertion (
+    assertion_id UUID PRIMARY KEY
+        REFERENCES core.source_assertion(id)
+        ON DELETE CASCADE,
+
+    person_email_id UUID NOT NULL
+        REFERENCES core.person_email(id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX person_email_assertion_fact_idx
+ON core.person_email_assertion (person_email_id);
+```
+
+The equivalent pattern is used for the other fact tables.
+
+The important property is that one canonical fact can have multiple supporting observations.
+
+For example:
+
+```text
+person_email
+    alex@example.com
+          │
+          ├── Google ACCOUNT assertion
+          ├── Google PROFILE assertion
+          └── Gmail assertion
+```
+
+Canonical data therefore does not need to duplicate a value simply because several providers agree on it.
+
+The current link-table design uses `assertion_id` as the primary key, which intentionally models one canonical-fact link per source assertion for these initial attribute types.
+
+---
+
+# 16. Source vs Canonical Primary Status
+
+Provider-level `primary` metadata and Rosalind-level `is_primary` have different meanings.
+
+For example, a provider may say:
+
+```text
+Email A
+    source_primary = true
+```
+
+This means:
+
+> The provider considers Email A primary in that source.
+
+It does not necessarily mean:
+
+> Rosalind should consider Email A canonical primary.
+
+Therefore:
+
+```text
+source_assertion.source_primary
+```
+
+stores provider evidence, while:
+
+```text
+person_email.is_primary
+```
+
+stores Rosalind's resolved canonical choice.
+
+This separation is essential when different providers disagree.
 
 Example:
 
-```sql
-CREATE TABLE ai_entity_summary (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+```text
+Google:
+    home@example.com → source_primary
 
-    entity_type TEXT NOT NULL,
+Microsoft:
+    work@example.com → source_primary
 
-    entity_id UUID NOT NULL,
-
-    summary TEXT NOT NULL,
-
-    model TEXT NOT NULL,
-
-    generated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    source_hash TEXT NOT NULL
-);
+Rosalind:
+    work@example.com → canonical primary
 ```
 
-Never allow AI-generated summaries or classifications to silently overwrite canonical facts.
-
-AI-derived data should record:
-
-- model
-- generation timestamp
-- source/dependency hash
-- optionally prompt/version metadata
+The original provider assertions remain unchanged.
 
 ---
 
-# 24. Embeddings
+# 17. Canonical Resolution
 
-When semantic retrieval is required:
+Canonicalization converts source assertions into canonical facts.
 
-```sql
-CREATE EXTENSION vector;
+Conceptually:
 
-CREATE TABLE embedding (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    entity_type TEXT NOT NULL,
-
-    entity_id UUID NOT NULL,
-
-    content TEXT NOT NULL,
-
-    embedding vector(1536),
-
-    model TEXT NOT NULL,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+```text
+Raw source record
+       ↓
+Source assertion(s)
+       ↓
+Normalization
+       ↓
+Entity resolution
+       ↓
+Canonical fact
 ```
 
-Potential embedded objects:
+For each attribute, the canonicalization layer determines:
 
-- Person summaries
-- Email threads
-- Individual emails
-- Calendar events
-- Documents
+* whether the value is equivalent to an existing canonical fact;
+* whether a new fact should be created;
+* which fact is canonical primary;
+* how multiple assertions should be linked;
+* whether conflicting observations remain as separate facts.
 
-Embeddings are an **index/derived representation**, not the source of truth.
+Canonicalization must never mutate historical raw evidence.
 
 ---
 
-# 25. Agent-Oriented API
+# 18. Example: Google Person
+
+Given a synthetic Google Person resource containing:
+
+```text
+resourceName = people/demo-123456789
+
+names:
+    Alex Morgan
+    given = Alex
+    family = Morgan
+
+email:
+    alex.morgan@example.com
+    primary = true
+    verified = true
+
+birthday:
+    1988-04-17
+
+locale:
+    en-GB
+```
+
+the pipeline is:
+
+```text
+Google Person JSON
+        │
+        ▼
+raw.source_record
+        │
+        ├── $.names[0]
+        ├── $.emailAddresses[0]
+        ├── $.birthdays[0]
+        └── $.locales[0]
+        │
+        ▼
+core.source_assertion
+        │
+        ▼
+canonicalization
+        │
+        ├── core.person
+        ├── core.person_name
+        ├── core.person_email
+        ├── core.person_date
+        └── core.person_locale
+```
+
+The canonical representation may then look conceptually like:
+
+```text
+Person
+    id = P1
+
+Name
+    display_name = Alex Morgan
+    given_name   = Alex
+    family_name  = Morgan
+    is_primary   = true
+
+Email
+    email            = alex.morgan@example.com
+    email_normalized = alex.morgan@example.com
+    is_primary       = true
+    is_verified      = true
+
+Date
+    date_type = birthday
+    year      = 1988
+    month     = 4
+    day       = 17
+    is_primary = true
+
+Locale
+    value = en-GB
+    is_primary = true
+```
+
+The canonical person has no dependency on the Google representation.
+
+---
+
+# 19. Deletion Semantics
+
+The data model distinguishes two different forms of deletion.
+
+## 19.1 Deleting canonical data
+
+Deleting a person or fact can remove dependent canonical structures:
+
+```text
+person
+  ↓ CASCADE
+person_name
+person_email
+person_date
+person_gender
+person_locale
+```
+
+and:
+
+```text
+fact
+  ↓ CASCADE
+fact_assertion
+```
+
+This does **not** delete the raw source records.
+
+Historical source evidence must remain available for auditability and rebuilding.
+
+---
+
+## 19.2 Deleting raw source data
+
+Deleting a raw source record removes the assertions derived from it:
+
+```text
+raw.source_record
+    ↓ CASCADE
+core.source_assertion
+    ↓ CASCADE
+fact_assertion link
+```
+
+A canonical fact itself is not inherently a child of a single source assertion and therefore is not automatically deleted simply because one observation disappears.
+
+Canonicalization/reconciliation logic must determine the resulting canonical state.
+
+---
+
+## 19.3 Source identity lifecycle
+
+`core.source_identity` represents the mapping between a canonical person and an external source identity.
+
+It is distinct from raw evidence.
+
+The current FK configuration deliberately prevents accidental deletion of a source account that still has source identities or raw records.
+
+The interaction between:
+
+```text
+source_identity.person_id → CASCADE
+source_assertion.source_identity_id → RESTRICT
+```
+
+means deletion of a person may be blocked while retained assertions still reference source identities.
+
+If person deletion is introduced as a supported operation, this FK behavior must be treated as an explicit lifecycle decision rather than an accidental database side effect.
+
+---
+
+# 20. Agent Read Model
+
+The `agent` schema is a derived read model.
+
+The storage model is optimized for:
+
+* integrity
+* normalization
+* provenance
+* reconciliation
+* relational querying
+
+The agent model is optimized for:
+
+* compact responses
+* predictable structure
+* low context consumption
+* semantic operations
+* AI tool usage
+
+The two should therefore not be identical.
+
+---
+
+# 21. `agent.person_profile`
+
+The first agent-facing representation is a database view:
+
+```sql
+CREATE VIEW agent.person_profile AS
+SELECT
+    p.id AS person_id,
+    n.display_name,
+    n.given_name,
+    n.family_name,
+    e.email AS primary_email,
+    e.is_verified AS email_verified,
+    g.value AS gender,
+    l.value AS locale,
+    d.year AS birth_year,
+    d.month AS birth_month,
+    d.day AS birth_day
+FROM core.person p
+
+LEFT JOIN core.person_name n
+    ON n.person_id = p.id
+   AND n.is_primary = true
+
+LEFT JOIN core.person_email e
+    ON e.person_id = p.id
+   AND e.is_primary = true
+
+LEFT JOIN core.person_gender g
+    ON g.person_id = p.id
+   AND g.is_primary = true
+
+LEFT JOIN core.person_locale l
+    ON l.person_id = p.id
+   AND l.is_primary = true
+
+LEFT JOIN core.person_date d
+    ON d.person_id = p.id
+   AND d.date_type = 'birthday'
+   AND d.is_primary = true;
+```
+
+The view intentionally exposes the current canonical values rather than raw provider metadata.
+
+The result can be serialized for an agent as:
+
+```json
+{
+  "person_id": "...",
+  "display_name": "Alex Morgan",
+  "given_name": "Alex",
+  "family_name": "Morgan",
+  "primary_email": "alex.morgan@example.com",
+  "email_verified": true,
+  "gender": "female",
+  "locale": "en-GB",
+  "birth_year": 1988,
+  "birth_month": 4,
+  "birth_day": 17
+}
+```
+
+The agent should not need to understand the normalized relational representation underneath this view.
+
+---
+
+# 22. Agent-Oriented API
 
 Do not expose unrestricted SQL to AI agents.
 
@@ -1744,24 +1802,154 @@ relationship traversal
 
 The agent should not need to know how the underlying data is stored.
 
+This abstraction also allows the storage schema to evolve without changing the agent-facing API.
+
 ---
 
-# 26. Agent Context / Projections
+# 23. Structured, Lexical, and Semantic Retrieval
 
-Do not return huge raw datasets to an AI agent.
+Search should be implemented as several complementary capabilities rather than one universal mechanism.
 
-Create compact, agent-oriented projections.
+## Structured retrieval
+
+Use PostgreSQL relational indexes.
+
+Examples:
+
+```text
+email address
+provider ID
+canonical person ID
+event time
+organization ID
+```
+
+## Lexical retrieval
+
+Use PostgreSQL full-text search and/or trigram indexes.
+
+Examples:
+
+```text
+"Alex Morgan"
+"Alix Morgan"
+```
+
+## Semantic retrieval
+
+Use embeddings when meaning rather than exact terms is the retrieval criterion.
+
+Examples:
+
+```text
+"messages about moving to London"
+"conversations about changing jobs"
+```
+
+The retrieval system should choose the appropriate mechanism rather than forcing every query through vector search.
+
+---
+
+# 24. Embeddings
+
+When semantic retrieval is required, use `pgvector`.
+
+Conceptually:
+
+```sql
+CREATE TABLE embedding (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    entity_type TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+
+    content TEXT NOT NULL,
+
+    embedding vector(1536),
+
+    model TEXT NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+Potential embedded objects include:
+
+* Email threads
+* Individual emails
+* Calendar events
+* Documents
+* Person summaries
+* Other natural-language fragments
+
+Do not embed every relational fact.
+
+For example:
+
+```text
+birth_date
+email
+event.start_at
+organization.name
+```
+
+should remain structured.
+
+Natural-language content is the primary candidate for semantic indexing.
+
+Embeddings are a derived representation and can always be regenerated.
+
+---
+
+# 25. AI-Derived Information
+
+AI-derived information must remain separate from canonical facts.
 
 Example:
+
+```sql
+CREATE TABLE ai_entity_summary (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    entity_type TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+
+    summary TEXT NOT NULL,
+
+    model TEXT NOT NULL,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    source_hash TEXT NOT NULL
+);
+```
+
+Never allow AI-generated summaries or classifications to silently overwrite canonical facts.
+
+AI-derived data should record:
+
+* model
+* generation timestamp
+* source/dependency hash
+* optionally prompt/version metadata
+
+AI output is evidence or derived interpretation, not authoritative canonical data.
+
+---
+
+# 26. Context Projections
+
+Do not return large normalized datasets to an AI agent when a compact projection is sufficient.
+
+For example:
 
 ```json
 {
   "person": {
-    "id": "123",
-    "name": "John Smith",
+    "id": "P123",
+    "name": "Alex Morgan",
     "emails": [
-      "john@gmail.com",
-      "john@company.com"
+      "alex.morgan@example.com",
+      "alex@northstar.example"
     ]
   },
 
@@ -1795,65 +1983,904 @@ The agent API is optimized for reasoning and token efficiency.
 
 ---
 
-# 27. Data Lineage
+# 27. Future Person Sharing
+
+The common person model deliberately leaves room for future cross-user sharing.
+
+The underlying abstraction is:
+
+```text
+Person
+   │
+   ├── canonical facts
+   ├── source identities
+   └── provenance
+```
+
+A user's account can later designate one of its persons as its owner:
+
+```text
+account
+   │
+   └── self_person_id → person
+```
+
+A limited shared representation can then be generated from that person's canonical data:
+
+```text
+Canonical Person
+       │
+       ▼
+Shared Profile
+       │
+       ├── name
+       ├── email
+       ├── photo
+       └── selected attributes
+```
+
+A receiving Rosalind instance should treat the received representation as another source of information rather than as a fundamentally different person type.
+
+Conceptually:
+
+```text
+Alice's Rosalind
+    Person A
+       │
+       ▼
+  shared profile
+       │
+       ▼
+Bob's Rosalind
+       │
+       ▼
+source record
+       │
+       ▼
+canonical person
+```
+
+This allows the receiving system to reconcile the shared data with information it already has from other sources.
+
+The same person can therefore be:
+
+```text
+self
+contact
+friend
+colleague
+shared profile
+```
+
+depending on the account and relationship context, without requiring different person schemas.
+
+---
+
+# 28. Email Model
+
+Email messages are separate from participants.
+
+## Email thread
+
+```sql
+CREATE TABLE email_thread (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    subject_normalized TEXT,
+
+    first_message_at TIMESTAMPTZ,
+    last_message_at TIMESTAMPTZ,
+
+    message_count INTEGER NOT NULL DEFAULT 0
+);
+```
+
+## Email message
+
+```sql
+CREATE TABLE email_message (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    internet_message_id TEXT,
+
+    subject TEXT,
+
+    body_text TEXT,
+    body_html TEXT,
+
+    sent_at TIMESTAMPTZ,
+    received_at TIMESTAMPTZ,
+
+    thread_id UUID REFERENCES email_thread(id),
+
+    in_reply_to_id UUID,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    metadata JSONB NOT NULL DEFAULT '{}'
+);
+```
+
+## Participants
+
+```sql
+CREATE TYPE email_participant_type AS ENUM (
+    'from',
+    'to',
+    'cc',
+    'bcc',
+    'reply_to'
+);
+```
+
+Participant records initially identify email addresses.
+
+They may later resolve to canonical people.
+
+This preserves the important distinction:
+
+```text
+raw participant identity
+        ↓
+email address
+        ↓
+resolved person
+```
+
+A message is not required to have a resolved person in order to be retained.
+
+---
+
+# 29. Calendar Model
+
+## Calendar
+
+```sql
+CREATE TABLE calendar (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    source_account_id UUID
+        REFERENCES public.source_account(id),
+
+    name TEXT NOT NULL,
+    description TEXT,
+    timezone TEXT,
+
+    provider_calendar_id TEXT,
+
+    metadata JSONB NOT NULL DEFAULT '{}'
+);
+```
+
+## Event
+
+```sql
+CREATE TABLE calendar_event (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    calendar_id UUID NOT NULL
+        REFERENCES calendar(id),
+
+    provider_event_id TEXT,
+
+    title TEXT,
+    description TEXT,
+    location TEXT,
+
+    start_at TIMESTAMPTZ,
+    end_at TIMESTAMPTZ,
+
+    all_day BOOLEAN NOT NULL DEFAULT false,
+
+    status TEXT,
+    recurrence_rule TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    metadata JSONB NOT NULL DEFAULT '{}'
+);
+```
+
+## Event participants
+
+Event participants may initially identify only an email address and later be resolved to a canonical person.
+
+This is intentional:
+
+```text
+Event participant
+    ↓
+email address
+    ↓
+optional Person resolution
+```
+
+A missing person resolution must never cause the underlying event or participant information to be discarded.
+
+---
+
+# 30. Temporal Data
+
+Important data should preserve history rather than only current state.
+
+Distinguish:
+
+* event time / validity time
+* source update time
+* observation time
+* database creation/update time
+
+For example:
+
+```text
+employment
+    €70k — Jan 2024 → Dec 2024
+    €80k — Jan 2025 → present
+```
+
+The system should eventually support queries such as:
+
+> "What did Rosalind know about this person at a particular point in time?"
+
+The raw layer provides historical source observations.
+
+The canonical layer can later introduce explicit validity intervals when the domain requires them.
+
+---
+
+# 31. Data Lineage
 
 The system should make it possible to trace information through:
 
 ```text
-Provider export
+Provider export/API response
     ↓
 Raw source record
     ↓
-Source record version
+Typed provider model
     ↓
-Canonical entity
+Provider-independent observation
     ↓
-AI-derived representation
+Source assertion
+    ↓
+Canonical fact
+    ↓
+Agent/AI projection
+```
+
+The provider model and observation are processing representations and are currently transient. The
+raw source record remains the durable source representation.
+
+For example:
+
+```text
+Alex Morgan
+    │
+    ├── email: alex.morgan@example.com
+    │      │
+    │      ├── Google contact assertion
+    │      └── Gmail assertion
+    │
+    └── phone: +1-202-555-0147
+           └── Apple contact assertion
+```
+
+This is essential for:
+
+* Debugging
+* Trust
+* AI citations
+* Reprocessing
+* Entity-resolution improvements
+* Explaining canonical decisions
+
+A future agent-facing API should be able to expose provenance when the user needs to understand why a fact is believed.
+
+---
+
+# 32. Handling Conflicting Evidence
+
+Different providers may disagree.
+
+For example:
+
+```text
+Google:
+    name = Alex Morgan
+
+Microsoft:
+    name = Alex Morgan
+
+Other source:
+    name = Alex M.
+```
+
+The raw observations remain separate.
+
+The canonical model can represent multiple names:
+
+```text
+person_name
+    Alex Morgan
+    Alex M.
+```
+
+with one selected as canonical primary.
+
+Similarly:
+
+```text
+Google:
+    birthday = 1988-04-17
+
+Other source:
+    birthday = 1987-12-03
+```
+
+Both observations may remain as evidence.
+
+Canonicalization determines whether one is primary, whether both should remain, or whether the conflict requires explicit handling.
+
+The system should never destroy contradictory evidence merely to simplify the canonical representation.
+
+---
+
+# 33. Import State Machine
+
+The ingestion pipeline is explicit about the distinction between evidence ingestion and semantic processing. The raw source record is written before provider validation or mapping.
+
+Conceptually:
+
+```text
+RECEIVED
+   ↓
+SCANNING
+   ↓
+RAW_PERSISTENCE
+   ↓
+PARSING / VALIDATION
+   ↓
+SOURCE_MAPPING
+   ↓
+NORMALIZING
+   ↓
+ENTITY_RESOLUTION
+   ↓
+COMMITTING
+   ↓
+COMMITTED
+```
+
+A parsing or mapping failure does not invalidate the raw observation. Instead:
+
+```text
+RAW_PERSISTENCE
+      ↓
+PARSING / VALIDATION
+      ↓
+QUARANTINED / ERROR
+```
+
+The ordering invariant is architectural:
+
+> **`raw.source_record` is written first. Raw persistence and canonicalization are separate failure domains.**
+
+This guarantees that a provider format change that breaks `GooglePerson.model_validate()` does not discard the offending payload. The payload can later be reprocessed with a newer parser version.
+
+---
+
+# 34. Provider Adapter Architecture
+
+Provider-specific parsers are isolated and versioned. They are responsible for understanding the provider format, not for deciding Rosalind's canonical semantics.
+
+The current Google implementation is intentionally small and direct: `GooglePerson.model_validate()`
+performs provider validation and `map_google_person()` performs the provider-to-observation mapping.
+A generic parser registry/interface may be introduced as more providers and resource types are added.
+
+Recommended structure:
+
+```text
+backend/
+└── ingestion/
+    ├── framework/
+    │   ├── parser.py
+    │   ├── registry.py
+    │   ├── validation.py
+    │   └── staging.py
+    │
+    ├── google/
+    │   ├── models.py
+    │   ├── parser.py
+    │   ├── contacts/
+    │   ├── gmail/
+    │   └── calendar/
+    │
+    ├── apple/
+    │   ├── contacts/
+    │   ├── mail/
+    │   └── calendar/
+    │
+    └── meta/
+        ├── contacts/
+        └── messages/
+```
+
+A parser should have a common interface:
+
+```python
+class Parser(Protocol):
+    provider: str
+    object_type: str
+    version: str
+
+    def can_parse(self, data: RawImport) -> bool:
+        ...
+
+    def parse(self, data: RawImport) -> list[SourceObject]:
+        ...
+```
+
+Use a parser registry to select the appropriate provider adapter.
+
+The Google Person implementation currently uses:
+
+```text
+backend/src/rosalind/ingestion/google/models.py
+backend/src/rosalind/ingestion/google/parser.py
+```
+
+The provider model is deliberately close to Google's API representation.
+
+---
+
+# 35. Google Person Parsing
+
+The first implemented parsing pipeline targets the Google People `Person` resource. The parser is deterministic, provider-specific, and independent from the database.
+
+The implemented flow is:
+
+```text
+Google payload (dict)
+        │
+        ├── canonical JSON + SHA-256
+        │
+        ▼
+raw.source_record
+        │
+        ▼
+GooglePerson.model_validate(payload)
+        │
+        ▼
+map_google_person(person)
+        │
+        ▼
+PersonObservation
+        │
+        ▼
+canonicalize(...)
+        │
+        ▼
+core.*
+```
+
+## 35.1 Raw persistence happens first
+
+For `ingest_person(...)`, the payload is first serialized deterministically:
+
+```python
+json.dumps(
+    payload,
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
+)
+```
+
+The SHA-256 digest of this canonical JSON representation becomes `payload_sha256`.
+
+The provider resource identifier is extracted from `resourceName` and stored as `external_id`. If `resourceName` is absent, the raw ingestion step rejects the record because the source object cannot be identified reliably.
+
+The raw record is persisted using:
+
+```text
+resource_type = "people.person"
+source_etag = top-level Person.etag
+source_updated_at = NULL
+```
+
+Google can expose `etag` and `updateTime` for individual sources inside `metadata.sources[]`, but a `Person` can contain multiple sources and therefore does not have one meaningful provider-wide source update timestamp. Those per-source values remain preserved in the raw JSONB payload and can also be surfaced through `source_assertion.metadata` where relevant.
+
+Raw persistence uses a database upsert with:
+
+```text
+ON CONFLICT DO NOTHING
+on (source_account_id, resource_type, external_id, payload_sha256)
+```
+
+The raw record is therefore durable evidence regardless of whether later parsing succeeds.
+
+## 35.2 Provider-specific validation
+
+`GooglePerson.model_validate(payload)` validates the provider payload using Pydantic v2.
+
+The Google models intentionally cover only fields currently consumed by Rosalind, including:
+
+```text
+GoogleSource
+GoogleFieldMetadata
+GooglePersonMetadata
+GoogleName
+GoogleEmailAddress
+GoogleDate
+GoogleBirthday
+GoogleLocale
+GoogleGender
+GooglePerson
+```
+
+All models use `ConfigDict(extra="allow")`. Unknown provider fields therefore do not need to be understood by Rosalind immediately, while the complete original payload remains available in `raw.source_record.payload`.
+
+This creates two complementary compatibility mechanisms:
+
+```text
+raw JSONB
+    = complete source representation
+
+Pydantic model
+    = typed interpretation of the subset Rosalind currently consumes
+```
+
+## 35.3 Provider-independent observations
+
+The validated Google object is mapped into frozen dataclasses in:
+
+```text
+backend/src/rosalind/domain/observations/person.py
+```
+
+The current observation types are:
+
+```text
+SourceRef
+PersonObservation
+NameObservation
+EmailObservation
+DateObservation
+GenderObservation
+LocaleObservation
+```
+
+The observation layer is deliberately transient; it is not currently persisted as a separate database staging model. Raw data can always be reparsed to recreate it.
+
+The observation model describes what a provider record asserted without making canonical decisions.
+
+Each field observation carries, as applicable:
+
+```text
+value
+source: SourceRef | None
+source_primary
+source_verified
+field_path
 ```
 
 For example:
 
 ```text
-John Smith
-    │
-    ├── email: john@gmail.com
-    │       ├── Google contact
-    │       └── Email messages
-    │
-    └── phone: +33...
-            └── Apple contact
+$.names[0]
+$.emailAddresses[0]
+$.birthdays[0]
+$.locales[0]
 ```
 
-This is essential for:
+The field path is a locator into the particular immutable raw snapshot. It is not the canonical identity of the fact.
 
-- Debugging
-- Trust
-- AI citations
-- Reprocessing
-- Entity-resolution improvements
+## 35.4 Source identity extraction
+
+Google `Person` resources can aggregate information from multiple sources. The mapper therefore collects source identities from both:
+
+```text
+Person.metadata.sources[]
+```
+
+and every field-level:
+
+```text
+field.metadata.source
+```
+
+The union is deduplicated by:
+
+```text
+(source_type, external_id)
+```
+
+This matters because the source of an individual field may differ from the person's aggregate source list. The observation records the field-level source when available.
+
+The mapper never assumes that the first array element is the primary value. It reads provider metadata such as `metadata.primary` explicitly.
+
+The mapper performs **no value normalization** and has **no database access**. It is a pure, deterministic transformation from `GooglePerson` to `PersonObservation`.
+
+## 35.5 Canonicalization
+
+Canonicalization is implemented in:
+
+```text
+backend/src/rosalind/canonicalization/person.py
+```
+
+The canonicalizer receives:
+
+```text
+canonicalize(
+    db,
+    source_account,
+    source_record,
+    observation,
+)
+```
+
+Its responsibilities are:
+
+1. Resolve or create `core.source_identity` rows scoped to the current `source_account`.
+2. Resolve or create the single `core.person` represented by the observation.
+3. For each observation, create a `core.source_assertion`.
+4. Normalize and resolve the corresponding canonical fact.
+5. Link the assertion to the canonical fact through the appropriate `person_*_assertion` table.
+6. Apply canonical primary-selection policy.
+
+The canonicalizer uses PostgreSQL uniqueness constraints and `ON CONFLICT`-style upserts as the authoritative idempotency mechanism. It does not rely on a check-then-insert pattern for correctness.
+
+## 35.6 Email normalization
+
+Email normalization is deliberately outside the provider parser:
+
+```text
+backend/src/rosalind/canonicalization/email.py
+```
+
+The current `normalize_email()` policy is:
+
+```text
+strip surrounding whitespace
+lowercase
+```
+
+No Gmail-specific dot removal or plus-address collapsing is performed at this stage. The original provider value remains stored in `core.person_email.email`; the normalized value is used for Rosalind matching and uniqueness.
+
+## 35.7 Primary-value selection
+
+Provider `source_primary` and canonical `is_primary` have different meanings.
+
+`source_primary` is evidence that the provider considers a value primary within that source. `is_primary` is Rosalind's canonical decision.
+
+The current `select_primary(...)` policy uses `source_primary` as the strongest input signal and falls back to a deterministic selection rule when no source item is marked primary. The policy is implemented as a standalone function so that more sophisticated multi-provider conflict resolution can replace it later without changing the parser.
+
+The canonicalizer therefore never rewrites provider evidence merely to make canonical and provider choices agree.
+
+## 35.8 Canonicalization result
+
+Canonicalization returns an explicit result object:
+
+```text
+CanonicalizationResult(
+    person_id,
+    created,
+    facts_created,
+    facts_reused,
+    assertions_created,
+)
+```
+
+This makes the operation observable and straightforward to test. It also provides the basis for future import statistics and health checks.
 
 ---
 
-# 28. Non-Negotiable Invariants
+# 36. Ingestion Service
+
+The orchestration entry point for the current Google Person flow is:
+
+```text
+backend/src/rosalind/ingestion/service.py
+```
+
+with:
+
+```python
+ingest_person(
+    db,
+    source_account,
+    person_payload: dict,
+) -> CanonicalizationResult
+```
+
+The service is intentionally decoupled from network fetching. It accepts an already-fetched payload, making it testable without Google credentials or HTTP calls.
+
+The current sequence is:
+
+```text
+1. canonical JSON + SHA-256
+2. raw.source_record upsert
+3. GooglePerson.model_validate(payload)
+4. map_google_person(person)
+5. canonicalize(...)
+6. return CanonicalizationResult
+```
+
+The existing `POST /imports/google/profile` endpoint is **not** yet wired to `ingest_person`. The parsing/canonicalization pipeline is therefore implemented independently of the live profile endpoint.
+
+This separation is intentional: the parser and canonicalizer can be tested and evolved before being made part of the production request path.
+
+---
+
+# 37. Import Health Checks
+
+Schema validation alone is insufficient.
+
+Calculate import statistics:
+
+```text
+Import #18
+
+Contacts:           1,842
+Emails:             82,431
+Calendar events:    12,293
+
+New contacts:       4
+Modified contacts:  17
+
+Validation errors:  0
+```
+
+Compare with previous imports.
+
+Flag suspicious changes such as:
+
+```text
+Previous contacts: 1,842
+Current contacts:      23
+```
+
+This could indicate a provider format change even if the JSON technically validates.
+
+Suspicious imports should be quarantined or require explicit approval rather than silently replacing good data.
+
+---
+
+# 38. Golden Test Fixtures
+
+Maintain representative synthetic provider fixtures. Fixtures must contain fake identifiers and values and must never contain real personal data:
+
+```text
+tests/
+└── fixtures/
+    ├── google/
+    │   ├── contacts/
+    │   │   ├── export_2025.json
+    │   │   └── export_2026.json
+    │   ├── gmail/
+    │   └── calendar/
+    │
+    ├── apple/
+    └── meta/
+```
+
+Fixtures should use synthetic values rather than real personal data.
+
+Test the parsing pipeline in separate layers:
+
+1. Provider validation/model construction
+2. Deterministic provider-to-observation mapping
+3. Expected canonical output
+4. Idempotent reprocessing
+
+Provider fixtures are compatibility contracts for provider formats.
+
+Canonical fixtures are contracts for Rosalind's normalization and canonicalization behavior.
+
+---
+
+# 39. Search Architecture
+
+Search should be implemented as several complementary capabilities rather than one universal mechanism.
+
+## Exact / structured search
+
+Use PostgreSQL relational indexes.
+
+Examples:
+
+```text
+email address
+provider ID
+canonical person ID
+event time
+organization ID
+```
+
+## Fuzzy / lexical search
+
+Use PostgreSQL full-text search and/or trigram indexes.
+
+Examples:
+
+```text
+"Alex Morgan"
+"Alix Morgan"
+```
+
+## Semantic search
+
+Use embeddings for natural-language content when exact matching is insufficient.
+
+Examples:
+
+```text
+"messages about moving to London"
+"conversations about changing jobs"
+```
+
+The retrieval system should choose the appropriate mechanism rather than forcing every query through vector search.
+
+---
+
+# 40. AI / Semantic Layer
+
+AI functionality is a consumer of the canonical model, not the canonical model itself.
+
+The architecture is:
+
+```text
+Canonical data
+    │
+    ├── structured retrieval
+    ├── lexical retrieval
+    ├── relationship traversal
+    └── semantic retrieval
+             │
+             ▼
+        Agent context
+             │
+             ▼
+           AI model
+```
+
+AI-generated results should remain explicitly derived.
+
+The agent must not silently write an interpretation back into a canonical field.
+
+---
+
+# 41. Non-Negotiable Invariants
 
 The following should be treated as architectural invariants:
 
-1. **Raw imports are immutable.**
-2. **Canonical data is derived from source observations.**
-3. **Re-importing the same data is idempotent.**
-4. **Provider IDs are never used as canonical IDs.**
-5. **Provider-specific formats never leak into the canonical model.**
-6. **Every provider adapter is independently versioned.**
-7. **Provider schema changes cannot corrupt canonical data.**
-8. **Failed imports are quarantined rather than partially committed.**
-9. **Canonical entities maintain provenance.**
-10. **AI-derived information never silently overwrites canonical facts.**
-11. **The backend is independent of any client.**
-12. **The canonical database should be rebuildable from retained source data.**
+1. **Raw source records are immutable.**
+2. **Raw evidence survives downstream canonical-entity deletion.**
+3. **Canonical data is derived from source observations.**
+4. **Re-importing identical data is idempotent.**
+5. **Provider IDs are never used as canonical IDs.**
+6. **Provider-specific formats never leak into the canonical model.**
+7. **Source identity is distinct from canonical identity.**
+8. **A canonical fact may have multiple supporting source assertions.**
+9. **Provider `primary`/`verified` metadata is distinct from Rosalind's canonical decisions.**
+10. **Provider schema changes cannot corrupt canonical data.**
+11. **Failed imports are quarantined rather than partially committed.**
+12. **Canonical entities maintain provenance.**
+13. **AI-derived information never silently overwrites canonical facts.**
+14. **The backend is independent of any client.**
+15. **The canonical database should be rebuildable from retained source data.**
+16. **The person model does not distinguish "me" from other people.**
+17. **Raw persistence happens before provider validation or canonicalization.**
+18. **Provider parsing is deterministic, provider-specific, and has no database access.**
+19. **Provider parsing performs no canonical value normalization.**
+20. **Provider `source_primary`/`source_verified` metadata is preserved as evidence rather than silently rewritten.**
+21. **Agent-facing projections are derived from canonical data and are not sources of truth.**
 
 ---
 
-# 29. Initial Project Scope
+# 42. Initial Project Scope
 
 Start with three Google data domains:
 
@@ -1865,61 +2892,67 @@ Google Takeout
     └── Calendar
 ```
 
-Build:
+## Phase 1 — Infrastructure
 
-### Phase 1 — Infrastructure
+* PostgreSQL
+* SQLAlchemy
+* psycopg
+* Alembic
+* FastAPI
+* Backend configuration with pydantic-settings
+* Import tracking
+* Raw source storage
+* Separate CLI client communicating through the API
 
-- PostgreSQL
-- SQLAlchemy
-- psycopg
-- Alembic
-- FastAPI
-- Backend configuration with pydantic-settings
-- Import tracking
-- Raw source storage
-- Separate CLI client communicating through the API
+## Phase 2 — Google Contacts
 
-### Phase 2 — Google Contacts
+* Takeout parser
+* Versioned provider adapters
+* Pydantic validation
+* Raw source records
+* Provider-independent observations
+* Source identities
+* Source assertions
+* Canonical Person
+* Names
+* Emails
+* Dates
+* Gender
+* Locale
+* Entity resolution
+* Provenance
+* `agent.person_profile`
 
-- Takeout parser
-- Versioned parser
-- Pydantic validation
-- Source records
-- Canonical Person
-- Email addresses
-- Phones
-- Entity resolution
-- Provenance
+## Phase 3 — Gmail
 
-### Phase 3 — Gmail
+* Messages
+* Threads
+* Participants
+* Person resolution
+* Incremental reconciliation
 
-- Messages
-- Threads
-- Participants
-- Person resolution
-- Incremental reconciliation
+## Phase 4 — Calendar
 
-### Phase 4 — Calendar
+* Calendars
+* Events
+* Participants
+* Person resolution
 
-- Calendars
-- Events
-- Participants
-- Person resolution
+## Phase 5 — Search
 
-### Phase 5 — Search
+* PostgreSQL full-text search
+* Fuzzy matching
+* Cross-domain queries
 
-- PostgreSQL full-text search
-- Cross-domain queries
+## Phase 6 — AI
 
-### Phase 6 — AI
+* Agent-oriented API
+* Context projections
+* AI summaries
+* Embeddings
+* Semantic search
 
-- Agent-oriented API
-- AI summaries
-- Embeddings
-- Semantic search
-- Context projections
-
-### Phase 7 — Additional clients
+## Phase 7 — Additional clients
 
 ```text
 CLI
@@ -1933,13 +2966,14 @@ Desktop/mobile application
 
 ---
 
-# 30. Guiding Example
+# 43. Guiding Example
 
 The architecture should ultimately make this possible:
 
 ```text
 User:
-"What is my relationship with John Smith?"
+
+"What is my relationship with Alex Morgan?"
 ```
 
 The system should be able to combine:
@@ -1947,7 +2981,7 @@ The system should be able to combine:
 ```text
 Person
     ↓
-Identity
+Source identities
     ↓
 Email addresses
     ↓
@@ -1962,12 +2996,64 @@ AI-generated summary
 
 and produce a compact, explainable answer with provenance.
 
+The database does not need to know how the AI will reason about the answer.
+
+It only needs to provide:
+
+* reliable structured facts;
+* historical source evidence;
+* relationships;
+* efficient retrieval;
+* provenance.
+
+The agent-facing layer is responsible for assembling those pieces into useful context.
+
+---
+
+# 44. Architectural Summary
+
+Rosalind is organized around three progressively more semantic layers:
+
+```text
+RAW
+"What did the source actually give us?"
+        │
+        ▼
+CORE
+"What does Rosalind currently believe?"
+        │
+        ▼
+AGENT
+"What representation is most useful to software and AI?"
+```
+
+The core people model itself is:
+
+```text
+Person
+   │
+   ├── canonical facts
+   │      ├── names
+   │      ├── emails
+   │      ├── dates
+   │      ├── genders
+   │      └── locales
+   │
+   ├── source identities
+   │
+   └── provenance
+          └── source assertions
+```
+
+This gives Rosalind a stable foundation for ingesting heterogeneous sources while preserving the ability to improve normalization, entity resolution, search, and AI capabilities independently.
+
 The goal is therefore not simply to build a database of personal data.
 
 The goal is to build a **reliable personal-data substrate that both traditional software and AI agents can query and reason over.**
+
 ---
 
-# 31. Canonical Backend Stack
+# 45. Canonical Backend Stack
 
 The initial Rosalind backend stack is intentionally small:
 
@@ -1995,7 +3081,7 @@ Python 3.14+
 ├── just                  developer task runner
 ├── pre-commit            optional local Git hooks
 ├── Bandit                Python security linting
-├── pip-audit             Python dependency vulnerability scanning
+├── pip-audit              Python dependency vulnerability scanning
 ├── Gitleaks              secret scanning
 ├── Hadolint              Dockerfile linting
 ├── Trivy                 container/image security scanning
@@ -2006,12 +3092,14 @@ Python 3.14+
 
 The CLI is a separate client project. If implemented in Python, it may use Typer, but Typer is **not a backend dependency**.
 
-The architectural priority is to keep these implementation choices replaceable while preserving the core Rosalind contracts:
+The architectural priority is to keep implementation choices replaceable while preserving the core Rosalind contracts:
 
 ```text
 canonical data model
 +
 provider adapters
++
+source identity
 +
 provenance
 +
@@ -2020,13 +3108,42 @@ idempotent ingestion
 client-independent API
 ```
 
+---
 
 # Sources
-[Martin G. Skjæveland, Krisztian Balog, Nolwenn Bernard, Weronika Łajewska, Trond Linjordet, *An ecosystem for personal knowledge graphs: A survey and research roadmap*, AI Open, 27 Feb 2024](https://www.sciencedirect.com/science/article/pii/S2666651024000044?via%3Dihub)
+
+## Personal knowledge graphs
+
+[Martin G. Skjæveland, Krisztian Balog, Nolwenn Bernard, Weronika Łajewska, Trond Linjordet, *An ecosystem for personal knowledge graphs: A survey and research roadmap*, AI Open, 27 Feb 2024](https://www.sciencedirect.com/science/article/pii/S2666651024000044)
 
 ## Google
+
 [Google Support, How to download your Google data](https://support.google.com/accounts/answer/3024190?hl=en)
-[Google Support, Share a copy of your data with a third party](https://support.google.com/accounts/answer/14452558?hl=en&ref_topic=7188671&sjid=7433463273840062300-EU#country_avail)
-[Google Developers Documentation, REST Resource: people](https://developers.google.com/people/api/rest/v1/people#Pource)
-[Google Developers Documentation, REST Resource: people](https://developers.google.com/people/api/rest/v1/people)
-[Google Developers Documentation, Develop on Google Workspace](https://developers.google.com/workspace/guides/get-started)
+
+[Google Support, Share a copy of your data with a third party](https://support.google.com/accounts/answer/14452558?hl=en&ref_topic=7188671)
+
+[Google Developers, REST Resource: people](https://developers.google.com/people/api/rest/v1/people)
+
+[Google Developers, Develop on Google Workspace](https://developers.google.com/workspace/guides/get-started)
+
+## PostgreSQL
+
+[PostgreSQL Documentation — JSON Types](https://www.postgresql.org/docs/current/datatype-json.html)
+
+[PostgreSQL Documentation — Full Text Search](https://www.postgresql.org/docs/current/textsearch.html)
+
+[PostgreSQL Documentation — `pg_trgm`](https://www.postgresql.org/docs/current/pgtrgm.html)
+
+[PostgreSQL Documentation — Constraints](https://www.postgresql.org/docs/current/ddl-constraints.html)
+
+## Provenance
+
+[W3C, PROV-O: The PROV Ontology](https://www.w3.org/TR/prov-o/)
+
+## Vector search
+
+[pgvector](https://github.com/pgvector/pgvector)
+
+## Agent interface
+
+[Model Context Protocol — Tools](https://modelcontextprotocol.io/specification/)

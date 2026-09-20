@@ -1,1 +1,1 @@
-"""Google provider ingestion (parsing lives here in a later step)."""
+"""Google provider ingestion: decode and map to source observations."""
