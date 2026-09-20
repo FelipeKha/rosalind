@@ -673,46 +673,54 @@ No backend functionality should depend on a particular client being present.
 
 # 6. High-Level Architecture
 
+Raw source persistence is deliberately the first durable step after a payload is received. Provider-specific parsing and canonicalization happen after the raw observation has been recorded.
+
 ```text
                        External data providers
               ┌────────────┬────────────┬────────────┐
               │            │            │            │
            Google        Apple         Meta        Others
-              │            │            │
-              └────────────┼────────────┘
+              │            │            │            │
+              └────────────┼────────────┴────────────┘
                            ▼
-                    Import / ingestion
-                           │
-                           ▼
-                     Provider adapters
+                     Import / ingestion
                            │
                            ▼
-                  Source representation
+                    Raw source records
                            │
                            ▼
-                  Validation + staging
+                 Provider validation / parsing
                            │
                            ▼
-                   Raw source records
+                Provider-independent observations
                            │
                            ▼
-                  Canonicalization /
-                  entity resolution
+                   Canonicalization /
+                   entity resolution
                            │
                            ▼
-                     Core data model
+                      Core data model
                            │
-                 ┌─────────┼──────────┐
-                 ▼         ▼          ▼
-              REST/API  Search/AI  CLI client
+                  ┌─────────┼──────────┐
+                  ▼         ▼          ▼
+               REST/API  Search/AI  CLI client
                            │
-                  ┌────────┼────────┐
-                  ▼        ▼        ▼
-              structured  FTS     vectors
-              retrieval          when needed
+                   ┌────────┼────────┐
+                   ▼        ▼        ▼
+               structured  FTS     vectors
+               retrieval          when needed
 ```
 
----
+The important failure-domain boundary is:
+
+```text
+Evidence ingestion              Semantic processing
+       │                               │
+       ▼                               ▼
+raw.source_record       →       validation / mapping / canonicalization
+```
+
+A provider format change must never cause the original payload to be discarded merely because provider validation or mapping failed.
 
 # 7. Source / Import Layer
 
@@ -2230,12 +2238,19 @@ Provider export/API response
     ↓
 Raw source record
     ↓
+Typed provider model
+    ↓
+Provider-independent observation
+    ↓
 Source assertion
     ↓
 Canonical fact
     ↓
 Agent/AI projection
 ```
+
+The provider model and observation are processing representations and are currently transient. The
+raw source record remains the durable source representation.
 
 For example:
 
@@ -2313,18 +2328,20 @@ The system should never destroy contradictory evidence merely to simplify the ca
 
 # 33. Import State Machine
 
-Imports should be processed through explicit stages:
+The ingestion pipeline is explicit about the distinction between evidence ingestion and semantic processing. The raw source record is written before provider validation or mapping.
+
+Conceptually:
 
 ```text
 RECEIVED
    ↓
 SCANNING
    ↓
-PARSING
+RAW_PERSISTENCE
    ↓
-VALIDATING
+PARSING / VALIDATION
    ↓
-STAGING
+SOURCE_MAPPING
    ↓
 NORMALIZING
    ↓
@@ -2335,23 +2352,31 @@ COMMITTING
 COMMITTED
 ```
 
-Failure state:
+A parsing or mapping failure does not invalidate the raw observation. Instead:
 
 ```text
-VALIDATING
-    ↓
-QUARANTINED
+RAW_PERSISTENCE
+      ↓
+PARSING / VALIDATION
+      ↓
+QUARANTINED / ERROR
 ```
 
-An invalid import must never corrupt the existing canonical database.
+The ordering invariant is architectural:
 
-The canonical database should only be updated after the relevant import has successfully passed validation/staging.
+> **`raw.source_record` is written first. Raw persistence and canonicalization are separate failure domains.**
+
+This guarantees that a provider format change that breaks `GooglePerson.model_validate()` does not discard the offending payload. The payload can later be reprocessed with a newer parser version.
 
 ---
 
 # 34. Provider Adapter Architecture
 
-Provider-specific parsers should be isolated and versioned.
+Provider-specific parsers are isolated and versioned. They are responsible for understanding the provider format, not for deciding Rosalind's canonical semantics.
+
+The current Google implementation is intentionally small and direct: `GooglePerson.model_validate()`
+performs provider validation and `map_google_person()` performs the provider-to-observation mapping.
+A generic parser registry/interface may be introduced as more providers and resource types are added.
 
 Recommended structure:
 
@@ -2365,9 +2390,9 @@ backend/
     │   └── staging.py
     │
     ├── google/
+    │   ├── models.py
+    │   ├── parser.py
     │   ├── contacts/
-    │   │   ├── v1.py
-    │   │   └── v2.py
     │   ├── gmail/
     │   └── calendar/
     │
@@ -2396,87 +2421,296 @@ class Parser(Protocol):
         ...
 ```
 
-Use a parser registry to select the correct adapter.
+Use a parser registry to select the appropriate provider adapter.
+
+The Google Person implementation currently uses:
+
+```text
+backend/src/rosalind/ingestion/google/models.py
+backend/src/rosalind/ingestion/google/parser.py
+```
+
+The provider model is deliberately close to Google's API representation.
 
 ---
 
-# 35. Intermediate Source Representation
+# 35. Google Person Parsing
 
-Avoid going directly from provider format to canonical data.
+The first implemented parsing pipeline targets the Google People `Person` resource. The parser is deterministic, provider-specific, and independent from the database.
 
-Instead:
+The implemented flow is:
 
 ```text
-Google JSON
-    ↓
-Google adapter
-    ↓
-Source representation
-    ↓
-Canonicalization
-    ↓
-Canonical model
+Google payload (dict)
+        │
+        ├── canonical JSON + SHA-256
+        │
+        ▼
+raw.source_record
+        │
+        ▼
+GooglePerson.model_validate(payload)
+        │
+        ▼
+map_google_person(person)
+        │
+        ▼
+PersonObservation
+        │
+        ▼
+canonicalize(...)
+        │
+        ▼
+core.*
+```
+
+## 35.1 Raw persistence happens first
+
+For `ingest_person(...)`, the payload is first serialized deterministically:
+
+```python
+json.dumps(
+    payload,
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
+)
+```
+
+The SHA-256 digest of this canonical JSON representation becomes `payload_sha256`.
+
+The provider resource identifier is extracted from `resourceName` and stored as `external_id`. If `resourceName` is absent, the raw ingestion step rejects the record because the source object cannot be identified reliably.
+
+The raw record is persisted using:
+
+```text
+resource_type = "people.person"
+source_etag = top-level Person.etag
+source_updated_at = NULL
+```
+
+Google can expose `etag` and `updateTime` for individual sources inside `metadata.sources[]`, but a `Person` can contain multiple sources and therefore does not have one meaningful provider-wide source update timestamp. Those per-source values remain preserved in the raw JSONB payload and can also be surfaced through `source_assertion.metadata` where relevant.
+
+Raw persistence uses a database upsert with:
+
+```text
+ON CONFLICT DO NOTHING
+on (source_account_id, resource_type, external_id, payload_sha256)
+```
+
+The raw record is therefore durable evidence regardless of whether later parsing succeeds.
+
+## 35.2 Provider-specific validation
+
+`GooglePerson.model_validate(payload)` validates the provider payload using Pydantic v2.
+
+The Google models intentionally cover only fields currently consumed by Rosalind, including:
+
+```text
+GoogleSource
+GoogleFieldMetadata
+GooglePersonMetadata
+GoogleName
+GoogleEmailAddress
+GoogleDate
+GoogleBirthday
+GoogleLocale
+GoogleGender
+GooglePerson
+```
+
+All models use `ConfigDict(extra="allow")`. Unknown provider fields therefore do not need to be understood by Rosalind immediately, while the complete original payload remains available in `raw.source_record.payload`.
+
+This creates two complementary compatibility mechanisms:
+
+```text
+raw JSONB
+    = complete source representation
+
+Pydantic model
+    = typed interpretation of the subset Rosalind currently consumes
+```
+
+## 35.3 Provider-independent observations
+
+The validated Google object is mapped into frozen dataclasses in:
+
+```text
+backend/src/rosalind/domain/observations/person.py
+```
+
+The current observation types are:
+
+```text
+SourceRef
+PersonObservation
+NameObservation
+EmailObservation
+DateObservation
+GenderObservation
+LocaleObservation
+```
+
+The observation layer is deliberately transient; it is not currently persisted as a separate database staging model. Raw data can always be reparsed to recreate it.
+
+The observation model describes what a provider record asserted without making canonical decisions.
+
+Each field observation carries, as applicable:
+
+```text
+value
+source: SourceRef | None
+source_primary
+source_verified
+field_path
 ```
 
 For example:
 
-```json
-{
-  "provider": "google",
-  "object_type": "contact",
-  "provider_id": "people/c123",
-
-  "name": {
-    "given": "Alex",
-    "family": "Morgan"
-  },
-
-  "emails": [
-    {
-      "address": "alex.morgan@example.com",
-      "label": "home"
-    }
-  ]
-}
+```text
+$.names[0]
+$.emailAddresses[0]
+$.birthdays[0]
+$.locales[0]
 ```
 
-Apple's representation of the same contact should produce the same source-level structure.
+The field path is a locator into the particular immutable raw snapshot. It is not the canonical identity of the fact.
 
-This makes the canonicalization layer provider-independent.
+## 35.4 Source identity extraction
+
+Google `Person` resources can aggregate information from multiple sources. The mapper therefore collects source identities from both:
+
+```text
+Person.metadata.sources[]
+```
+
+and every field-level:
+
+```text
+field.metadata.source
+```
+
+The union is deduplicated by:
+
+```text
+(source_type, external_id)
+```
+
+This matters because the source of an individual field may differ from the person's aggregate source list. The observation records the field-level source when available.
+
+The mapper never assumes that the first array element is the primary value. It reads provider metadata such as `metadata.primary` explicitly.
+
+The mapper performs **no value normalization** and has **no database access**. It is a pure, deterministic transformation from `GooglePerson` to `PersonObservation`.
+
+## 35.5 Canonicalization
+
+Canonicalization is implemented in:
+
+```text
+backend/src/rosalind/canonicalization/person.py
+```
+
+The canonicalizer receives:
+
+```text
+canonicalize(
+    db,
+    source_account,
+    source_record,
+    observation,
+)
+```
+
+Its responsibilities are:
+
+1. Resolve or create `core.source_identity` rows scoped to the current `source_account`.
+2. Resolve or create the single `core.person` represented by the observation.
+3. For each observation, create a `core.source_assertion`.
+4. Normalize and resolve the corresponding canonical fact.
+5. Link the assertion to the canonical fact through the appropriate `person_*_assertion` table.
+6. Apply canonical primary-selection policy.
+
+The canonicalizer uses PostgreSQL uniqueness constraints and `ON CONFLICT`-style upserts as the authoritative idempotency mechanism. It does not rely on a check-then-insert pattern for correctness.
+
+## 35.6 Email normalization
+
+Email normalization is deliberately outside the provider parser:
+
+```text
+backend/src/rosalind/canonicalization/email.py
+```
+
+The current `normalize_email()` policy is:
+
+```text
+strip surrounding whitespace
+lowercase
+```
+
+No Gmail-specific dot removal or plus-address collapsing is performed at this stage. The original provider value remains stored in `core.person_email.email`; the normalized value is used for Rosalind matching and uniqueness.
+
+## 35.7 Primary-value selection
+
+Provider `source_primary` and canonical `is_primary` have different meanings.
+
+`source_primary` is evidence that the provider considers a value primary within that source. `is_primary` is Rosalind's canonical decision.
+
+The current `select_primary(...)` policy uses `source_primary` as the strongest input signal and falls back to a deterministic selection rule when no source item is marked primary. The policy is implemented as a standalone function so that more sophisticated multi-provider conflict resolution can replace it later without changing the parser.
+
+The canonicalizer therefore never rewrites provider evidence merely to make canonical and provider choices agree.
+
+## 35.8 Canonicalization result
+
+Canonicalization returns an explicit result object:
+
+```text
+CanonicalizationResult(
+    person_id,
+    created,
+    facts_created,
+    facts_reused,
+    assertions_created,
+)
+```
+
+This makes the operation observable and straightforward to test. It also provides the basis for future import statistics and health checks.
 
 ---
 
-# 36. Validation and Schema Evolution
+# 36. Ingestion Service
 
-Use Pydantic models for provider-specific formats.
-
-Important rule:
-
-## Additive provider changes
-
-If a provider adds a field:
+The orchestration entry point for the current Google Person flow is:
 
 ```text
-newField
+backend/src/rosalind/ingestion/service.py
 ```
 
-do not necessarily fail the import.
+with:
 
-Preserve unknown fields.
+```python
+ingest_person(
+    db,
+    source_account,
+    person_payload: dict,
+) -> CanonicalizationResult
+```
 
-The raw record remains authoritative for the complete provider payload.
+The service is intentionally decoupled from network fetching. It accepts an already-fetched payload, making it testable without Google credentials or HTTP calls.
 
-## Breaking provider changes
-
-If a required field disappears or the structure fundamentally changes:
+The current sequence is:
 
 ```text
-validation → failure
+1. canonical JSON + SHA-256
+2. raw.source_record upsert
+3. GooglePerson.model_validate(payload)
+4. map_google_person(person)
+5. canonicalize(...)
+6. return CanonicalizationResult
 ```
 
-Do not write corrupted canonical data.
+The existing `POST /imports/google/profile` endpoint is **not** yet wired to `ingest_person`. The parsing/canonicalization pipeline is therefore implemented independently of the live profile endpoint.
 
-Instead quarantine the import.
+This separation is intentional: the parser and canonicalizer can be tested and evolved before being made part of the production request path.
 
 ---
 
@@ -2516,7 +2750,7 @@ Suspicious imports should be quarantined or require explicit approval rather tha
 
 # 38. Golden Test Fixtures
 
-Maintain representative synthetic provider fixtures:
+Maintain representative synthetic provider fixtures. Fixtures must contain fake identifiers and values and must never contain real personal data:
 
 ```text
 tests/
@@ -2534,10 +2768,12 @@ tests/
 
 Fixtures should use synthetic values rather than real personal data.
 
-Test both:
+Test the parsing pipeline in separate layers:
 
-1. Provider parsing
-2. Expected canonical output
+1. Provider validation/model construction
+2. Deterministic provider-to-observation mapping
+3. Expected canonical output
+4. Idempotent reprocessing
 
 Provider fixtures are compatibility contracts for provider formats.
 
@@ -2636,7 +2872,11 @@ The following should be treated as architectural invariants:
 14. **The backend is independent of any client.**
 15. **The canonical database should be rebuildable from retained source data.**
 16. **The person model does not distinguish "me" from other people.**
-17. **Agent-facing projections are derived from canonical data and are not sources of truth.**
+17. **Raw persistence happens before provider validation or canonicalization.**
+18. **Provider parsing is deterministic, provider-specific, and has no database access.**
+19. **Provider parsing performs no canonical value normalization.**
+20. **Provider `source_primary`/`source_verified` metadata is preserved as evidence rather than silently rewritten.**
+21. **Agent-facing projections are derived from canonical data and are not sources of truth.**
 
 ---
 
@@ -2667,9 +2907,10 @@ Google Takeout
 ## Phase 2 — Google Contacts
 
 * Takeout parser
-* Versioned parser
+* Versioned provider adapters
 * Pydantic validation
 * Raw source records
+* Provider-independent observations
 * Source identities
 * Source assertions
 * Canonical Person
