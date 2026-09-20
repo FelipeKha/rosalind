@@ -296,6 +296,14 @@ class PersonName(Base):
             unique=True,
             postgresql_where=text("is_primary"),
         ),
+        UniqueConstraint(
+            "person_id",
+            "display_name",
+            "given_name",
+            "family_name",
+            name="uq_person_name_value",
+            postgresql_nulls_not_distinct=True,
+        ),
         {"schema": "core"},
     )
 
@@ -357,6 +365,15 @@ class PersonDate(Base):
             unique=True,
             postgresql_where=text("is_primary"),
         ),
+        UniqueConstraint(
+            "person_id",
+            "date_type",
+            "year",
+            "month",
+            "day",
+            name="uq_person_date_value",
+            postgresql_nulls_not_distinct=True,
+        ),
         {"schema": "core"},
     )
 
@@ -380,6 +397,7 @@ class PersonGender(Base):
             unique=True,
             postgresql_where=text("is_primary"),
         ),
+        UniqueConstraint("person_id", "value", name="uq_person_gender_value"),
         {"schema": "core"},
     )
 
@@ -400,6 +418,7 @@ class PersonLocale(Base):
             unique=True,
             postgresql_where=text("is_primary"),
         ),
+        UniqueConstraint("person_id", "value", name="uq_person_locale_value"),
         {"schema": "core"},
     )
 

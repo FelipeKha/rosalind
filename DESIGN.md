@@ -1186,6 +1186,14 @@ WHERE is_primary;
 
 Multiple names may coexist because different providers or source observations may contain legitimate variations.
 
+Value uniqueness is enforced so re-imports do not create duplicate name facts:
+
+```sql
+CREATE UNIQUE INDEX person_name_value
+ON core.person_name (person_id, display_name, given_name, family_name)
+NULLS NOT DISTINCT;
+```
+
 ---
 
 ## 14.2 Email addresses
@@ -1286,6 +1294,14 @@ WHERE is_primary;
 
 The raw provider representation remains available in the raw source record.
 
+Value uniqueness is enforced so re-imports do not create duplicate date facts:
+
+```sql
+CREATE UNIQUE INDEX person_date_value
+ON core.person_date (person_id, date_type, year, month, day)
+NULLS NOT DISTINCT;
+```
+
 ---
 
 ## 14.4 Gender
@@ -1313,6 +1329,8 @@ WHERE is_primary;
 ```
 
 The value remains `TEXT` rather than a PostgreSQL enum so that the canonical model does not become tightly coupled to a fixed provider ontology.
+
+Value uniqueness is enforced so re-imports do not create duplicate gender facts: `UNIQUE (person_id, value)`.
 
 ---
 
@@ -1348,6 +1366,8 @@ fr-FR
 ```
 
 rather than being decomposed into separate language and country columns.
+
+Value uniqueness is enforced so re-imports do not create duplicate locale facts: `UNIQUE (person_id, value)`.
 
 ---
 

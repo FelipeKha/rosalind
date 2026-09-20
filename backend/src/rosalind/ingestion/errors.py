@@ -15,3 +15,11 @@ class InvalidImportStateError(IngestionError):
 
 class InvalidManifestError(IngestionError):
     """Raised when a completion manifest is malformed."""
+
+
+class InvalidPayloadError(IngestionError):
+    """Raised when a provider payload cannot be mapped to a source record."""
+
+
+class EntityResolutionConflictError(IngestionError):
+    """Raised when source identities resolve to more than one canonical person."""
