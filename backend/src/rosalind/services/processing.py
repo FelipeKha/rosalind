@@ -19,7 +19,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from rosalind import models
-from rosalind.canonicalization.person import CanonicalizationResult, canonicalize
+from rosalind.canonicalization.person import (
+    CanonicalizationResult,
+    canonicalize,
+)
 from rosalind.ingestion.errors import InvalidPayloadError
 from rosalind.ingestion.google.models import (
     GOOGLE_PERSON_RESOURCE_TYPE,
