@@ -1,113 +1,69 @@
-import httpx
-import pytest
-
-from cli import client
+from cli.client import imports as imports_client
 
 
-def test_create_import_posts_to_provider_endpoint(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+class FakeApi:
+    def __init__(self, response=None):
+        self.calls = []
+        self.response = response
 
-    def fake_post(url: str, timeout: float) -> httpx.Response:
-        captured["url"] = url
-        return httpx.Response(
-            200, json={"import_id": "abc"}, request=httpx.Request("POST", url)
-        )
+    def post(self, path, *, json=None):
+        self.calls.append(("post", path, json))
+        return self.response or {}
 
-    monkeypatch.setattr(client.httpx, "post", fake_post)
+    def get(self, path, *, params=None):
+        self.calls.append(("get", path, params))
+        return self.response or {"imports": []}
 
-    result = client.create_import("google", "takeout")
+    def delete(self, path):
+        self.calls.append(("delete", path))
 
-    assert result == {"import_id": "abc"}
-    assert captured["url"] == "http://localhost:8000/imports/google/takeout"
+
+def _stub(monkeypatch, response=None):
+    fake = FakeApi(response=response)
+    monkeypatch.setattr(imports_client.http, "api", fake)
+    return fake
+
+
+def test_create_import_posts_source_and_type(monkeypatch) -> None:
+    fake = _stub(monkeypatch)
+
+    imports_client.create_import("google-personal", "takeout")
+
+    assert fake.calls == [
+        ("post", "/imports", {"source_name": "google-personal", "type": "takeout"})
+    ]
 
 
 def test_complete_import_posts_manifest(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_post(url: str, json: object, timeout: float) -> httpx.Response:
-        captured["url"] = url
-        captured["json"] = json
-        return httpx.Response(
-            200, json={"status": "completed"}, request=httpx.Request("POST", url)
-        )
-
-    monkeypatch.setattr(client.httpx, "post", fake_post)
-
+    fake = _stub(monkeypatch)
     manifest: dict[str, object] = {"files": []}
-    result = client.complete_import("import-1", manifest)
 
-    assert result == {"status": "completed"}
-    assert captured["url"] == "http://localhost:8000/imports/import-1/complete"
-    assert captured["json"] == manifest
+    imports_client.complete_import("import-1", manifest)
 
-
-def test_create_import_raises_on_error(monkeypatch) -> None:
-    def fake_post(url: str, timeout: float) -> httpx.Response:
-        raise httpx.ConnectError("connection refused")
-
-    monkeypatch.setattr(client.httpx, "post", fake_post)
-
-    with pytest.raises(client.ApiClientError):
-        client.create_import("google", "takeout")
+    assert fake.calls == [("post", "/imports/import-1/complete", manifest)]
 
 
 def test_list_imports_returns_items(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+    fake = _stub(monkeypatch, response={"imports": [{"import_id": "abc"}]})
 
-    def fake_get(url: str, timeout: float) -> httpx.Response:
-        captured["url"] = url
-        return httpx.Response(
-            200,
-            json={"imports": [{"import_id": "abc"}]},
-            request=httpx.Request("GET", url),
-        )
-
-    monkeypatch.setattr(client.httpx, "get", fake_get)
-
-    result = client.list_imports()
+    result = imports_client.list_imports()
 
     assert result == [{"import_id": "abc"}]
-    assert captured["url"] == "http://localhost:8000/imports"
+    assert fake.calls == [("get", "/imports", None)]
 
 
 def test_get_import_returns_detail(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+    fake = _stub(monkeypatch, response={"import_id": "abc"})
 
-    def fake_get(url: str, timeout: float) -> httpx.Response:
-        captured["url"] = url
-        return httpx.Response(
-            200,
-            json={"import_id": "abc"},
-            request=httpx.Request("GET", url),
-        )
-
-    monkeypatch.setattr(client.httpx, "get", fake_get)
-
-    result = client.get_import("abc")
+    result = imports_client.get_import("abc")
 
     assert result == {"import_id": "abc"}
-    assert captured["url"] == "http://localhost:8000/imports/abc"
+    assert fake.calls == [("get", "/imports/abc", None)]
 
 
 def test_delete_import_uses_delete(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+    fake = _stub(monkeypatch)
 
-    def fake_delete(url: str, timeout: float) -> httpx.Response:
-        captured["url"] = url
-        return httpx.Response(204, request=httpx.Request("DELETE", url))
+    imports_client.delete_import("abc")
 
-    monkeypatch.setattr(client.httpx, "delete", fake_delete)
-
-    client.delete_import("abc")
-
-    assert captured["url"] == "http://localhost:8000/imports/abc"
-
-
-def test_delete_import_raises_on_error(monkeypatch) -> None:
-    def fake_delete(url: str, timeout: float) -> httpx.Response:
-        raise httpx.ConnectError("connection refused")
-
-    monkeypatch.setattr(client.httpx, "delete", fake_delete)
-
-    with pytest.raises(client.ApiClientError):
-        client.delete_import("abc")
+    assert fake.calls == [("delete", "/imports/abc")]

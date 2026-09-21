@@ -12,18 +12,34 @@ directly.
 uv sync
 ```
 
-## Run
+## Commands
 
 ```bash
-uv run rosalind --help
 uv run rosalind status
-uv run rosalind import create google ~/Downloads/Takeout
+
+uv run rosalind source list
+uv run rosalind source show <source>
+uv run rosalind source create google --name google-personal
+uv run rosalind source connect google [--name google-personal]
+uv run rosalind source disconnect <source>
+
+uv run rosalind import create --source google-personal --type takeout ~/Downloads/Takeout
+uv run rosalind import create --source google-personal --type api
 uv run rosalind import list
 uv run rosalind import show <import_id>
 uv run rosalind import delete <import_id>
-uv run rosalind google connect
-uv run rosalind google import profile
-uv run rosalind google disconnect
+
+uv run rosalind process run <import_id>
+
+uv run rosalind query people
+uv run rosalind query people --search "Alex"
+uv run rosalind query person <person_id>
+```
+
+Every command supports a global `--json` flag for machine-readable output:
+
+```bash
+uv run rosalind import list --json
 ```
 
 ## Configuration

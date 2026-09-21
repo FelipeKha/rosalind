@@ -31,6 +31,13 @@ class PersonRepository:
         ).all()
         return [self._to_profile(row) for row in rows]
 
+    def list_all(self, db: Session, limit: int) -> list[PersonProfile]:
+        rows = db.execute(
+            text(f"{_PROFILE_QUERY} order by display_name nulls last limit :limit"),
+            {"limit": limit},
+        ).all()
+        return [self._to_profile(row) for row in rows]
+
     def get(self, db: Session, person_id: uuid.UUID) -> PersonProfile | None:
         row = db.execute(
             text(f"{_PROFILE_QUERY} where person_id = :person_id"),

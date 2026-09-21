@@ -51,7 +51,11 @@ cd cli
 uv sync                 # once, if deps are not installed yet
 uv run rosalind --help
 uv run rosalind status
-uv run rosalind import google ~/Downloads/Takeout
+uv run rosalind source create google --name google-personal
+uv run rosalind import create --source google-personal --type takeout ~/Downloads/Takeout
+uv run rosalind import list
+uv run rosalind process run <import-id>
+uv run rosalind query people
 ```
 
 The CLI reads `ROSALIND_API_URL` (default `http://localhost:8000`) and the S3
@@ -89,9 +93,9 @@ Set it as `ROSALIND_TOKEN_ENCRYPTION_KEY`.
 
 ```bash
 cd cli
-uv run rosalind google connect          # opens a browser, stores credentials
-uv run rosalind google import profile   # fetches your People API profile
-uv run rosalind google disconnect       # revokes access and removes stored credentials
+uv run rosalind source connect google        # opens a browser, stores credentials
+uv run rosalind import create --source google-personal --type api
+uv run rosalind source disconnect google-personal   # revokes access, keeps imported data
 ```
 
 The Google authorization flow requests offline access so the backend can

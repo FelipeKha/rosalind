@@ -769,7 +769,7 @@ Raw provider files are stored in object storage before semantic parsing happens.
 The CLI is responsible for the data plane; the backend owns the import lifecycle and is authoritative for import metadata.
 
 ```text
-CLI ──1. POST /imports/google/takeout──────────────► API
+CLI ──1. POST /imports {source_name, type}───────► API
   ▲                                                │ creates import
   │                                                │
   │◄───────────────────────────────────────────────┘
@@ -778,10 +778,16 @@ CLI ──1. POST /imports/google/takeout─────────────
   ├─ 3. collect metadata + SHA-256
   ├─ 4. upload files ─────────────────────────────► object storage
   └─ 5. POST /imports/{id}/complete ─────────────► API
-                                                   │
-                                                   ▼
-                                               PostgreSQL
+                                                    │
+                                                    ▼
+                                                PostgreSQL
 ```
+
+An import tracks two independent dimensions: `ingestion_status`
+(`uploading`/`completed`) and `processing_status` (`pending`/`completed`/...).
+Processing is an operation on an import (`POST /imports/{id}/process`), not a
+separate resource. Source accounts have a human-facing `name` (the CLI slug)
+distinct from the immutable provider identity (`provider` + `account_identifier`).
 
 Key properties:
 

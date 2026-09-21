@@ -1,4 +1,6 @@
-"""Request and response schemas for import endpoints."""
+"""Request and response schemas for import and processing endpoints."""
+
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
@@ -18,11 +20,20 @@ class ManifestRequest(BaseModel):
     files: list[FileEntryRequest]
 
 
+class ImportCreateRequest(BaseModel):
+    source_name: str
+    type: str
+
+
 class ImportCreatedResponse(BaseModel):
     import_id: uuid.UUID
+    source_id: uuid.UUID | None = None
+    source_name: str | None = None
+    type: str
     bucket: str
     storage_prefix: str
-    status: str
+    ingestion_status: str
+    processing_status: str
 
 
 class FileResponse(BaseModel):
@@ -36,9 +47,11 @@ class FileResponse(BaseModel):
 
 class ImportSummaryResponse(BaseModel):
     import_id: uuid.UUID
-    source: str
+    source_id: uuid.UUID | None = None
+    source_name: str | None = None
     type: str
-    status: str
+    ingestion_status: str
+    processing_status: str
     created_at: datetime
     completed_at: datetime | None = None
     file_count: int
@@ -54,8 +67,12 @@ class ImportDetailResponse(ImportSummaryResponse):
     files: list[FileResponse]
 
 
-class GoogleProfileImportResponse(BaseModel):
-    status: str
-    account: str | None = None
-    display_name: str | None = None
-    fetched_at: datetime
+class ProcessingResultResponse(BaseModel):
+    import_id: uuid.UUID
+    processing_status: str
+    result: str
+    message: str | None = None
+    people_created: int = 0
+    facts_created: int = 0
+    facts_reused: int = 0
+    assertions_created: int = 0

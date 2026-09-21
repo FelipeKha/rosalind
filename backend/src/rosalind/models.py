@@ -35,9 +35,16 @@ class Import(Base):
     __tablename__ = "imports"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    source: Mapped[str] = mapped_column(Text, nullable=False)
+    source_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_account.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     type: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Text, nullable=False)
+    ingestion_status: Mapped[str] = mapped_column(Text, nullable=False)
+    processing_status: Mapped[str] = mapped_column(
+        Text, nullable=False, default="pending"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -53,6 +60,7 @@ class Import(Base):
         cascade="all, delete-orphan",
         order_by="ImportFile.path",
     )
+    source_account: Mapped[SourceAccount | None] = relationship()
 
 
 class ImportFile(Base):
@@ -85,10 +93,12 @@ class SourceAccount(Base):
             "account_identifier",
             name="uq_source_account_provider_identifier",
         ),
+        UniqueConstraint("name", name="uq_source_account_name"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
     account_identifier: Mapped[str | None] = mapped_column(Text, nullable=True)
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -143,6 +153,7 @@ class OAuthAuthRequest(Base):
     source_account_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("source_account.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    source_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     code_verifier: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -183,6 +194,9 @@ class SourceRecord(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     source_account_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("source_account.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    import_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("imports.id", ondelete="SET NULL"), nullable=True, index=True
     )
     resource_type: Mapped[str] = mapped_column(Text, nullable=False)
     external_id: Mapped[str] = mapped_column(Text, nullable=False)

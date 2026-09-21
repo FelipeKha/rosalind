@@ -5,9 +5,9 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from rosalind import models
-from rosalind.ingestion import service
 from rosalind.repositories.person_repository import PersonRepository
-from rosalind.services.person_service import PersonService
+from rosalind.services import processing
+from rosalind.services.people import PersonService
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -22,7 +22,7 @@ def _ingest(db: Session) -> uuid.UUID:
     account = models.SourceAccount(provider="google", account_identifier="test-account")
     db.add(account)
     db.commit()
-    result = service.ingest_person(db, account, _payload())
+    result = processing.ingest_person(db, account, _payload())
     return result.person_id
 
 

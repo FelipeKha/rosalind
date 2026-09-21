@@ -13,5 +13,9 @@ class TokenNotFoundError(AuthError):
     """Raised when no credentials are stored for a provider account."""
 
 
+class SourceNotFoundError(AuthError):
+    """Raised when a source account does not exist by id or name."""
+
+
 class ProviderError(AuthError):
     """Raised when the provider rejects a token exchange or API request."""

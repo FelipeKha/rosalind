@@ -140,6 +140,16 @@ def backend_base_url(
 
 
 @pytest.fixture(scope="session")
+def google_source(backend_base_url: str) -> dict:
+    response = httpx.post(
+        f"{backend_base_url}/sources",
+        json={"provider": "google", "name": "google-personal"},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+@pytest.fixture(scope="session")
 def takeout_fixture() -> Path:
     return TAKEOUT_FIXTURE
 
@@ -181,7 +191,10 @@ def run_cli(cli_env: dict[str, str]):
                 "rosalind",
                 "import",
                 "create",
-                "google",
+                "--source",
+                "google-personal",
+                "--type",
+                "takeout",
                 str(path),
             ],
             env=env,

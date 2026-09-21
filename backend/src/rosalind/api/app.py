@@ -1,8 +1,13 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from rosalind.api.routes import auth, health, imports, people
-from rosalind.auth.errors import InvalidStateError, ProviderError, TokenNotFoundError
+from rosalind.api.routes import auth, health, imports, people, sources
+from rosalind.auth.errors import (
+    InvalidStateError,
+    ProviderError,
+    SourceNotFoundError,
+    TokenNotFoundError,
+)
 from rosalind.ingestion.errors import (
     ImportNotFoundError,
     InvalidImportStateError,
@@ -14,12 +19,18 @@ app = FastAPI(title="Rosalind")
 
 app.include_router(health.router)
 app.include_router(imports.router)
+app.include_router(sources.router)
 app.include_router(auth.router)
 app.include_router(people.router)
 
 
 @app.exception_handler(ImportNotFoundError)
 async def _import_not_found(_: Request, exc: ImportNotFoundError) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(SourceNotFoundError)
+async def _source_not_found(_: Request, exc: SourceNotFoundError) -> JSONResponse:
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 

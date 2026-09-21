@@ -3,12 +3,14 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
-from rosalind.ingestion import manifest, service
+from rosalind import models
+from rosalind.ingestion import manifest
 from rosalind.ingestion.errors import (
     ImportNotFoundError,
     InvalidImportStateError,
     InvalidManifestError,
 )
+from rosalind.services import imports, sources
 
 
 def _entry(
@@ -17,12 +19,19 @@ def _entry(
     return manifest.FileEntry(path=path, sha256=sha256, size=size, format="json")
 
 
-def test_create_and_complete_import(db_session: Session) -> None:
-    imp = service.create_import(db_session, "google", "takeout")
-    assert imp.status == "uploading"
+def _source(db: Session) -> models.SourceAccount:
+    return sources.create_source(db, provider="google", name="google-personal")
 
-    completed = service.complete_import(db_session, imp.id, [_entry()])
-    assert completed.status == "completed"
+
+def test_create_and_complete_import(db_session: Session) -> None:
+    source = _source(db_session)
+    imp = imports.create_import(db_session, source, "takeout")
+    assert imp.ingestion_status == "uploading"
+    assert imp.processing_status == "pending"
+    assert imp.source_account_id == source.id
+
+    completed = imports.complete_import(db_session, imp.id, [_entry()])
+    assert completed.ingestion_status == "completed"
     assert completed.file_count == 1
     assert completed.total_size == 1
     assert completed.import_hash is not None
@@ -31,72 +40,91 @@ def test_create_and_complete_import(db_session: Session) -> None:
 
 
 def test_get_import_returns_files(db_session: Session) -> None:
-    imp = service.create_import(db_session, "google", "takeout")
-    service.complete_import(
+    source = _source(db_session)
+    imp = imports.create_import(db_session, source, "takeout")
+    imports.complete_import(
         db_session, imp.id, [_entry("Contacts/contacts.json", "b" * 64, 42)]
     )
 
-    fetched = service.get_import(db_session, imp.id)
+    fetched = imports.get_import(db_session, imp.id)
     assert fetched.file_count == 1
     assert [f.path for f in fetched.files] == ["Contacts/contacts.json"]
 
 
 def test_complete_import_twice_is_rejected(db_session: Session) -> None:
-    imp = service.create_import(db_session, "google", "takeout")
-    service.complete_import(db_session, imp.id, [_entry()])
+    source = _source(db_session)
+    imp = imports.create_import(db_session, source, "takeout")
+    imports.complete_import(db_session, imp.id, [_entry()])
 
     with pytest.raises(InvalidImportStateError):
-        service.complete_import(db_session, imp.id, [_entry()])
+        imports.complete_import(db_session, imp.id, [_entry()])
 
 
 def test_complete_import_unknown_id(db_session: Session) -> None:
     with pytest.raises(ImportNotFoundError):
-        service.complete_import(db_session, uuid.uuid4(), [_entry()])
+        imports.complete_import(db_session, uuid.uuid4(), [_entry()])
 
 
 def test_complete_import_rejects_duplicate_paths(db_session: Session) -> None:
-    imp = service.create_import(db_session, "google", "takeout")
+    source = _source(db_session)
+    imp = imports.create_import(db_session, source, "takeout")
     with pytest.raises(InvalidManifestError):
-        service.complete_import(
+        imports.complete_import(
             db_session, imp.id, [_entry("a.json"), _entry("a.json")]
         )
 
 
 def test_complete_import_rejects_invalid_sha256(db_session: Session) -> None:
-    imp = service.create_import(db_session, "google", "takeout")
+    source = _source(db_session)
+    imp = imports.create_import(db_session, source, "takeout")
     entry = manifest.FileEntry(path="a.json", sha256="bad", size=1)
     with pytest.raises(InvalidManifestError):
-        service.complete_import(db_session, imp.id, [entry])
+        imports.complete_import(db_session, imp.id, [entry])
 
 
 def test_get_import_unknown_id(db_session: Session) -> None:
     with pytest.raises(ImportNotFoundError):
-        service.get_import(db_session, uuid.uuid4())
+        imports.get_import(db_session, uuid.uuid4())
 
 
 def test_list_imports_returns_all(db_session: Session) -> None:
-    first = service.create_import(db_session, "google", "takeout")
-    second = service.create_import(db_session, "apple", "takeout")
+    first_source = sources.create_source(
+        db_session, provider="google", name="google-personal"
+    )
+    second_source = sources.create_source(
+        db_session, provider="apple", name="apple-personal"
+    )
 
-    imports = service.list_imports(db_session)
+    first = imports.create_import(db_session, first_source, "takeout")
+    second = imports.create_import(db_session, second_source, "takeout")
 
-    assert {imp.id for imp in imports} == {first.id, second.id}
+    result = imports.list_imports(db_session)
+
+    assert {imp.id for imp in result} == {first.id, second.id}
 
 
 def test_list_imports_empty(db_session: Session) -> None:
-    assert service.list_imports(db_session) == []
+    assert imports.list_imports(db_session) == []
 
 
 def test_delete_import(db_session: Session) -> None:
-    imp = service.create_import(db_session, "google", "takeout")
-    service.complete_import(db_session, imp.id, [_entry()])
+    source = _source(db_session)
+    imp = imports.create_import(db_session, source, "takeout")
+    imports.complete_import(db_session, imp.id, [_entry()])
 
-    service.delete_import(db_session, imp.id)
+    imports.delete_import(db_session, imp.id)
 
     with pytest.raises(ImportNotFoundError):
-        service.get_import(db_session, imp.id)
+        imports.get_import(db_session, imp.id)
 
 
 def test_delete_import_unknown_id(db_session: Session) -> None:
     with pytest.raises(ImportNotFoundError):
-        service.delete_import(db_session, uuid.uuid4())
+        imports.delete_import(db_session, uuid.uuid4())
+
+
+def test_create_import_requires_source(db_session: Session) -> None:
+    from rosalind.auth.errors import SourceNotFoundError
+
+    with pytest.raises(SourceNotFoundError):
+        sources.resolve_source(db_session, "does-not-exist")

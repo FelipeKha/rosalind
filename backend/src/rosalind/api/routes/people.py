@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from rosalind.api.schemas import people as schemas
 from rosalind.db import get_db
 from rosalind.repositories.person_repository import PersonRepository
-from rosalind.services.person_service import PersonService
+from rosalind.services.people import PersonService
 
 router = APIRouter(prefix="/people", tags=["people"])
 
@@ -28,6 +28,14 @@ def get_service() -> PersonService:
 
 
 ServiceDep = Annotated[PersonService, Depends(get_service)]
+
+
+@router.get("", response_model=list[schemas.PersonProfileResponse])
+def list_people(
+    db: SessionDep,
+    svc: ServiceDep,
+) -> list[schemas.PersonProfileResponse]:
+    return [schemas.PersonProfileResponse(**asdict(p)) for p in svc.list_people(db)]
 
 
 @router.get("/search", response_model=list[schemas.PersonProfileResponse])
