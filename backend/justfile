@@ -31,7 +31,7 @@ check: lint typecheck test security
 serve:
     uv run uvicorn rosalind.api.app:app --reload
 
-# Start the MCP server over stdio
+# Start the MCP server (transport via ROSALIND_MCP_TRANSPORT: stdio, sse, or streamable-http)
 mcp-serve:
     uv run rosalind-mcp
 

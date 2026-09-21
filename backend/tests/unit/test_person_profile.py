@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from sqlalchemy.orm import Session
 
 from rosalind.repositories.person_repository import PersonRepository
-from rosalind.services.person_service import MAX_SEARCH_RESULTS, PersonService
+from rosalind.services.people import MAX_SEARCH_RESULTS, PersonService
 
 
 def test_to_profile_maps_all_fields() -> None:

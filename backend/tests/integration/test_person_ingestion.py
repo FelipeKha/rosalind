@@ -7,9 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rosalind import models
-from rosalind.ingestion import service
 from rosalind.ingestion.errors import InvalidPayloadError
 from rosalind.ingestion.google.models import GOOGLE_PERSON_RESOURCE_TYPE
+from rosalind.services import processing
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -29,7 +29,7 @@ def _account(db: Session) -> models.SourceAccount:
 
 def test_ingest_person_writes_raw_and_canonical(db_session: Session) -> None:
     account = _account(db_session)
-    result = service.ingest_person(db_session, account, _payload())
+    result = processing.ingest_person(db_session, account, _payload())
 
     assert result.created is True
     assert result.facts_created == 5
@@ -41,7 +41,7 @@ def test_ingest_person_writes_raw_and_canonical(db_session: Session) -> None:
     record = records[0]
     assert record.resource_type == GOOGLE_PERSON_RESOURCE_TYPE
     assert record.external_id == "people/123456789012345678901"
-    assert record.payload_sha256 == service.payload_sha256(_payload())
+    assert record.payload_sha256 == processing.payload_sha256(_payload())
 
     people = db_session.scalars(select(models.Person)).all()
     assert len(people) == 1
@@ -72,8 +72,8 @@ def test_ingest_person_writes_raw_and_canonical(db_session: Session) -> None:
 
 def test_ingest_person_is_idempotent(db_session: Session) -> None:
     account = _account(db_session)
-    first = service.ingest_person(db_session, account, _payload())
-    second = service.ingest_person(db_session, account, _payload())
+    first = processing.ingest_person(db_session, account, _payload())
+    second = processing.ingest_person(db_session, account, _payload())
 
     assert first.person_id == second.person_id
     assert second.created is False
@@ -91,7 +91,7 @@ def test_ingest_person_persists_raw_before_validation(db_session: Session) -> No
     bad = {"resourceName": "people/bad", "names": "not-a-list"}
 
     with pytest.raises(ValidationError):
-        service.ingest_person(db_session, account, bad)
+        processing.ingest_person(db_session, account, bad)
 
     records = db_session.scalars(select(models.SourceRecord)).all()
     assert len(records) == 1
@@ -104,7 +104,7 @@ def test_ingest_person_persists_raw_before_validation(db_session: Session) -> No
 def test_ingest_person_rejects_missing_resource_name(db_session: Session) -> None:
     account = _account(db_session)
     with pytest.raises(InvalidPayloadError):
-        service.ingest_person(db_session, account, {"names": []})
+        processing.ingest_person(db_session, account, {"names": []})
 
     assert db_session.scalars(select(models.SourceRecord)).all() == []
 
@@ -113,12 +113,12 @@ def test_ingest_person_changed_payload_resolves_same_person(
     db_session: Session,
 ) -> None:
     account = _account(db_session)
-    service.ingest_person(db_session, account, _payload())
+    processing.ingest_person(db_session, account, _payload())
 
     changed = _payload()
     changed["names"][0]["displayName"] = "Alex J. Morgan"
     changed["names"][0]["metadata"]["primary"] = False
-    service.ingest_person(db_session, account, changed)
+    processing.ingest_person(db_session, account, changed)
 
     assert len(db_session.scalars(select(models.SourceRecord)).all()) == 2
     assert len(db_session.scalars(select(models.Person)).all()) == 1

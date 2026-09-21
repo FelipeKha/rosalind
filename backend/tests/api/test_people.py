@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from rosalind import models
-from rosalind.ingestion import service
+from rosalind.services import processing
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -17,7 +17,7 @@ def _ingest(db: Session) -> uuid.UUID:
     account = models.SourceAccount(provider="google", account_identifier="test-account")
     db.add(account)
     db.commit()
-    result = service.ingest_person(db, account, json.loads(FIXTURE.read_text()))
+    result = processing.ingest_person(db, account, json.loads(FIXTURE.read_text()))
     return result.person_id
 
 

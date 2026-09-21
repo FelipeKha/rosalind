@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi.testclient import TestClient
 
 from rosalind import object_storage
@@ -5,12 +7,23 @@ from rosalind import object_storage
 SHA256 = "a" * 64
 
 
-def _create_import(client: TestClient) -> str:
-    response = client.post("/imports/google/takeout")
+def _create_source(api_client: TestClient, name: str) -> str:
+    response = api_client.post("/sources", json={"provider": "google", "name": name})
+    assert response.status_code == 201
+    return name
+
+
+def _create_import(api_client: TestClient) -> str:
+    name = _create_source(api_client, f"google-{uuid.uuid4().hex[:8]}")
+    response = api_client.post(
+        "/imports", json={"source_name": name, "type": "takeout"}
+    )
     assert response.status_code == 201
     body = response.json()
-    assert body["status"] == "uploading"
+    assert body["ingestion_status"] == "uploading"
+    assert body["processing_status"] == "pending"
     assert body["storage_prefix"] == f"imports/{body['import_id']}"
+    assert body["source_name"] == name
     return body["import_id"]
 
 
@@ -32,7 +45,7 @@ def test_import_lifecycle(api_client: TestClient) -> None:
     )
     assert response.status_code == 200
     result = response.json()
-    assert result["status"] == "completed"
+    assert result["ingestion_status"] == "completed"
     assert result["file_count"] == 1
     assert result["total_size"] == 10
     assert result["import_hash"] is not None
@@ -139,3 +152,21 @@ def test_delete_import_deletes_objects_before_rows(
 
     assert api_client.delete(f"/imports/{import_id}").status_code == 204
     assert calls == ["objects"]
+
+
+def test_create_import_unknown_source(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/imports", json={"source_name": "does-not-exist", "type": "takeout"}
+    )
+    assert response.status_code == 404
+
+
+def test_process_takeout_import_unsupported(api_client: TestClient) -> None:
+    import_id = _create_import(api_client)
+
+    response = api_client.post(f"/imports/{import_id}/process")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"] == "unsupported"
+    assert body["processing_status"] == "pending"
+    assert "No parser available" in body["message"]

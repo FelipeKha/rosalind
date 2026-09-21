@@ -32,7 +32,8 @@ def _assert_import_completed(
     assert response.status_code == 200
     body = response.json()
 
-    assert body["status"] == "completed"
+    assert body["ingestion_status"] == "completed"
+    assert body["processing_status"] == "pending"
     assert body["file_count"] == len(expected_files)
     assert body["total_size"] == sum(len(data) for data in expected_files.values())
     assert body["import_hash"] is not None
@@ -57,6 +58,7 @@ def test_import_google_end_to_end(
     backend_base_url: str,
     s3_client,
     run_cli: Callable[[Path], subprocess.CompletedProcess[str]],
+    google_source: dict,
 ) -> None:
     expected_files = _fixture_files(takeout_fixture)
 
@@ -74,6 +76,7 @@ def test_reimport_is_a_distinct_observation(
     backend_base_url: str,
     s3_client,
     run_cli: Callable[[Path], subprocess.CompletedProcess[str]],
+    google_source: dict,
 ) -> None:
     expected_files = _fixture_files(takeout_fixture)
 
@@ -99,6 +102,7 @@ def test_delete_import_end_to_end(
     s3_client,
     run_cli: Callable[[Path], subprocess.CompletedProcess[str]],
     run_rosalind: Callable[[list[str]], subprocess.CompletedProcess[str]],
+    google_source: dict,
 ) -> None:
     expected_files = _fixture_files(takeout_fixture)
 
@@ -116,3 +120,18 @@ def test_delete_import_end_to_end(
         Bucket="rosalind", Prefix=f"imports/{import_id}/"
     )
     assert listing.get("KeyCount") == 0
+
+
+def test_process_takeout_import_unsupported(
+    takeout_fixture: Path,
+    run_cli: Callable[[Path], subprocess.CompletedProcess[str]],
+    run_rosalind: Callable[[list[str]], subprocess.CompletedProcess[str]],
+    google_source: dict,
+) -> None:
+    result = run_cli(takeout_fixture)
+    assert result.returncode == 0, result.stderr
+    import_id = _import_id_from_stdout(result.stdout)
+
+    processed = run_rosalind(["process", "run", import_id])
+    assert processed.returncode == 0, processed.stderr
+    assert "No parser available" in processed.stdout

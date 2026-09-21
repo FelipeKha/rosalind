@@ -10,8 +10,8 @@ from sqlalchemy.orm import sessionmaker
 
 import rosalind.mcp.server as mcp_server
 from rosalind import models
-from rosalind.ingestion import service
 from rosalind.mcp.schemas import PersonProfileResult
+from rosalind.services import processing
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -26,7 +26,7 @@ def _ingest(engine: Engine) -> uuid.UUID:
         )
         db.add(account)
         db.commit()
-        result = service.ingest_person(db, account, json.loads(FIXTURE.read_text()))
+        result = processing.ingest_person(db, account, json.loads(FIXTURE.read_text()))
         return result.person_id
 
 
