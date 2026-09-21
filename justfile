@@ -60,6 +60,9 @@ backend-check:
 backend-serve:
     cd backend && just serve
 
+backend-mcp-serve:
+    cd backend && just mcp-serve
+
 
 # ==============================================================================
 # CLI

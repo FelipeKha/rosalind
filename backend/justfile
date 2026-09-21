@@ -31,6 +31,10 @@ check: lint typecheck test security
 serve:
     uv run uvicorn rosalind.api.app:app --reload
 
+# Start the MCP server over stdio
+mcp-serve:
+    uv run rosalind-mcp
+
 # Apply database migrations
 migrate:
     uv run alembic upgrade head

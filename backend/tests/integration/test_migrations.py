@@ -1,25 +1,13 @@
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect
 
-
-def _drop_schemas(engine) -> None:
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                "DROP TABLE IF EXISTS "
-                "import_files, imports, oauth_auth_request, "
-                "oauth_credentials, source_account CASCADE"
-            )
-        )
-        conn.execute(text("DROP SCHEMA IF EXISTS raw CASCADE"))
-        conn.execute(text("DROP SCHEMA IF EXISTS core CASCADE"))
-        conn.execute(text("DROP SCHEMA IF EXISTS agent CASCADE"))
+from tests._db import reset_schemas
 
 
 def test_alembic_upgrade_head_creates_tables(postgres_url: str) -> None:
     engine = create_engine(postgres_url)
-    _drop_schemas(engine)
+    reset_schemas(engine)
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", postgres_url)
@@ -53,5 +41,5 @@ def test_alembic_upgrade_head_creates_tables(postgres_url: str) -> None:
 
     # Leave the shared container clean for subsequent tests (the migration
     # creates the agent.person_profile view, which otherwise blocks drop_all).
-    _drop_schemas(engine)
+    reset_schemas(engine)
     engine.dispose()
