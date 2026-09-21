@@ -31,6 +31,10 @@ dev:
     cd backend && just migrate
     cd backend && just serve
 
+dev-mcp:
+    docker compose up -d
+    cd backend && just migrate
+    cd backend && just mcp-serve
 
 # ==============================================================================
 # Backend
