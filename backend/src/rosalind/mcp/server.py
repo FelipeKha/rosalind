@@ -12,6 +12,7 @@ from dataclasses import asdict
 
 from mcp.server.mcpserver import MCPServer
 
+from rosalind import config
 from rosalind.db import SessionLocal
 from rosalind.mcp.schemas import PersonProfileResult
 from rosalind.repositories.person_repository import PersonRepository
@@ -50,7 +51,16 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
 
 
 def main() -> None:
-    mcp.run()
+    if config.settings.mcp_transport == "streamable-http":
+        mcp.run(
+            "streamable-http",
+            host=config.settings.mcp_host,
+            port=config.settings.mcp_port,
+        )
+    elif config.settings.mcp_transport == "sse":
+        mcp.run("sse", host=config.settings.mcp_host, port=config.settings.mcp_port)
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":

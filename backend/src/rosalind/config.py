@@ -22,5 +22,9 @@ class Settings(BaseSettings):
 
     token_encryption_key: str | None = None
 
+    mcp_transport: str = "stdio"
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = 8000
+
 
 settings = Settings()
