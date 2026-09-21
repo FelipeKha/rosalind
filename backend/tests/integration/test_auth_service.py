@@ -143,7 +143,7 @@ def test_complete_connect_creates_account_when_none_exists(
 
     assert account.account_identifier == "12345"
     assert account.display_name == "Jane Doe"
-    assert account.name == "google-personal"
+    assert account.name == "google"
     assert db_session.scalars(select(models.OAuthCredential)).all()
 
 

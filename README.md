@@ -51,8 +51,8 @@ cd cli
 uv sync                 # once, if deps are not installed yet
 uv run rosalind --help
 uv run rosalind status
-uv run rosalind source create google --name google-personal
-uv run rosalind import create --source google-personal --type takeout ~/Downloads/Takeout
+uv run rosalind source create google --name google
+uv run rosalind import create --source google --type takeout ~/Downloads/Takeout
 uv run rosalind import list
 uv run rosalind process run <import-id>
 uv run rosalind query people
@@ -94,8 +94,8 @@ Set it as `ROSALIND_TOKEN_ENCRYPTION_KEY`.
 ```bash
 cd cli
 uv run rosalind source connect google        # opens a browser, stores credentials
-uv run rosalind import create --source google-personal --type api
-uv run rosalind source disconnect google-personal   # revokes access, keeps imported data
+uv run rosalind import create --source google --type api
+uv run rosalind source disconnect google   # revokes access, keeps imported data
 ```
 
 The Google authorization flow requests offline access so the backend can

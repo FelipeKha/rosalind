@@ -143,7 +143,7 @@ def backend_base_url(
 def google_source(backend_base_url: str) -> dict:
     response = httpx.post(
         f"{backend_base_url}/sources",
-        json={"provider": "google", "name": "google-personal"},
+        json={"provider": "google", "name": "google"},
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -192,7 +192,7 @@ def run_cli(cli_env: dict[str, str]):
                 "import",
                 "create",
                 "--source",
-                "google-personal",
+                "google",
                 "--type",
                 "takeout",
                 str(path),

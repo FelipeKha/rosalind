@@ -61,8 +61,8 @@ class DisconnectResult:
 
 
 def default_source_name(provider: str) -> str:
-    """Derive the default CLI slug for a provider (``google`` → ``google-personal``)."""
-    return f"{provider}-personal"
+    """Return the default CLI slug for a provider (``google`` → ``google``)."""
+    return provider
 
 
 def resolve_source(db: Session, name: str) -> models.SourceAccount:
