@@ -113,9 +113,9 @@ def start_connect(
 ) -> ConnectStart:
     """Begin OAuth for a provider, stashing the requested name on the auth request.
 
-    The name is only assigned to the account once the flow completes, so a
-    reconnect to an existing account can reuse its existing name without a
-    unique-constraint collision on a placeholder row.
+    The placeholder account starts without a name so a reconnect never collides
+    with the ``uq_source_account_name`` constraint before OAuth resolves the
+    account's identity; the name is applied in ``complete_connect``.
     """
     account = models.SourceAccount(provider=provider, name=None)
     db.add(account)
@@ -178,9 +178,11 @@ def complete_connect(db: Session, state: str, code: str) -> models.SourceAccount
                 "authorization request references an unknown account"
             )
         account.account_identifier = account_identifier
-        if account.name is None:
-            account.name = request.source_name
 
+    # The name is the current CLI slug, so assign it on every connect. A
+    # re-authenticated account must pick up the current (or explicitly
+    # requested) name rather than keeping a stale one.
+    account.name = request.source_name
     account.display_name = userinfo.get("name")
     _upsert_credential(account, credentials, provider="google")
 

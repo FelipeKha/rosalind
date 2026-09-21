@@ -125,6 +125,7 @@ def test_complete_connect_reuses_existing_account(
 
     assert account.id == existing.id
     assert account.display_name == "Jane Doe"
+    assert account.name == "google"
 
     google_accounts = db_session.scalars(
         select(models.SourceAccount).where(models.SourceAccount.provider == "google")
@@ -132,6 +133,23 @@ def test_complete_connect_reuses_existing_account(
     assert len(google_accounts) == 1
     assert google_accounts[0].account_identifier == "12345"
     assert db_session.scalars(select(models.OAuthCredential)).all()
+
+
+def test_complete_connect_updates_stale_name_on_reconnect(
+    db_session: Session, monkeypatch
+) -> None:
+    existing = models.SourceAccount(
+        provider="google", account_identifier="12345", name="google-personal"
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    _stub_oauth(monkeypatch)
+
+    account = _complete(db_session)
+
+    assert account.id == existing.id
+    assert account.name == "google"
 
 
 def test_complete_connect_creates_account_when_none_exists(
