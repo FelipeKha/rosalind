@@ -1806,7 +1806,339 @@ This abstraction also allows the storage schema to evolve without changing the a
 
 ---
 
-# 23. Structured, Lexical, and Semantic Retrieval
+# 23. Model Context Protocol (MCP)
+
+MCP is an adapter between AI clients and Rosalind's application layer.
+
+It is **not** a separate data-access layer and must not access PostgreSQL directly from tool handlers.
+
+The architecture is:
+
+```text
+MCP client
+    │
+    │ MCP / stdio
+    ▼
+Rosalind MCP adapter
+    │
+    ▼
+PersonService / application services
+    │
+    ▼
+PersonRepository / repositories
+    │
+    ▼
+agent.* read models / PostgreSQL
+```
+
+REST and MCP therefore share the same application services:
+
+```text
+                 ┌── REST API
+PersonService ───┤
+                 └── MCP
+```
+
+This prevents MCP-specific business logic or SQL from diverging from the public API.
+
+## 23.1 MCP server location
+
+The MCP server is part of the backend application:
+
+```text
+backend/src/rosalind/mcp/
+├── __init__.py
+├── schemas.py
+└── server.py
+```
+
+The server is a thin adapter around application services.
+
+It is not a separate repository, database client, or domain implementation.
+
+## 23.2 Initial transport
+
+The MVP uses **stdio** transport.
+
+```text
+MCP host
+   │
+   ├── stdin  → MCP messages
+   └── stdout ← MCP messages
+              │
+              ▼
+        Rosalind MCP server
+```
+
+The stdio server must write **only MCP protocol messages to stdout**.
+
+Application logs and diagnostics must go to stderr.
+
+Remote HTTP transport, authentication, and authorization are deferred until Rosalind requires a remotely accessible MCP server.
+
+## 23.3 Initial scope
+
+The initial MCP interface is strictly read-only.
+
+The first tools are:
+
+```text
+search_people(query)
+get_person(person_id)
+```
+
+There are deliberately no MCP write tools.
+
+Deferred:
+
+```text
+create_person
+update_person
+record_email
+record_name
+delete_person
+```
+
+Write operations will be introduced together with the Actor/authentication/authorization model rather than creating an incomplete policy layer now.
+
+`get_my_profile` is also deferred. The initial MCP contract therefore operates on canonical people rather than introducing an account-level `self_person_id` dependency.
+
+## 23.4 `search_people`
+
+`search_people` searches the canonical person read model by:
+
+```text
+display_name
+primary_email
+```
+
+The initial implementation uses PostgreSQL `ILIKE` matching:
+
+```sql
+WHERE
+    display_name ILIKE :pattern
+    OR primary_email ILIKE :pattern
+```
+
+This is intentionally a simple personal-scale implementation.
+
+The service enforces a hard maximum of:
+
+```text
+MAX_SEARCH_RESULTS = 25
+```
+
+Callers cannot obtain more than 25 results by supplying a larger limit.
+
+An empty or whitespace-only query is rejected with a validation error. It must never be translated into `ILIKE '%%'`.
+
+More sophisticated lexical search (`pg_trgm` / full-text search) is deferred until actual personal-data scale requires it.
+
+## 23.5 `get_person`
+
+`get_person` retrieves one canonical person by Rosalind's UUID:
+
+```text
+get_person(person_id: UUID)
+```
+
+The MCP schema validates the UUID before the repository is queried.
+
+Unknown but syntactically valid UUIDs return a clean not-found result.
+
+Malformed UUID input must result in a clean MCP validation error and must never produce a traceback or raw database error.
+
+## 23.6 MCP response schemas
+
+MCP responses use explicit Pydantic schemas.
+
+The MCP layer must not expose:
+
+```python
+dataclasses.asdict(...)
+```
+
+as its public contract.
+
+The separation is:
+
+```text
+SQL row
+   ↓
+PersonProfile domain dataclass
+   ↓
+PersonProfileResult Pydantic model
+   ↓
+MCP response
+```
+
+This allows the internal domain model and the AI-facing representation to evolve independently.
+
+For example, an internal representation containing:
+
+```text
+birth_year
+birth_month
+birth_day
+```
+
+can later be exposed as a different MCP representation without changing persistence.
+
+## 23.7 Shared application service
+
+Both REST and MCP call the same `PersonService`.
+
+```text
+REST:
+    HTTP request
+       ↓
+    PersonService
+       ↓
+    PersonRepository
+
+MCP:
+    tool invocation
+       ↓
+    PersonService
+       ↓
+    PersonRepository
+```
+
+Neither adapter may contain direct SQL.
+
+The repository owns SQL against the existing:
+
+```text
+agent.person_profile
+```
+
+view.
+
+The view is therefore a shared read model for both REST and MCP.
+
+## 23.8 Database session lifecycle
+
+The backend currently uses synchronous SQLAlchemy 2 with `Session`.
+
+MCP tool handlers therefore remain synchronous.
+
+Each MCP tool invocation obtains a fresh `SessionLocal()` session and closes it when the invocation completes.
+
+A tool invocation must not retain a database session across MCP requests.
+
+## 23.9 Tool descriptions
+
+MCP tool descriptions are part of the AI-facing API contract.
+
+Descriptions must explicitly state:
+
+* what the tool returns;
+* when the model should use it;
+* important search semantics;
+* whether the operation is read-only.
+
+Tool names and descriptions should remain semantic and domain-oriented.
+
+Do not expose implementation concepts such as:
+
+```text
+query_person_profile_view
+execute_sql
+run_repository_query
+```
+
+## 23.10 Security boundary
+
+The MCP server must never expose unrestricted SQL or arbitrary database access.
+
+Do not implement:
+
+```text
+execute_sql(sql)
+query_database(sql)
+read_table(table_name)
+```
+
+The model interacts only with explicitly defined semantic tools.
+
+MCP write access is disabled in the MVP.
+
+When remote MCP access is introduced, authentication and authorization must be enforced at the MCP/application boundary rather than relying on model instructions.
+
+## 23.11 Provenance
+
+MCP responses are derived from canonical data.
+
+The initial MCP implementation does **not** expose the complete provenance graph in every response. Provenance presentation is deferred.
+
+The underlying canonical data must remain provenance-linked so provenance can be exposed later without redesigning the MCP data path.
+
+The intended future chain is:
+
+```text
+MCP result
+    ↓
+canonical fact
+    ↓
+source assertion
+    ↓
+raw source record
+```
+
+## 23.12 MCP testing
+
+MCP must be tested at both the application and protocol boundaries.
+
+Application-level tests cover:
+
+```text
+search_people
+get_person
+empty-query rejection
+25-result clamp
+unknown person
+malformed UUID
+```
+
+Protocol-level tests must verify that the MCP server actually exposes the expected tools and schemas.
+
+The MCP server must also be testable without involving an external AI model.
+
+The end-to-end AI integration is a separate test of:
+
+```text
+Mistral
+   ↓
+MCP
+   ↓
+Rosalind
+   ↓
+PostgreSQL
+```
+
+## 23.13 MCP logging
+
+MCP invocations must participate in Rosalind's structured logging and audit trail.
+
+Log operational metadata such as:
+
+```text
+timestamp
+request/correlation ID
+tool name
+duration
+result count
+status
+error class
+```
+
+Do not log raw personal-data results or sensitive tool arguments by default.
+
+The MCP protocol stream itself must not be polluted with diagnostic logging.
+
+---
+
+# 24. Structured, Lexical, and Semantic Retrieval
 
 Search should be implemented as several complementary capabilities rather than one universal mechanism.
 
@@ -2877,6 +3209,13 @@ The following should be treated as architectural invariants:
 19. **Provider parsing performs no canonical value normalization.**
 20. **Provider `source_primary`/`source_verified` metadata is preserved as evidence rather than silently rewritten.**
 21. **Agent-facing projections are derived from canonical data and are not sources of truth.**
+22. **MCP is an adapter over application services, not a direct database interface.**
+23. **REST and MCP use the same application services for shared capabilities.**
+24. **MCP exposes only explicit semantic tools; unrestricted SQL is never exposed to agents.**
+25. **The MVP MCP interface is read-only.**
+26. **MCP stdio stdout contains only protocol messages; logs go to stderr.**
+27. **MCP search results are bounded and empty search queries are rejected.**
+28. **MCP response schemas are explicit contracts and are not generated by serializing internal domain objects directly.**
 
 ---
 

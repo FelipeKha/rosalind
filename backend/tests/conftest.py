@@ -11,6 +11,7 @@ from rosalind import config
 from rosalind.api.app import app
 from rosalind.db import get_db
 from rosalind.models import Base
+from tests._db import make_migrated_engine, reset_schemas
 
 
 @pytest.fixture(autouse=True)
@@ -75,3 +76,50 @@ def api_client(postgres_url: str):
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+@pytest.fixture()
+def migrated_engine(postgres_url: str) -> Iterator[Engine]:
+    """An engine whose schema is built by real Alembic migrations.
+
+    Reset before and after each test so views such as ``agent.person_profile``
+    exist and the shared container stays clean.
+    """
+    engine = make_migrated_engine(postgres_url)
+    try:
+        yield engine
+    finally:
+        reset_schemas(engine)
+        engine.dispose()
+
+
+@pytest.fixture()
+def migrated_db_session(migrated_engine: Engine) -> Iterator[Session]:
+    """A session against the real Alembic-migrated database."""
+    factory = sessionmaker(
+        bind=migrated_engine, autoflush=False, expire_on_commit=False
+    )
+    session = factory()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture()
+def migrated_api_client(migrated_engine: Engine):
+    """A TestClient backed by the real Alembic-migrated database."""
+    factory = sessionmaker(
+        bind=migrated_engine, autoflush=False, expire_on_commit=False
+    )
+
+    def override_get_db() -> Iterator[Session]:
+        with factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+    try:
+        yield client
+    finally:
+        app.dependency_overrides.clear()

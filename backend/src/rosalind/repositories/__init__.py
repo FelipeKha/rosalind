@@ -1,0 +1,1 @@
+"""Rosalind persistence repositories."""

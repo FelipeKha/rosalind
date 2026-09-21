@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from rosalind.api.routes import auth, health, imports
+from rosalind.api.routes import auth, health, imports, people
 from rosalind.auth.errors import InvalidStateError, ProviderError, TokenNotFoundError
 from rosalind.ingestion.errors import (
     ImportNotFoundError,
@@ -15,6 +15,7 @@ app = FastAPI(title="Rosalind")
 app.include_router(health.router)
 app.include_router(imports.router)
 app.include_router(auth.router)
+app.include_router(people.router)
 
 
 @app.exception_handler(ImportNotFoundError)
