@@ -3455,6 +3455,8 @@ client-independent API
 
 [Martin G. Skjæveland, Krisztian Balog, Nolwenn Bernard, Weronika Łajewska, Trond Linjordet, *An ecosystem for personal knowledge graphs: A survey and research roadmap*, AI Open, 27 Feb 2024](https://www.sciencedirect.com/science/article/pii/S2666651024000044)
 
+[*Core Person Vocabulary*, SEMIC, 12 May 2026](https://semiceu.github.io/Core-Person-Vocabulary/releases/2.1.2/)
+
 ## Google
 
 [Google Support, How to download your Google data](https://support.google.com/accounts/answer/3024190?hl=en)
@@ -3475,6 +3477,10 @@ client-independent API
 
 [PostgreSQL Documentation — Constraints](https://www.postgresql.org/docs/current/ddl-constraints.html)
 
+[Ruohang Feng, *Why PostgreSQL Will Dominate the AI Era*, Personal Blog, 1 Dec 2025](https://blog.vonng.com/en/pg/ai-db-king/)
+
+[Pedro Rodrigues, *Introducing: Postgres Best Practices*, Supabase Blog, 21 Jan 2026](https://supabase.com/blog/postgres-best-practices-for-ai-agents)
+
 ## Provenance
 
 [W3C, PROV-O: The PROV Ontology](https://www.w3.org/TR/prov-o/)
@@ -3486,3 +3492,11 @@ client-independent API
 ## Agent interface
 
 [Model Context Protocol — Tools](https://modelcontextprotocol.io/specification/)
+
+[David Soria Parra, Den Delimarsky, *2026-07-28 Model Context Protocol specification*, 28 Jul 2026](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
+
+[Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang, Haofen Wang, *Retrieval-Augmented Generation for Large Language Models: A Survey*, 27 Mar 2024](https://arxiv.org/abs/2312.10997)
+
+[Prithvi Rajasekaran, Ethan Dixon, Carly Ryan, Jeremy Hadfield, *Effective context engineering for AI agents*, Engineering at Anthropic, 29 Sep 2025](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
+
+[Ken Aizawa, *Writing effective tools for agents — with agents*, Engineering at Anthropic, 11 Sep 2025](https://www.anthropic.com/engineering/writing-tools-for-agents)
