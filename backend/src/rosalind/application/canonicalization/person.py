@@ -29,7 +29,7 @@ from rosalind.domain.person import (
     NameObservation,
     PersonObservation,
 )
-from rosalind.domain.source import SourceRef
+from rosalind.domain.source import SourceAccount, SourceRef
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class CanonicalizationResult:
 
 def canonicalize(
     db: Session,
-    source_account: models.SourceAccount,
+    source_account: SourceAccount,
     source_record: models.SourceRecord,
     observation: PersonObservation,
 ) -> CanonicalizationResult:
@@ -118,7 +118,7 @@ def canonicalize(
 
 
 def _resolve_or_create_person(
-    db: Session, source_account: models.SourceAccount, refs: tuple[SourceRef, ...]
+    db: Session, source_account: SourceAccount, refs: tuple[SourceRef, ...]
 ) -> tuple[uuid.UUID, bool]:
     person_ids: set[uuid.UUID] = set()
     for ref in refs:
@@ -148,7 +148,7 @@ def _resolve_or_create_person(
 
 def _upsert_source_identities(
     db: Session,
-    source_account: models.SourceAccount,
+    source_account: SourceAccount,
     source_record: models.SourceRecord,
     person_id: uuid.UUID,
     refs: tuple[SourceRef, ...],

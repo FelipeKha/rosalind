@@ -4,6 +4,9 @@ A source is a connection to an external data holder (e.g. a Google account).
 It has a human-facing ``name`` (the CLI slug) and an immutable provider identity
 (``provider`` + ``account_identifier``). Connecting (OAuth) and disconnecting
 (revoking credentials) happen here; imports and raw data are never touched.
+
+Account CRUD goes through the ``SourceAccountRepository`` port. OAuth credentials
+and auth requests remain ORM-internal to this service.
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -26,6 +29,8 @@ from rosalind.application.errors import (
     TokenNotFoundError,
 )
 from rosalind.application.ports.providers import AuthGateway, ProviderCredentials
+from rosalind.application.ports.repositories import SourceAccountRepository
+from rosalind.domain.source import SourceAccount
 
 STATUS_PENDING = "pending"
 STATUS_CONNECTED = "connected"
@@ -66,37 +71,28 @@ def default_source_name(provider: str) -> str:
 
 
 class SourceService:
-    def __init__(self, auth: AuthGateway):
+    def __init__(self, auth: AuthGateway, accounts: SourceAccountRepository):
         self._auth = auth
+        self._accounts = accounts
 
-    def resolve_source(self, db: Session, name: str) -> models.SourceAccount:
-        account = db.scalar(
-            select(models.SourceAccount).where(models.SourceAccount.name == name)
-        )
+    def resolve_source(self, db: Session, name: str) -> SourceAccount:
+        account = self._accounts.get_by_name(db, name)
         if account is None:
             raise SourceNotFoundError(f"source {name!r} not found")
         return account
 
-    def get_source(self, db: Session, source_id: uuid.UUID) -> models.SourceAccount:
-        account = db.get(models.SourceAccount, source_id)
+    def get_source(self, db: Session, source_id: uuid.UUID) -> SourceAccount:
+        account = self._accounts.get(db, source_id)
         if account is None:
             raise SourceNotFoundError(f"source {source_id} not found")
         return account
 
-    def list_sources(self, db: Session) -> list[models.SourceAccount]:
-        return list(
-            db.scalars(
-                select(models.SourceAccount).order_by(models.SourceAccount.created_at)
-            ).all()
-        )
+    def list_sources(self, db: Session) -> list[SourceAccount]:
+        return self._accounts.list(db)
 
-    def create_source(
-        self, db: Session, provider: str, name: str
-    ) -> models.SourceAccount:
-        account = models.SourceAccount(provider=provider, name=name)
-        db.add(account)
+    def create_source(self, db: Session, provider: str, name: str) -> SourceAccount:
+        account = self._accounts.create(db, provider=provider, name=name)
         db.commit()
-        db.refresh(account)
         return account
 
     def is_connected(self, db: Session, source_id: uuid.UUID) -> bool:
@@ -118,9 +114,7 @@ class SourceService:
         with the ``uq_source_account_name`` constraint before OAuth resolves the
         account's identity; the name is applied in ``complete_connect``.
         """
-        account = models.SourceAccount(provider=provider, name=None)
-        db.add(account)
-        db.flush()
+        account = self._accounts.create(db, provider=provider, name=None)
 
         state = secrets.token_urlsafe(32)
         auth_url, code_verifier = self._auth.build_authorization_url(state)
@@ -137,16 +131,14 @@ class SourceService:
         db.commit()
         return ConnectStart(source_id=account.id, auth_url=auth_url, state=state)
 
-    def complete_connect(
-        self, db: Session, state: str, code: str
-    ) -> models.SourceAccount:
+    def complete_connect(self, db: Session, state: str, code: str) -> SourceAccount:
         request = db.get(models.OAuthAuthRequest, state)
         if request is None or request.expires_at < datetime.now(UTC):
             raise InvalidStateError("authorization request is unknown or expired")
         if request.consumed_at is not None:
             raise InvalidStateError("authorization request was already consumed")
 
-        pending = db.get(models.SourceAccount, request.source_account_id)
+        pending = self._accounts.get(db, request.source_account_id)
         if pending is None:
             raise InvalidStateError(
                 "authorization request references an unknown account"
@@ -163,28 +155,34 @@ class SourceService:
                 f"failed to exchange authorization code: {exc}"
             ) from exc
 
-        account = db.scalar(
-            select(models.SourceAccount).where(
-                models.SourceAccount.provider == provider,
-                models.SourceAccount.account_identifier == identity.account_identifier,
-            )
+        account = self._accounts.get_by_identity(
+            db, provider, identity.account_identifier
         )
 
         if account is not None:
             if pending.id != account.id:
                 request.source_account_id = account.id
                 db.flush()
-                db.delete(pending)
+                self._accounts.delete(db, pending.id)
         else:
             account = pending
-            account.account_identifier = identity.account_identifier
+            account = self._accounts.update(
+                db,
+                replace(account, account_identifier=identity.account_identifier),
+            )
 
         # The name is the current CLI slug, so assign it on every connect. A
         # re-authenticated account must pick up the current (or explicitly
         # requested) name rather than keeping a stale one.
-        account.name = request.source_name
-        account.display_name = identity.display_name
-        self._upsert_credential(account, credentials, provider=provider)
+        account = self._accounts.update(
+            db,
+            replace(
+                account,
+                name=request.source_name,
+                display_name=identity.display_name,
+            ),
+        )
+        self._upsert_credential(db, account.id, credentials, provider=provider)
 
         request.status = STATUS_CONNECTED
         request.consumed_at = datetime.now(UTC)
@@ -197,7 +195,7 @@ class SourceService:
             return AuthStatus(status=STATUS_NOT_FOUND)
 
         if request.status == STATUS_CONNECTED:
-            account = db.get(models.SourceAccount, request.source_account_id)
+            account = self._accounts.get(db, request.source_account_id)
             return AuthStatus(
                 status=STATUS_CONNECTED,
                 source_id=request.source_account_id,
@@ -241,7 +239,7 @@ class SourceService:
 
     def load_credentials(
         self, db: Session, source_id: uuid.UUID
-    ) -> tuple[models.SourceAccount, ProviderCredentials]:
+    ) -> tuple[SourceAccount, ProviderCredentials]:
         credential = db.scalars(
             select(models.OAuthCredential)
             .where(models.OAuthCredential.source_account_id == source_id)
@@ -275,26 +273,29 @@ class SourceService:
             credential.expires_at = credentials.expires_at
             db.commit()
 
-        return credential.source_account, credentials
+        account = self._accounts.get(db, credential.source_account_id)
+        if account is None:
+            raise SourceNotFoundError(f"source {source_id} not found")
+        return account, credentials
 
     def _upsert_credential(
         self,
-        account: models.SourceAccount,
+        db: Session,
+        account_id: uuid.UUID,
         credentials: ProviderCredentials,
         provider: str,
     ) -> None:
-        session = Session.object_session(account)
-        if session is None:
-            raise ProviderError("source account is not attached to a session")
-        credential = session.scalars(
+        credential = db.scalars(
             select(models.OAuthCredential).where(
-                models.OAuthCredential.source_account_id == account.id,
+                models.OAuthCredential.source_account_id == account_id,
                 models.OAuthCredential.provider == provider,
             )
         ).first()
         if credential is None:
-            credential = models.OAuthCredential(provider=provider)
-            account.credentials.append(credential)
+            credential = models.OAuthCredential(
+                provider=provider, source_account_id=account_id
+            )
+            db.add(credential)
 
         credential.token_type = "Bearer"  # nosec B105
         credential.access_token_encrypted = security.encrypt_secret(

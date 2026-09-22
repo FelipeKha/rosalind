@@ -1,0 +1,151 @@
+"""Persistence for imports and their file manifests.
+
+Mutations flush but do not commit so they can join a larger service-level
+transaction.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Sequence
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
+
+from rosalind.adapters.outbound.persistence.models.imports import Import as ImportModel
+from rosalind.adapters.outbound.persistence.models.imports import (
+    ImportFile as ImportFileModel,
+)
+from rosalind.domain.source import Import, ImportFile
+
+
+class PostgresImportRepository:
+    def create(
+        self, db: Session, *, source_account_id: uuid.UUID, type_: str
+    ) -> Import:
+        model = ImportModel(
+            source_account_id=source_account_id,
+            type=type_,
+            ingestion_status="uploading",
+            processing_status="pending",
+        )
+        db.add(model)
+        db.flush()
+        return self._to_domain(model)
+
+    def get(self, db: Session, import_id: uuid.UUID) -> Import | None:
+        model = db.scalar(
+            select(ImportModel)
+            .options(
+                selectinload(ImportModel.files),
+                selectinload(ImportModel.source_account),
+            )
+            .where(ImportModel.id == import_id)
+        )
+        return self._to_domain(model) if model is not None else None
+
+    def list(self, db: Session) -> list[Import]:
+        models = db.scalars(
+            select(ImportModel)
+            .options(
+                selectinload(ImportModel.files),
+                selectinload(ImportModel.source_account),
+            )
+            .order_by(ImportModel.created_at.desc())
+        ).all()
+        return [self._to_domain(model) for model in models]
+
+    def complete(
+        self,
+        db: Session,
+        import_id: uuid.UUID,
+        *,
+        files: Sequence[ImportFile],
+        file_count: int,
+        total_size: int,
+        import_hash: str,
+        completed_at: datetime,
+    ) -> Import:
+        model = db.get(ImportModel, import_id)
+        if model is None:
+            raise ValueError(f"import {import_id} not found")
+
+        for file in files:
+            model.files.append(
+                ImportFileModel(
+                    path=file.path,
+                    format=file.format,
+                    size=file.size,
+                    modified_at=file.modified_at,
+                    sha256=file.sha256,
+                    storage_key=file.storage_key,
+                )
+            )
+
+        model.file_count = file_count
+        model.total_size = total_size
+        model.import_hash = import_hash
+        model.ingestion_status = "completed"
+        model.completed_at = completed_at
+
+        db.flush()
+        return self._to_domain(model)
+
+    def set_processing_status(
+        self, db: Session, import_id: uuid.UUID, status: str
+    ) -> Import:
+        model = db.get(ImportModel, import_id)
+        if model is None:
+            raise ValueError(f"import {import_id} not found")
+        model.processing_status = status
+        db.flush()
+        return self._to_domain(model)
+
+    def mark_completed(
+        self, db: Session, import_id: uuid.UUID, *, completed_at: datetime
+    ) -> Import:
+        model = db.get(ImportModel, import_id)
+        if model is None:
+            raise ValueError(f"import {import_id} not found")
+        model.ingestion_status = "completed"
+        model.processing_status = "completed"
+        model.completed_at = completed_at
+        db.flush()
+        return self._to_domain(model)
+
+    def delete(self, db: Session, import_id: uuid.UUID) -> None:
+        model = db.get(ImportModel, import_id)
+        if model is None:
+            return
+        db.delete(model)
+        db.flush()
+
+    @staticmethod
+    def _to_domain(model: ImportModel) -> Import:
+        files = tuple(
+            ImportFile(
+                path=f.path,
+                sha256=f.sha256,
+                size=f.size,
+                format=f.format,
+                modified_at=f.modified_at,
+                storage_key=f.storage_key,
+            )
+            for f in model.files
+        )
+        source = model.source_account
+        return Import(
+            id=model.id,
+            source_account_id=model.source_account_id,
+            source_name=source.name if source else None,
+            type=model.type,
+            ingestion_status=model.ingestion_status,
+            processing_status=model.processing_status,
+            created_at=model.created_at,
+            completed_at=model.completed_at,
+            file_count=model.file_count,
+            total_size=model.total_size,
+            import_hash=model.import_hash,
+            files=files,
+        )

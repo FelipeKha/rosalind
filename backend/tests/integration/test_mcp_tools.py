@@ -11,7 +11,6 @@ from sqlalchemy.orm import sessionmaker
 import rosalind.adapters.inbound.mcp.server as mcp_server
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
-from rosalind.adapters.outbound.persistence import models
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -21,11 +20,9 @@ FIXTURE = (
 def _ingest(engine: Engine) -> uuid.UUID:
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     with factory() as db:
-        account = models.SourceAccount(
-            provider="google", account_identifier="test-account"
+        account = composition.source_service.create_source(
+            db, provider="google", name="test-account"
         )
-        db.add(account)
-        db.commit()
         result = composition.processing_service.ingest_person(
             db, account, json.loads(FIXTURE.read_text())
         )

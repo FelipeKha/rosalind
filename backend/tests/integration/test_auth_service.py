@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from rosalind.adapters import composition
 from rosalind.adapters.outbound.persistence import models
 from rosalind.application.ports.providers import ProviderCredentials, UserIdentity
+from rosalind.domain.source import SourceAccount
 
 SCOPES = [
     "openid",
@@ -30,7 +31,7 @@ def _create_account_with_credentials(
     db.add(account)
     db.flush()
     composition.source_service._upsert_credential(
-        account, _credentials(expiry), provider="google"
+        db, account.id, _credentials(expiry), provider="google"
     )
     db.commit()
     return account
@@ -111,7 +112,7 @@ def _stub_oauth(monkeypatch, identifier: str = "12345", name: str = "Jane Doe") 
     )
 
 
-def _complete(db: Session) -> models.SourceAccount:
+def _complete(db: Session) -> SourceAccount:
     start = composition.source_service.start_connect(db, "google")
     return composition.source_service.complete_connect(db, start.state, "auth-code")
 

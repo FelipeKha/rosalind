@@ -4,7 +4,6 @@ import pytest
 from sqlalchemy.orm import Session
 
 from rosalind.adapters import composition
-from rosalind.adapters.outbound.persistence import models
 from rosalind.application import manifest
 from rosalind.application.errors import (
     ImportNotFoundError,
@@ -12,6 +11,7 @@ from rosalind.application.errors import (
     InvalidManifestError,
 )
 from rosalind.application.services import imports
+from rosalind.domain.source import SourceAccount
 
 
 def _entry(
@@ -20,7 +20,7 @@ def _entry(
     return manifest.FileEntry(path=path, sha256=sha256, size=size, format="json")
 
 
-def _source(db: Session) -> models.SourceAccount:
+def _source(db: Session) -> SourceAccount:
     return composition.source_service.create_source(
         db, provider="google", name="google-personal"
     )

@@ -11,10 +11,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.outbound.persistence.models.base import utcnow
-from rosalind.adapters.outbound.persistence.models.source import (
-    SourceAccount,
-    SourceRecord,
-)
+from rosalind.adapters.outbound.persistence.models.source import SourceRecord
+from rosalind.domain.source import SourceAccount
 
 
 class PostgresSourceRecordRepository:

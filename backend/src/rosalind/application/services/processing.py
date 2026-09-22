@@ -13,20 +13,26 @@ import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
 
-from rosalind.adapters.outbound.persistence import models
 from rosalind.application.canonicalization.person import (
     CanonicalizationResult,
     canonicalize,
 )
-from rosalind.application.errors import InvalidPayloadError
+from rosalind.application.errors import InvalidPayloadError, SourceNotFoundError
 from rosalind.application.ports.parsers import PersonParser
 from rosalind.application.ports.providers import PeopleGateway
-from rosalind.application.ports.repositories import SourceRecordRepository
+from rosalind.application.ports.repositories import (
+    ImportRepository,
+    SourceRecordRepository,
+)
 from rosalind.application.services.sources import SourceService
+from rosalind.domain.source import Import, SourceAccount
+
+if TYPE_CHECKING:
+    from rosalind.adapters.outbound.persistence.models.source import SourceRecord
 
 PROCESSING_PENDING = "pending"
 PROCESSING_COMPLETED = "completed"
@@ -64,17 +70,19 @@ class ProcessingService:
         person_parser: PersonParser,
         people: PeopleGateway,
         sources: SourceService,
+        imports: ImportRepository,
     ):
         self._source_records = source_records
         self._parsers = parsers
         self._person_parser = person_parser
         self._people = people
         self._sources = sources
+        self._imports = imports
 
     def ingest_person(
         self,
         db: Session,
-        source_account: models.SourceAccount,
+        source_account: SourceAccount,
         payload: dict[str, Any],
         import_id: uuid.UUID | None = None,
     ) -> CanonicalizationResult:
@@ -84,8 +92,8 @@ class ProcessingService:
     def import_api_profile(
         self,
         db: Session,
-        source_account: models.SourceAccount,
-        import_: models.Import,
+        source_account: SourceAccount,
+        import_: Import,
     ) -> CanonicalizationResult:
         """Fetch the provider API profile and ingest it into the given import."""
         _, credentials = self._sources.load_credentials(db, source_account.id)
@@ -99,7 +107,7 @@ class ProcessingService:
         so re-processing an import never creates duplicates. Imports whose type has
         no parser yet (e.g. Takeout) report ``unsupported`` and are left pending.
         """
-        import_ = db.get(models.Import, import_id)
+        import_ = self._imports.get(db, import_id)
         if import_ is None:
             raise InvalidPayloadError(f"import {import_id} not found")
 
@@ -115,8 +123,9 @@ class ProcessingService:
                 message="No parser available for this import type.",
             )
 
-        source_account = db.get(models.SourceAccount, import_.source_account_id)
-        if source_account is None:
+        try:
+            source_account = self._sources.get_source(db, import_.source_account_id)
+        except SourceNotFoundError:
             return ProcessOutcome(
                 result=RESULT_UNSUPPORTED, message="source is missing"
             )
@@ -135,7 +144,7 @@ class ProcessingService:
             counters["facts_reused"] += result.facts_reused
             counters["assertions_created"] += result.assertions_created
 
-        import_.processing_status = PROCESSING_COMPLETED
+        self._imports.set_processing_status(db, import_.id, PROCESSING_COMPLETED)
         db.commit()
 
         return ProcessOutcome(
@@ -149,7 +158,7 @@ class ProcessingService:
     def _ingest(
         self,
         db: Session,
-        source_account: models.SourceAccount,
+        source_account: SourceAccount,
         parser: PersonParser,
         payload: dict[str, Any],
         import_id: uuid.UUID | None,
@@ -176,8 +185,8 @@ class ProcessingService:
     def _canonicalize_record(
         self,
         db: Session,
-        source_account: models.SourceAccount,
-        source_record: models.SourceRecord,
+        source_account: SourceAccount,
+        source_record: SourceRecord,
     ) -> CanonicalizationResult:
         parser = self._parsers.get(source_record.resource_type)
         if parser is None:

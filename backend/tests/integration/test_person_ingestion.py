@@ -13,6 +13,7 @@ from rosalind.adapters.inbound.ingestion.google.models import (
 from rosalind.adapters.outbound.persistence import models
 from rosalind.application.errors import InvalidPayloadError
 from rosalind.application.services.processing import payload_sha256
+from rosalind.domain.source import SourceAccount
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -23,11 +24,10 @@ def _payload() -> dict:
     return json.loads(FIXTURE.read_text())
 
 
-def _account(db: Session) -> models.SourceAccount:
-    account = models.SourceAccount(provider="google", account_identifier="test-account")
-    db.add(account)
-    db.commit()
-    return account
+def _account(db: Session) -> SourceAccount:
+    return composition.source_service.create_source(
+        db, provider="google", name="test-account"
+    )
 
 
 def test_ingest_person_writes_raw_and_canonical(db_session: Session) -> None:

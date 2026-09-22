@@ -12,11 +12,10 @@ from rosalind import config
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.http.schemas import imports as schemas
 from rosalind.adapters.outbound.object_storage import s3
-from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.session import get_db
 from rosalind.application import manifest
 from rosalind.application.services import imports as imports_service
-from rosalind.application.services.processing import PROCESSING_COMPLETED
+from rosalind.domain.source import Import, ImportFile
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -47,10 +46,7 @@ def create_import(
     elif body.type == imports_service.IMPORT_TYPE_API:
         import_ = imports_service.create_import(db, source, body.type)
         composition.processing_service.import_api_profile(db, source, import_)
-        import_.ingestion_status = imports_service.INGESTION_COMPLETED
-        import_.processing_status = PROCESSING_COMPLETED
-        db.commit()
-        db.refresh(import_)
+        import_ = imports_service.complete_api_import(db, import_.id)
     else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -147,12 +143,11 @@ def _processing_status(db: Session, import_id: uuid.UUID) -> str:
     return import_.processing_status
 
 
-def _to_summary(import_: models.Import) -> schemas.ImportSummaryResponse:
-    source = import_.source_account
+def _to_summary(import_: Import) -> schemas.ImportSummaryResponse:
     return schemas.ImportSummaryResponse(
         import_id=import_.id,
         source_id=import_.source_account_id,
-        source_name=source.name if source else None,
+        source_name=import_.source_name,
         type=import_.type,
         ingestion_status=import_.ingestion_status,
         processing_status=import_.processing_status,
@@ -164,7 +159,7 @@ def _to_summary(import_: models.Import) -> schemas.ImportSummaryResponse:
     )
 
 
-def _to_file(file_: models.ImportFile) -> schemas.FileResponse:
+def _to_file(file_: ImportFile) -> schemas.FileResponse:
     return schemas.FileResponse(
         path=file_.path,
         sha256=file_.sha256,

@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session
 
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.http.schemas import sources as schemas
-from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.session import get_db
 from rosalind.application.services.sources import SOURCE_CONNECTED, SOURCE_DISCONNECTED
+from rosalind.domain.source import SourceAccount
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -79,9 +79,7 @@ def disconnect(source_id: uuid.UUID, db: SessionDep) -> schemas.DisconnectRespon
     return schemas.DisconnectResponse(status=result.status, revoked=result.revoked)
 
 
-def _to_summary(
-    source: models.SourceAccount, db: Session
-) -> schemas.SourceSummaryResponse:
+def _to_summary(source: SourceAccount, db: Session) -> schemas.SourceSummaryResponse:
     return schemas.SourceSummaryResponse(
         source_id=source.id,
         name=source.name,
@@ -92,9 +90,7 @@ def _to_summary(
     )
 
 
-def _to_detail(
-    source: models.SourceAccount, db: Session
-) -> schemas.SourceDetailResponse:
+def _to_detail(source: SourceAccount, db: Session) -> schemas.SourceDetailResponse:
     return schemas.SourceDetailResponse(
         source_id=source.id,
         name=source.name,
@@ -106,7 +102,7 @@ def _to_detail(
     )
 
 
-def _status(source: models.SourceAccount, db: Session) -> str:
+def _status(source: SourceAccount, db: Session) -> str:
     return (
         SOURCE_CONNECTED if service.is_connected(db, source.id) else SOURCE_DISCONNECTED
     )

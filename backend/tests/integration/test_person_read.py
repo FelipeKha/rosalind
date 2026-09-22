@@ -5,7 +5,6 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from rosalind.adapters import composition
-from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.repositories.person import (
     PostgresPersonRepository,
 )
@@ -21,9 +20,9 @@ def _payload() -> dict:
 
 
 def _ingest(db: Session) -> uuid.UUID:
-    account = models.SourceAccount(provider="google", account_identifier="test-account")
-    db.add(account)
-    db.commit()
+    account = composition.source_service.create_source(
+        db, provider="google", name="test-account"
+    )
     result = composition.processing_service.ingest_person(db, account, _payload())
     return result.person_id
 
