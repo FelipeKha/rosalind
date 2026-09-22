@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from rosalind.ingestion.errors import InvalidManifestError
+from rosalind.adapters.inbound.ingestion.errors import InvalidManifestError
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 

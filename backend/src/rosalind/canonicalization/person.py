@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from rosalind.adapters.inbound.ingestion.errors import EntityResolutionConflictError
 from rosalind.adapters.outbound.persistence import models
 from rosalind.canonicalization.email import normalize_email
 from rosalind.domain.observations.person import (
@@ -29,7 +30,6 @@ from rosalind.domain.observations.person import (
     PersonObservation,
     SourceRef,
 )
-from rosalind.ingestion.errors import EntityResolutionConflictError
 
 
 @dataclass(frozen=True)

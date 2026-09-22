@@ -6,9 +6,11 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from rosalind.adapters.inbound.ingestion.errors import InvalidPayloadError
+from rosalind.adapters.inbound.ingestion.google.models import (
+    GOOGLE_PERSON_RESOURCE_TYPE,
+)
 from rosalind.adapters.outbound.persistence import models
-from rosalind.ingestion.errors import InvalidPayloadError
-from rosalind.ingestion.google.models import GOOGLE_PERSON_RESOURCE_TYPE
 from rosalind.services import processing
 
 FIXTURE = (

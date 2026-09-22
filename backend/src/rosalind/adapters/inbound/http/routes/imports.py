@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session
 
 from rosalind import config
 from rosalind.adapters.inbound.http.schemas import imports as schemas
+from rosalind.adapters.inbound.ingestion import manifest
 from rosalind.adapters.outbound.object_storage import s3
 from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.session import get_db
-from rosalind.ingestion import manifest
 from rosalind.services import imports as imports_service
 from rosalind.services import processing
 from rosalind.services import sources as sources_service

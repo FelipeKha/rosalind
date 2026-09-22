@@ -14,13 +14,13 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from rosalind.adapters.outbound.persistence import models
-from rosalind.ingestion import manifest
-from rosalind.ingestion.errors import (
+from rosalind.adapters.inbound.ingestion import manifest
+from rosalind.adapters.inbound.ingestion.errors import (
     ImportNotFoundError,
     InvalidImportStateError,
     InvalidManifestError,
 )
+from rosalind.adapters.outbound.persistence import models
 
 INGESTION_UPLOADING = "uploading"
 INGESTION_COMPLETED = "completed"

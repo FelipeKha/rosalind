@@ -6,16 +6,7 @@ matching. It must produce the same ``PersonObservation`` for the same input.
 
 from __future__ import annotations
 
-from rosalind.domain.observations.person import (
-    DateObservation,
-    EmailObservation,
-    GenderObservation,
-    LocaleObservation,
-    NameObservation,
-    PersonObservation,
-    SourceRef,
-)
-from rosalind.ingestion.google.models import (
+from rosalind.adapters.inbound.ingestion.google.models import (
     GoogleBirthday,
     GoogleEmailAddress,
     GoogleFieldMetadata,
@@ -24,6 +15,15 @@ from rosalind.ingestion.google.models import (
     GoogleName,
     GooglePerson,
     GoogleSource,
+)
+from rosalind.domain.observations.person import (
+    DateObservation,
+    EmailObservation,
+    GenderObservation,
+    LocaleObservation,
+    NameObservation,
+    PersonObservation,
+    SourceRef,
 )
 
 

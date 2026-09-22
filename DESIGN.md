@@ -2764,8 +2764,8 @@ Use a parser registry to select the appropriate provider adapter.
 The Google Person implementation currently uses:
 
 ```text
-backend/src/rosalind/ingestion/google/models.py
-backend/src/rosalind/ingestion/google/parser.py
+backend/src/rosalind/adapters/inbound/ingestion/google/models.py
+backend/src/rosalind/adapters/inbound/ingestion/google/parser.py
 ```
 
 The provider model is deliberately close to Google's API representation.
