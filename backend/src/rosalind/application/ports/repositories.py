@@ -45,6 +45,35 @@ class FactUpsertResult:
     assertion_created: bool
 
 
+@dataclass(frozen=True)
+class StoredCredential:
+    """Plaintext OAuth credential bundle as read from persistence.
+
+    Tokens are decrypted by the adapter, so the application layer never touches
+    encryption. ``access_token``/``refresh_token`` may be ``None`` when a stored
+    token could not be decrypted (e.g. for best-effort revocation).
+    """
+
+    provider: str
+    access_token: str | None
+    refresh_token: str | None
+    scopes: list[str] | None
+    expires_at: datetime | None
+
+
+@dataclass(frozen=True)
+class AuthRequest:
+    """A pending (or completed) OAuth authorization request."""
+
+    state: str
+    source_account_id: uuid.UUID
+    source_name: str | None
+    status: str
+    code_verifier: str | None
+    expires_at: datetime
+    consumed_at: datetime | None
+
+
 class PersonRepository(Protocol):
     def search(self, db: Session, query: str, limit: int) -> list[PersonProfile]: ...
 
@@ -91,6 +120,65 @@ class SourceAccountRepository(Protocol):
     def update(self, db: Session, account: SourceAccount) -> SourceAccount: ...
 
     def delete(self, db: Session, source_id: uuid.UUID) -> None: ...
+
+
+class OAuthCredentialRepository(Protocol):
+    def exists(self, db: Session, source_account_id: uuid.UUID) -> bool: ...
+
+    def get_latest(
+        self, db: Session, source_account_id: uuid.UUID
+    ) -> StoredCredential | None: ...
+
+    def list_all(
+        self, db: Session, source_account_id: uuid.UUID
+    ) -> list[StoredCredential]: ...
+
+    def upsert(
+        self,
+        db: Session,
+        *,
+        account_id: uuid.UUID,
+        provider: str,
+        access_token: str,
+        refresh_token: str | None,
+        scopes: list[str] | None,
+        expires_at: datetime | None,
+    ) -> None: ...
+
+    def update_tokens(
+        self,
+        db: Session,
+        *,
+        account_id: uuid.UUID,
+        provider: str,
+        access_token: str,
+        expires_at: datetime | None,
+    ) -> None: ...
+
+    def delete_all(self, db: Session, source_account_id: uuid.UUID) -> None: ...
+
+
+class OAuthAuthRequestRepository(Protocol):
+    def create(
+        self,
+        db: Session,
+        *,
+        state: str,
+        source_account_id: uuid.UUID,
+        source_name: str | None,
+        code_verifier: str | None,
+        expires_at: datetime,
+    ) -> None: ...
+
+    def get(self, db: Session, state: str) -> AuthRequest | None: ...
+
+    def reassign(
+        self, db: Session, state: str, source_account_id: uuid.UUID
+    ) -> None: ...
+
+    def mark_connected(
+        self, db: Session, state: str, consumed_at: datetime
+    ) -> None: ...
 
 
 class ImportRepository(Protocol):

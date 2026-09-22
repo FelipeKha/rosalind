@@ -5,8 +5,9 @@ It has a human-facing ``name`` (the CLI slug) and an immutable provider identity
 (``provider`` + ``account_identifier``). Connecting (OAuth) and disconnecting
 (revoking credentials) happen here; imports and raw data are never touched.
 
-Account CRUD goes through the ``SourceAccountRepository`` port. OAuth credentials
-and auth requests remain ORM-internal to this service.
+Account CRUD goes through the ``SourceAccountRepository`` port; OAuth credentials
+and authorization requests go through the ``OAuthCredentialRepository`` and
+``OAuthAuthRequestRepository`` ports.
 """
 
 from __future__ import annotations
@@ -17,11 +18,8 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from rosalind import security
-from rosalind.adapters.outbound.persistence import models
 from rosalind.application.errors import (
     InvalidStateError,
     ProviderError,
@@ -29,7 +27,12 @@ from rosalind.application.errors import (
     TokenNotFoundError,
 )
 from rosalind.application.ports.providers import AuthGateway, ProviderCredentials
-from rosalind.application.ports.repositories import SourceAccountRepository
+from rosalind.application.ports.repositories import (
+    OAuthAuthRequestRepository,
+    OAuthCredentialRepository,
+    SourceAccountRepository,
+    StoredCredential,
+)
 from rosalind.domain.source import SourceAccount
 
 STATUS_PENDING = "pending"
@@ -71,9 +74,17 @@ def default_source_name(provider: str) -> str:
 
 
 class SourceService:
-    def __init__(self, auth: AuthGateway, accounts: SourceAccountRepository):
+    def __init__(
+        self,
+        auth: AuthGateway,
+        accounts: SourceAccountRepository,
+        credentials: OAuthCredentialRepository,
+        auth_requests: OAuthAuthRequestRepository,
+    ):
         self._auth = auth
         self._accounts = accounts
+        self._credentials = credentials
+        self._auth_requests = auth_requests
 
     def resolve_source(self, db: Session, name: str) -> SourceAccount:
         account = self._accounts.get_by_name(db, name)
@@ -96,14 +107,7 @@ class SourceService:
         return account
 
     def is_connected(self, db: Session, source_id: uuid.UUID) -> bool:
-        return (
-            db.scalar(
-                select(models.OAuthCredential.id).where(
-                    models.OAuthCredential.source_account_id == source_id
-                )
-            )
-            is not None
-        )
+        return self._credentials.exists(db, source_id)
 
     def start_connect(
         self, db: Session, provider: str, name: str | None = None
@@ -118,21 +122,20 @@ class SourceService:
 
         state = secrets.token_urlsafe(32)
         auth_url, code_verifier = self._auth.build_authorization_url(state)
-        db.add(
-            models.OAuthAuthRequest(
-                state=state,
-                source_account_id=account.id,
-                source_name=name or default_source_name(provider),
-                code_verifier=code_verifier,
-                expires_at=datetime.now(UTC) + _AUTH_REQUEST_TTL,
-            )
+        self._auth_requests.create(
+            db,
+            state=state,
+            source_account_id=account.id,
+            source_name=name or default_source_name(provider),
+            code_verifier=code_verifier,
+            expires_at=datetime.now(UTC) + _AUTH_REQUEST_TTL,
         )
 
         db.commit()
         return ConnectStart(source_id=account.id, auth_url=auth_url, state=state)
 
     def complete_connect(self, db: Session, state: str, code: str) -> SourceAccount:
-        request = db.get(models.OAuthAuthRequest, state)
+        request = self._auth_requests.get(db, state)
         if request is None or request.expires_at < datetime.now(UTC):
             raise InvalidStateError("authorization request is unknown or expired")
         if request.consumed_at is not None:
@@ -161,8 +164,7 @@ class SourceService:
 
         if account is not None:
             if pending.id != account.id:
-                request.source_account_id = account.id
-                db.flush()
+                self._auth_requests.reassign(db, state, account.id)
                 self._accounts.delete(db, pending.id)
         else:
             account = pending
@@ -182,15 +184,22 @@ class SourceService:
                 display_name=identity.display_name,
             ),
         )
-        self._upsert_credential(db, account.id, credentials, provider=provider)
+        self._credentials.upsert(
+            db,
+            account_id=account.id,
+            provider=provider,
+            access_token=credentials.access_token,
+            refresh_token=credentials.refresh_token,
+            scopes=credentials.scopes,
+            expires_at=credentials.expires_at,
+        )
 
-        request.status = STATUS_CONNECTED
-        request.consumed_at = datetime.now(UTC)
+        self._auth_requests.mark_connected(db, state, datetime.now(UTC))
         db.commit()
         return account
 
     def get_connect_status(self, db: Session, state: str) -> AuthStatus:
-        request = db.get(models.OAuthAuthRequest, state)
+        request = self._auth_requests.get(db, state)
         if request is None:
             return AuthStatus(status=STATUS_NOT_FOUND)
 
@@ -217,46 +226,37 @@ class SourceService:
         its imports, and raw/canonical data are intentionally left untouched.
         """
         source = self.get_source(db, source_id)
-        credentials = db.scalars(
-            select(models.OAuthCredential).where(
-                models.OAuthCredential.source_account_id == source.id
-            )
-        ).all()
-        if not credentials:
+        stored = self._credentials.list_all(db, source.id)
+        if not stored:
             return DisconnectResult(status=STATUS_ALREADY_DISCONNECTED, revoked=False)
 
         revoked = False
-        for credential in credentials:
+        for credential in stored:
             token = _revokable_token(credential)
             if token is not None:
                 with suppress(ProviderError):
                     self._auth.revoke(token)
                     revoked = True
-            db.delete(credential)
 
+        self._credentials.delete_all(db, source.id)
         db.commit()
         return DisconnectResult(status=STATUS_DISCONNECTED, revoked=revoked)
 
     def load_credentials(
         self, db: Session, source_id: uuid.UUID
     ) -> tuple[SourceAccount, ProviderCredentials]:
-        credential = db.scalars(
-            select(models.OAuthCredential)
-            .where(models.OAuthCredential.source_account_id == source_id)
-            .order_by(models.OAuthCredential.created_at.desc())
-        ).first()
-        if credential is None:
+        stored = self._credentials.get_latest(db, source_id)
+        if stored is None:
             raise TokenNotFoundError(f"no stored credentials for source {source_id}")
 
+        if stored.access_token is None:
+            raise TokenNotFoundError(f"no usable credentials for source {source_id}")
+
         credentials = ProviderCredentials(
-            access_token=security.decrypt_secret(credential.access_token_encrypted),
-            refresh_token=(
-                security.decrypt_secret(credential.refresh_token_encrypted)
-                if credential.refresh_token_encrypted
-                else None
-            ),
-            scopes=credential.scope.split() if credential.scope else None,
-            expires_at=credential.expires_at,
+            access_token=stored.access_token,
+            refresh_token=stored.refresh_token,
+            scopes=stored.scopes,
+            expires_at=stored.expires_at,
         )
 
         if (
@@ -267,54 +267,20 @@ class SourceService:
                 credentials = self._auth.refresh(credentials)
             except Exception as exc:  # provider boundary
                 raise ProviderError(f"failed to refresh credentials: {exc}") from exc
-            credential.access_token_encrypted = security.encrypt_secret(
-                credentials.access_token
+            self._credentials.update_tokens(
+                db,
+                account_id=source_id,
+                provider=stored.provider,
+                access_token=credentials.access_token,
+                expires_at=credentials.expires_at,
             )
-            credential.expires_at = credentials.expires_at
             db.commit()
 
-        account = self._accounts.get(db, credential.source_account_id)
+        account = self._accounts.get(db, source_id)
         if account is None:
             raise SourceNotFoundError(f"source {source_id} not found")
         return account, credentials
 
-    def _upsert_credential(
-        self,
-        db: Session,
-        account_id: uuid.UUID,
-        credentials: ProviderCredentials,
-        provider: str,
-    ) -> None:
-        credential = db.scalars(
-            select(models.OAuthCredential).where(
-                models.OAuthCredential.source_account_id == account_id,
-                models.OAuthCredential.provider == provider,
-            )
-        ).first()
-        if credential is None:
-            credential = models.OAuthCredential(
-                provider=provider, source_account_id=account_id
-            )
-            db.add(credential)
 
-        credential.token_type = "Bearer"  # nosec B105
-        credential.access_token_encrypted = security.encrypt_secret(
-            credentials.access_token
-        )
-        credential.refresh_token_encrypted = (
-            security.encrypt_secret(credentials.refresh_token)
-            if credentials.refresh_token
-            else None
-        )
-        credential.scope = " ".join(credentials.scopes) if credentials.scopes else None
-        credential.expires_at = credentials.expires_at
-
-
-def _revokable_token(credential: models.OAuthCredential) -> str | None:
-    encrypted = credential.refresh_token_encrypted or credential.access_token_encrypted
-    if encrypted is None:
-        return None
-    try:
-        return security.decrypt_secret(encrypted)
-    except security.SecurityError:
-        return None
+def _revokable_token(credential: StoredCredential) -> str | None:
+    return credential.refresh_token or credential.access_token

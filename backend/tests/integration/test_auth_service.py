@@ -30,8 +30,15 @@ def _create_account_with_credentials(
     account = models.SourceAccount(provider="google", account_identifier="12345")
     db.add(account)
     db.flush()
-    composition.source_service._upsert_credential(
-        db, account.id, _credentials(expiry), provider="google"
+    credentials = _credentials(expiry)
+    composition.oauth_credential_repository.upsert(
+        db,
+        account_id=account.id,
+        provider="google",
+        access_token=credentials.access_token,
+        refresh_token=credentials.refresh_token,
+        scopes=credentials.scopes,
+        expires_at=credentials.expires_at,
     )
     db.commit()
     return account

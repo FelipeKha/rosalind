@@ -16,6 +16,10 @@ from rosalind.adapters.outbound.persistence.repositories.canonical_person import
 from rosalind.adapters.outbound.persistence.repositories.imports import (
     PostgresImportRepository,
 )
+from rosalind.adapters.outbound.persistence.repositories.oauth import (
+    PostgresOAuthAuthRequestRepository,
+    PostgresOAuthCredentialRepository,
+)
 from rosalind.adapters.outbound.persistence.repositories.person import (
     PostgresPersonRepository,
 )
@@ -34,7 +38,15 @@ from rosalind.application.services.sources import SourceService
 google_auth = GoogleAuthGateway()
 google_people = GooglePeopleGateway()
 
-source_service = SourceService(google_auth, PostgresSourceAccountRepository())
+oauth_credential_repository = PostgresOAuthCredentialRepository()
+oauth_auth_request_repository = PostgresOAuthAuthRequestRepository()
+
+source_service = SourceService(
+    google_auth,
+    PostgresSourceAccountRepository(),
+    oauth_credential_repository,
+    oauth_auth_request_repository,
+)
 person_service = PersonService(PostgresPersonRepository())
 
 imports_service.configure(PostgresImportRepository())
