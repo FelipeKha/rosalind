@@ -7,6 +7,7 @@ from typing import Any
 from google.oauth2.credentials import Credentials
 
 from rosalind.adapters.outbound.google import auth as google_auth
+from rosalind.application.ports.providers import ProviderCredentials
 
 # https://developers.google.com/people/api/rest/v1/people/get
 GOOGLE_PERSON_FIELDS = (
@@ -52,3 +53,10 @@ def fetch_profile(credentials: Credentials) -> dict[str, Any]:
         )
         .execute()
     )
+
+
+class GooglePeopleGateway:
+    """``PeopleGateway`` implementation backed by the Google People API."""
+
+    def fetch_profile(self, credentials: ProviderCredentials) -> dict[str, Any]:
+        return fetch_profile(google_auth._to_google_credentials(credentials))

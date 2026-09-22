@@ -1,27 +1,24 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
-from google.oauth2.credentials import Credentials
 
 from rosalind.adapters import composition
 from rosalind.application.errors import ProviderError
+from rosalind.application.ports.providers import ProviderCredentials, UserIdentity
 
 FAKE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth?foo=bar"
 
 
-def _fake_credentials() -> Credentials:
-    return Credentials(
-        token="access-token",
+def _fake_credentials() -> ProviderCredentials:
+    return ProviderCredentials(
+        access_token="access-token",
         refresh_token="refresh-token",
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id="client-id",
-        client_secret="client-secret",
         scopes=[
             "openid",
             "https://www.googleapis.com/auth/userinfo.profile",
             "https://www.googleapis.com/auth/userinfo.email",
         ],
-        expiry=datetime.now(UTC) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
 
 
@@ -39,11 +36,9 @@ def _stub_google(monkeypatch) -> None:
     monkeypatch.setattr(
         composition.google_auth,
         "fetch_userinfo",
-        lambda credentials: {
-            "id": "12345",
-            "email": "jane@example.com",
-            "name": "Jane Doe",
-        },
+        lambda credentials: UserIdentity(
+            account_identifier="12345", display_name="Jane Doe"
+        ),
     )
 
 

@@ -1,11 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
-from google.oauth2.credentials import Credentials
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rosalind.adapters import composition
 from rosalind.adapters.outbound.persistence import models
+from rosalind.application.ports.providers import ProviderCredentials, UserIdentity
 
 SCOPES = [
     "openid",
@@ -14,15 +14,12 @@ SCOPES = [
 ]
 
 
-def _credentials(expiry: datetime) -> Credentials:
-    return Credentials(
-        token="access-token",
+def _credentials(expiry: datetime) -> ProviderCredentials:
+    return ProviderCredentials(
+        access_token="access-token",
         refresh_token="refresh-token",
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id="client-id",
-        client_secret="client-secret",
         scopes=SCOPES,
-        expiry=expiry,
+        expires_at=expiry,
     )
 
 
@@ -48,7 +45,7 @@ def test_load_credentials_roundtrips_stored_tokens(db_session: Session) -> None:
     )
 
     assert loaded_account.account_identifier == "12345"
-    assert credentials.token == "access-token"
+    assert credentials.access_token == "access-token"
     assert credentials.refresh_token == "refresh-token"
 
 
@@ -58,16 +55,19 @@ def test_load_credentials_refreshes_expired_token(
     past = datetime.now(UTC) - timedelta(hours=1)
     account = _create_account_with_credentials(db_session, past)
 
-    def fake_refresh(credentials: Credentials) -> Credentials:
-        credentials.token = "refreshed-access-token"
-        credentials.expiry = datetime.now(UTC) + timedelta(hours=1)
-        return credentials
+    def fake_refresh(credentials: ProviderCredentials) -> ProviderCredentials:
+        return ProviderCredentials(
+            access_token="refreshed-access-token",
+            refresh_token=credentials.refresh_token,
+            scopes=credentials.scopes,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
 
     monkeypatch.setattr(composition.google_auth, "refresh", fake_refresh)
 
     _, credentials = composition.source_service.load_credentials(db_session, account.id)
 
-    assert credentials.token == "refreshed-access-token"
+    assert credentials.access_token == "refreshed-access-token"
 
 
 def test_disconnect_removes_credentials_keeps_account(
@@ -105,7 +105,9 @@ def _stub_oauth(monkeypatch, identifier: str = "12345", name: str = "Jane Doe") 
     monkeypatch.setattr(
         composition.google_auth,
         "fetch_userinfo",
-        lambda credentials: {"id": identifier, "name": name},
+        lambda credentials: UserIdentity(
+            account_identifier=identifier, display_name=name
+        ),
     )
 
 

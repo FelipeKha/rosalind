@@ -14,7 +14,6 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from google.oauth2.credentials import Credentials
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,7 +25,7 @@ from rosalind.application.errors import (
     SourceNotFoundError,
     TokenNotFoundError,
 )
-from rosalind.application.ports.providers import GoogleAuthGateway
+from rosalind.application.ports.providers import AuthGateway, ProviderCredentials
 
 STATUS_PENDING = "pending"
 STATUS_CONNECTED = "connected"
@@ -67,7 +66,7 @@ def default_source_name(provider: str) -> str:
 
 
 class SourceService:
-    def __init__(self, auth: GoogleAuthGateway):
+    def __init__(self, auth: AuthGateway):
         self._auth = auth
 
     def resolve_source(self, db: Session, name: str) -> models.SourceAccount:
@@ -111,7 +110,7 @@ class SourceService:
         )
 
     def start_connect(
-        self, db: Session, provider: str = "google", name: str | None = None
+        self, db: Session, provider: str, name: str | None = None
     ) -> ConnectStart:
         """Begin OAuth for a provider, stashing the requested name on the auth request.
 
@@ -147,47 +146,45 @@ class SourceService:
         if request.consumed_at is not None:
             raise InvalidStateError("authorization request was already consumed")
 
+        pending = db.get(models.SourceAccount, request.source_account_id)
+        if pending is None:
+            raise InvalidStateError(
+                "authorization request references an unknown account"
+            )
+        provider = pending.provider
+
         try:
             credentials = self._auth.exchange_code(state, code, request.code_verifier)
-            userinfo = self._auth.fetch_userinfo(credentials)
+            identity = self._auth.fetch_userinfo(credentials)
         except ProviderError:
             raise
         except Exception as exc:  # provider boundary
             raise ProviderError(
-                f"failed to exchange Google authorization code: {exc}"
+                f"failed to exchange authorization code: {exc}"
             ) from exc
-
-        account_identifier = userinfo.get("id")
-        if not account_identifier:
-            raise ProviderError("Google userinfo did not include an account id")
 
         account = db.scalar(
             select(models.SourceAccount).where(
-                models.SourceAccount.provider == "google",
-                models.SourceAccount.account_identifier == account_identifier,
+                models.SourceAccount.provider == provider,
+                models.SourceAccount.account_identifier == identity.account_identifier,
             )
         )
 
         if account is not None:
-            pending = db.get(models.SourceAccount, request.source_account_id)
-            request.source_account_id = account.id
-            db.flush()
-            if pending is not None and pending.id != account.id:
+            if pending.id != account.id:
+                request.source_account_id = account.id
+                db.flush()
                 db.delete(pending)
         else:
-            account = db.get(models.SourceAccount, request.source_account_id)
-            if account is None:
-                raise InvalidStateError(
-                    "authorization request references an unknown account"
-                )
-            account.account_identifier = account_identifier
+            account = pending
+            account.account_identifier = identity.account_identifier
 
         # The name is the current CLI slug, so assign it on every connect. A
         # re-authenticated account must pick up the current (or explicitly
         # requested) name rather than keeping a stale one.
         account.name = request.source_name
-        account.display_name = userinfo.get("name")
-        self._upsert_credential(account, credentials, provider="google")
+        account.display_name = identity.display_name
+        self._upsert_credential(account, credentials, provider=provider)
 
         request.status = STATUS_CONNECTED
         request.consumed_at = datetime.now(UTC)
@@ -244,7 +241,7 @@ class SourceService:
 
     def load_credentials(
         self, db: Session, source_id: uuid.UUID
-    ) -> tuple[models.SourceAccount, Credentials]:
+    ) -> tuple[models.SourceAccount, ProviderCredentials]:
         credential = db.scalars(
             select(models.OAuthCredential)
             .where(models.OAuthCredential.source_account_id == source_id)
@@ -253,7 +250,7 @@ class SourceService:
         if credential is None:
             raise TokenNotFoundError(f"no stored credentials for source {source_id}")
 
-        credentials = self._auth.build_credentials(
+        credentials = ProviderCredentials(
             access_token=security.decrypt_secret(credential.access_token_encrypted),
             refresh_token=(
                 security.decrypt_secret(credential.refresh_token_encrypted)
@@ -264,17 +261,18 @@ class SourceService:
             expires_at=credential.expires_at,
         )
 
-        if credentials.expired:
+        if (
+            credentials.expires_at is not None
+            and credentials.expires_at <= datetime.now(UTC)
+        ):
             try:
-                self._auth.refresh(credentials)
+                credentials = self._auth.refresh(credentials)
             except Exception as exc:  # provider boundary
-                raise ProviderError(
-                    f"failed to refresh Google credentials: {exc}"
-                ) from exc
+                raise ProviderError(f"failed to refresh credentials: {exc}") from exc
             credential.access_token_encrypted = security.encrypt_secret(
-                credentials.token
+                credentials.access_token
             )
-            credential.expires_at = self._auth.to_aware_utc(credentials.expiry)
+            credential.expires_at = credentials.expires_at
             db.commit()
 
         return credential.source_account, credentials
@@ -282,7 +280,7 @@ class SourceService:
     def _upsert_credential(
         self,
         account: models.SourceAccount,
-        credentials: Credentials,
+        credentials: ProviderCredentials,
         provider: str,
     ) -> None:
         session = Session.object_session(account)
@@ -299,14 +297,16 @@ class SourceService:
             account.credentials.append(credential)
 
         credential.token_type = "Bearer"  # nosec B105
-        credential.access_token_encrypted = security.encrypt_secret(credentials.token)
+        credential.access_token_encrypted = security.encrypt_secret(
+            credentials.access_token
+        )
         credential.refresh_token_encrypted = (
             security.encrypt_secret(credentials.refresh_token)
             if credentials.refresh_token
             else None
         )
         credential.scope = " ".join(credentials.scopes) if credentials.scopes else None
-        credential.expires_at = self._auth.to_aware_utc(credentials.expiry)
+        credential.expires_at = credentials.expires_at
 
 
 def _revokable_token(credential: models.OAuthCredential) -> str | None:

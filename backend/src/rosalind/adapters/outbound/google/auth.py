@@ -17,6 +17,7 @@ from googleapiclient.discovery import Resource, build  # type: ignore[import-unt
 
 from rosalind import config
 from rosalind.application.errors import ProviderError
+from rosalind.application.ports.providers import ProviderCredentials, UserIdentity
 
 GOOGLE_REVOKE_URI = "https://oauth2.googleapis.com/revoke"
 
@@ -155,3 +156,49 @@ def fetch_userinfo(credentials: Credentials) -> dict[str, str]:
 
 def build_people_service(credentials: Credentials) -> Resource:
     return build("people", "v1", credentials=credentials, cache_discovery=False)
+
+
+def _to_google_credentials(credentials: ProviderCredentials) -> Credentials:
+    return build_credentials(
+        access_token=credentials.access_token,
+        refresh_token=credentials.refresh_token,
+        scopes=credentials.scopes,
+        expires_at=credentials.expires_at,
+    )
+
+
+def _from_google_credentials(credentials: Credentials) -> ProviderCredentials:
+    return ProviderCredentials(
+        access_token=credentials.token,
+        refresh_token=credentials.refresh_token,
+        scopes=list(credentials.scopes) if credentials.scopes else None,
+        expires_at=to_aware_utc(credentials.expiry),
+    )
+
+
+class GoogleAuthGateway:
+    """``AuthGateway`` implementation backed by Google OAuth 2.0."""
+
+    def build_authorization_url(self, state: str) -> tuple[str, str]:
+        return build_authorization_url(state)
+
+    def exchange_code(
+        self, state: str, code: str, code_verifier: str | None
+    ) -> ProviderCredentials:
+        return _from_google_credentials(exchange_code(state, code, code_verifier))
+
+    def fetch_userinfo(self, credentials: ProviderCredentials) -> UserIdentity:
+        info = fetch_userinfo(_to_google_credentials(credentials))
+        account_identifier = info.get("id")
+        if not account_identifier:
+            raise ProviderError("Google userinfo did not include an account id")
+        return UserIdentity(
+            account_identifier=account_identifier,
+            display_name=info.get("name"),
+        )
+
+    def refresh(self, credentials: ProviderCredentials) -> ProviderCredentials:
+        return _from_google_credentials(refresh(_to_google_credentials(credentials)))
+
+    def revoke(self, token: str) -> None:
+        revoke(token)

@@ -24,7 +24,7 @@ from rosalind.application.canonicalization.person import (
 )
 from rosalind.application.errors import InvalidPayloadError
 from rosalind.application.ports.parsers import PersonParser
-from rosalind.application.ports.providers import GooglePeopleGateway
+from rosalind.application.ports.providers import PeopleGateway
 from rosalind.application.ports.repositories import SourceRecordRepository
 from rosalind.application.services.sources import SourceService
 
@@ -61,14 +61,14 @@ class ProcessingService:
         self,
         source_records: SourceRecordRepository,
         parsers: Mapping[str, PersonParser],
-        google_person_parser: PersonParser,
-        google_people: GooglePeopleGateway,
+        person_parser: PersonParser,
+        people: PeopleGateway,
         sources: SourceService,
     ):
         self._source_records = source_records
         self._parsers = parsers
-        self._google_person_parser = google_person_parser
-        self._google_people = google_people
+        self._person_parser = person_parser
+        self._people = people
         self._sources = sources
 
     def ingest_person(
@@ -78,10 +78,8 @@ class ProcessingService:
         payload: dict[str, Any],
         import_id: uuid.UUID | None = None,
     ) -> CanonicalizationResult:
-        """Persist a Google Person payload and canonicalize it."""
-        return self._ingest(
-            db, source_account, self._google_person_parser, payload, import_id
-        )
+        """Persist a provider person payload and canonicalize it."""
+        return self._ingest(db, source_account, self._person_parser, payload, import_id)
 
     def import_api_profile(
         self,
@@ -89,9 +87,9 @@ class ProcessingService:
         source_account: models.SourceAccount,
         import_: models.Import,
     ) -> CanonicalizationResult:
-        """Fetch the People API profile and ingest it into the given import."""
+        """Fetch the provider API profile and ingest it into the given import."""
         _, credentials = self._sources.load_credentials(db, source_account.id)
-        payload = self._google_people.fetch_profile(credentials)
+        payload = self._people.fetch_profile(credentials)
         return self.ingest_person(db, source_account, payload, import_id=import_.id)
 
     def process_import(self, db: Session, import_id: uuid.UUID) -> ProcessOutcome:

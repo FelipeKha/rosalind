@@ -1,40 +1,52 @@
 """Ports (interfaces) for external provider gateways.
 
-Concrete implementations live in ``adapters.outbound.google.gateways``.
+Concrete implementations live in ``adapters.outbound`` (e.g. ``google.auth`` and
+``google.people``). Application services depend on these Protocols and the
+provider-agnostic value objects defined here, never on a provider SDK.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
-from google.oauth2.credentials import Credentials
+
+@dataclass(frozen=True)
+class ProviderCredentials:
+    """Provider-agnostic OAuth credential bundle.
+
+    ``expires_at`` is always timezone-aware UTC (or ``None`` when the provider
+    does not report an expiry).
+    """
+
+    access_token: str
+    refresh_token: str | None = None
+    scopes: list[str] | None = None
+    expires_at: datetime | None = None
 
 
-class GoogleAuthGateway(Protocol):
+@dataclass(frozen=True)
+class UserIdentity:
+    """The authenticated user's identity at a provider."""
+
+    account_identifier: str
+    display_name: str | None = None
+
+
+class AuthGateway(Protocol):
     def build_authorization_url(self, state: str) -> tuple[str, str]: ...
 
     def exchange_code(
         self, state: str, code: str, code_verifier: str | None
-    ) -> Credentials: ...
+    ) -> ProviderCredentials: ...
 
-    def fetch_userinfo(self, credentials: Credentials) -> dict[str, str]: ...
+    def fetch_userinfo(self, credentials: ProviderCredentials) -> UserIdentity: ...
 
-    def build_credentials(
-        self,
-        *,
-        access_token: str,
-        refresh_token: str | None,
-        scopes: list[str] | None,
-        expires_at: datetime | None = None,
-    ) -> Credentials: ...
-
-    def refresh(self, credentials: Credentials) -> Credentials: ...
+    def refresh(self, credentials: ProviderCredentials) -> ProviderCredentials: ...
 
     def revoke(self, token: str) -> None: ...
 
-    def to_aware_utc(self, expiry: datetime | None) -> datetime | None: ...
 
-
-class GooglePeopleGateway(Protocol):
-    def fetch_profile(self, credentials: Credentials) -> dict[str, Any]: ...
+class PeopleGateway(Protocol):
+    def fetch_profile(self, credentials: ProviderCredentials) -> dict[str, Any]: ...
