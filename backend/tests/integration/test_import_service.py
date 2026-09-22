@@ -124,7 +124,7 @@ def test_delete_import_unknown_id(db_session: Session) -> None:
 
 
 def test_create_import_requires_source(db_session: Session) -> None:
-    from rosalind.auth.errors import SourceNotFoundError
+    from rosalind.adapters.outbound.google.errors import SourceNotFoundError
 
     with pytest.raises(SourceNotFoundError):
         sources.resolve_source(db_session, "does-not-exist")

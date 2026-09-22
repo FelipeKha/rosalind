@@ -19,14 +19,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rosalind import security
-from rosalind.adapters.outbound.persistence import models
-from rosalind.auth import google as google_auth
-from rosalind.auth.errors import (
+from rosalind.adapters.outbound.google import auth as google_auth
+from rosalind.adapters.outbound.google.errors import (
     InvalidStateError,
     ProviderError,
     SourceNotFoundError,
     TokenNotFoundError,
 )
+from rosalind.adapters.outbound.persistence import models
 
 STATUS_PENDING = "pending"
 STATUS_CONNECTED = "connected"

@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 from fastapi.testclient import TestClient
 from google.oauth2.credentials import Credentials
 
-from rosalind.auth.errors import ProviderError
-from rosalind.providers.google import people as google_people
+from rosalind.adapters.outbound.google import people as google_people
+from rosalind.adapters.outbound.google.errors import ProviderError
 from rosalind.services import sources as sources_service
 
 FAKE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth?foo=bar"

@@ -6,7 +6,7 @@ from typing import Any
 
 from google.oauth2.credentials import Credentials
 
-from rosalind.auth import google as google_auth
+from rosalind.adapters.outbound.google import auth as google_auth
 
 # https://developers.google.com/people/api/rest/v1/people/get
 GOOGLE_PERSON_FIELDS = (

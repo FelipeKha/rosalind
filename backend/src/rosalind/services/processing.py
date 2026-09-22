@@ -102,7 +102,7 @@ def import_api_profile(
     import_: models.Import,
 ) -> CanonicalizationResult:
     """Fetch the People API profile and ingest it into the given import."""
-    from rosalind.providers.google import people as google_people
+    from rosalind.adapters.outbound.google import people as google_people
     from rosalind.services import sources as source_service
 
     _, credentials = source_service.load_credentials(db, source_account.id)

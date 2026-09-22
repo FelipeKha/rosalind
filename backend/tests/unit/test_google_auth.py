@@ -1,7 +1,7 @@
 from urllib.parse import parse_qs, urlparse
 
 from rosalind import config
-from rosalind.auth import google as google_auth
+from rosalind.adapters.outbound.google import auth as google_auth
 
 
 def _configure(monkeypatch) -> None:
