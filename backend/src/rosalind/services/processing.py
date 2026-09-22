@@ -14,11 +14,12 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from rosalind import models
+from rosalind.adapters.outbound.persistence import models
+from rosalind.adapters.outbound.persistence.repositories.source_record import (
+    SourceRecordRepository,
+)
 from rosalind.canonicalization.person import (
     CanonicalizationResult,
     canonicalize,
@@ -36,6 +37,8 @@ PROCESSING_FAILED = "failed"
 
 RESULT_OK = "ok"
 RESULT_UNSUPPORTED = "unsupported"
+
+_source_record_repository = SourceRecordRepository()
 
 
 @dataclass(frozen=True)
@@ -75,8 +78,15 @@ def ingest_person(
         resource_name if isinstance(resource_name, str) else str(resource_name)
     )
 
-    source_record = _persist_source_record(
-        db, source_account, external_id, payload, import_id
+    source_record = _source_record_repository.persist(
+        db,
+        source_account=source_account,
+        resource_type=GOOGLE_PERSON_RESOURCE_TYPE,
+        external_id=external_id,
+        payload=payload,
+        payload_sha256=payload_sha256(payload),
+        source_etag=payload.get("etag"),
+        import_id=import_id,
     )
 
     person = GooglePerson.model_validate(payload)
@@ -114,9 +124,7 @@ def process_import(db: Session, import_id: uuid.UUID) -> ProcessOutcome:
     if import_.source_account_id is None:
         return ProcessOutcome(result=RESULT_UNSUPPORTED, message="import has no source")
 
-    records = db.scalars(
-        select(models.SourceRecord).where(models.SourceRecord.import_id == import_.id)
-    ).all()
+    records = _source_record_repository.list_for_import(db, import_.id)
     if not records:
         return ProcessOutcome(
             result=RESULT_UNSUPPORTED,
@@ -165,45 +173,3 @@ def _canonicalize_record(
     raise InvalidPayloadError(
         f"no canonicalizer for resource type {source_record.resource_type!r}"
     )
-
-
-def _persist_source_record(
-    db: Session,
-    source_account: models.SourceAccount,
-    external_id: str,
-    payload: dict[str, Any],
-    import_id: uuid.UUID | None,
-) -> models.SourceRecord:
-    sha = payload_sha256(payload)
-    values = {
-        "source_account_id": source_account.id,
-        "import_id": import_id,
-        "resource_type": GOOGLE_PERSON_RESOURCE_TYPE,
-        "external_id": external_id,
-        "source_etag": payload.get("etag"),
-        "source_updated_at": None,
-        "observed_at": models.utcnow(),
-        "payload": payload,
-        "payload_sha256": sha,
-    }
-    record_id = db.scalar(
-        pg_insert(models.SourceRecord)
-        .values(**values)
-        .on_conflict_do_nothing(constraint="uq_source_record_snapshot")
-        .returning(models.SourceRecord.id)
-    )
-    if record_id is None:
-        record_id = db.scalar(
-            select(models.SourceRecord.id).where(
-                models.SourceRecord.source_account_id == source_account.id,
-                models.SourceRecord.resource_type == GOOGLE_PERSON_RESOURCE_TYPE,
-                models.SourceRecord.external_id == external_id,
-                models.SourceRecord.payload_sha256 == sha,
-            )
-        )
-
-    db.commit()
-    record = db.get(models.SourceRecord, record_id)
-    if record is None:
-        raise RuntimeError("source record not found after upsert")
-    return record

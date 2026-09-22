@@ -4,7 +4,7 @@ from google.oauth2.credentials import Credentials
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from rosalind import models
+from rosalind.adapters.outbound.persistence import models
 from rosalind.services import sources as source_service
 
 SCOPES = [

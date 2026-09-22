@@ -9,8 +9,8 @@ from testcontainers.community.postgres import PostgresContainer
 
 from rosalind import config
 from rosalind.adapters.inbound.http.app import app
-from rosalind.db import get_db
-from rosalind.models import Base
+from rosalind.adapters.outbound.persistence.models import Base
+from rosalind.adapters.outbound.persistence.session import get_db
 from tests._db import make_migrated_engine, reset_schemas
 
 

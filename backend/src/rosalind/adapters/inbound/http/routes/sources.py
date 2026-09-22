@@ -8,9 +8,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from rosalind import models
 from rosalind.adapters.inbound.http.schemas import sources as schemas
-from rosalind.db import get_db
+from rosalind.adapters.outbound.persistence import models
+from rosalind.adapters.outbound.persistence.session import get_db
 from rosalind.services import sources as service
 
 router = APIRouter(prefix="/sources", tags=["sources"])

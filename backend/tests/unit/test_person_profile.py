@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
-from rosalind.repositories.person_repository import PersonRepository
+from rosalind.adapters.outbound.persistence.repositories.person import PersonRepository
 from rosalind.services.people import MAX_SEARCH_RESULTS, PersonService
 
 

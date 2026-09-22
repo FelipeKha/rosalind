@@ -14,8 +14,8 @@ from mcp.server.mcpserver import MCPServer
 
 from rosalind import config
 from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
-from rosalind.db import SessionLocal
-from rosalind.repositories.person_repository import PersonRepository
+from rosalind.adapters.outbound.persistence.repositories.person import PersonRepository
+from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.services.people import PersonService
 
 mcp = MCPServer("rosalind")

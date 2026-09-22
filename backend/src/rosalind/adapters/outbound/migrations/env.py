@@ -3,7 +3,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from rosalind import models
+from rosalind.adapters.outbound.persistence import models
 from rosalind.config import settings
 
 config = context.config

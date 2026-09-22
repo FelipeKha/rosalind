@@ -3,7 +3,7 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
-from rosalind import models
+from rosalind.adapters.outbound.persistence import models
 from rosalind.ingestion import manifest
 from rosalind.ingestion.errors import (
     ImportNotFoundError,

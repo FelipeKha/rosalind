@@ -18,7 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from rosalind import models
+from rosalind.adapters.outbound.persistence import models
 from rosalind.canonicalization.email import normalize_email
 from rosalind.domain.observations.person import (
     DateObservation,

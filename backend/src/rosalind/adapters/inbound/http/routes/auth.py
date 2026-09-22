@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
-from rosalind.db import get_db
+from rosalind.adapters.outbound.persistence.session import get_db
 from rosalind.services import sources as service
 
 router = APIRouter(prefix="/auth/google", tags=["auth"])

@@ -18,7 +18,8 @@ from google.oauth2.credentials import Credentials
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from rosalind import models, security
+from rosalind import security
+from rosalind.adapters.outbound.persistence import models
 from rosalind.auth import google as google_auth
 from rosalind.auth.errors import (
     InvalidStateError,

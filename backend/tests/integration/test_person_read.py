@@ -4,8 +4,8 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from rosalind import models
-from rosalind.repositories.person_repository import PersonRepository
+from rosalind.adapters.outbound.persistence import models
+from rosalind.adapters.outbound.persistence.repositories.person import PersonRepository
 from rosalind.services import processing
 from rosalind.services.people import PersonService
 

@@ -8,9 +8,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from rosalind import config, models, object_storage
+from rosalind import config
 from rosalind.adapters.inbound.http.schemas import imports as schemas
-from rosalind.db import get_db
+from rosalind.adapters.outbound.object_storage import s3
+from rosalind.adapters.outbound.persistence import models
+from rosalind.adapters.outbound.persistence.session import get_db
 from rosalind.ingestion import manifest
 from rosalind.services import imports as imports_service
 from rosalind.services import processing
@@ -135,9 +137,7 @@ def delete_import(
     db: SessionDep,
 ) -> Response:
     import_ = imports_service.get_import(db, import_id)
-    object_storage.delete_objects(
-        config.settings.s3_bucket, [f.storage_key for f in import_.files]
-    )
+    s3.delete_objects(config.settings.s3_bucket, [f.storage_key for f in import_.files])
     imports_service.delete_import(db, import_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

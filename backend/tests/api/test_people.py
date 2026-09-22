@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from rosalind import models
+from rosalind.adapters.outbound.persistence import models
 from rosalind.services import processing
 
 FIXTURE = (

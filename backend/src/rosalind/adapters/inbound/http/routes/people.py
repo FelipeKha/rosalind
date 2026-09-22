@@ -14,8 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.inbound.http.schemas import people as schemas
-from rosalind.db import get_db
-from rosalind.repositories.person_repository import PersonRepository
+from rosalind.adapters.outbound.persistence.repositories.person import PersonRepository
+from rosalind.adapters.outbound.persistence.session import get_db
 from rosalind.services.people import PersonService
 
 router = APIRouter(prefix="/people", tags=["people"])
