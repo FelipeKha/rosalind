@@ -15,7 +15,9 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from rosalind.adapters.outbound.persistence.repositories.person import PersonRepository
+from rosalind.adapters.outbound.persistence.repositories.person import (
+    PostgresPersonRepository,
+)
 from rosalind.services.read_models import PersonProfile
 
 MAX_SEARCH_RESULTS = 25
@@ -23,7 +25,7 @@ MAX_LIST_RESULTS = 100
 
 
 class PersonService:
-    def __init__(self, repo: PersonRepository):
+    def __init__(self, repo: PostgresPersonRepository):
         self._repo = repo
 
     def search_people(self, db: Session, query: str) -> list[PersonProfile]:
@@ -34,5 +36,7 @@ class PersonService:
     def list_people(self, db: Session) -> list[PersonProfile]:
         return self._repo.list_all(db, limit=MAX_LIST_RESULTS)
 
-    def get_person(self, db: Session, person_id: uuid.UUID) -> PersonProfile | None:
+    def get_person(
+        self, db: Session, person_id: uuid.UUID
+    ) -> PersonProfile | None:
         return self._repo.get(db, person_id)

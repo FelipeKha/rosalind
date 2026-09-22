@@ -17,7 +17,7 @@ from rosalind.adapters.outbound.persistence.models.source import (
 )
 
 
-class SourceRecordRepository:
+class PostgresSourceRecordRepository:
     """Dedup-aware persistence for ``raw.source_record``.
 
     Identity is ``(source_account, resource_type, external_id, payload_sha256)``;
@@ -71,7 +71,9 @@ class SourceRecordRepository:
             raise RuntimeError("source record not found after upsert")
         return record
 
-    def list_for_import(self, db: Session, import_id: uuid.UUID) -> list[SourceRecord]:
+    def list_for_import(
+        self, db: Session, import_id: uuid.UUID
+    ) -> list[SourceRecord]:
         return list(
             db.scalars(
                 select(SourceRecord).where(SourceRecord.import_id == import_id)

@@ -24,7 +24,7 @@ from rosalind.adapters.inbound.ingestion.google.models import (
 from rosalind.adapters.inbound.ingestion.google.parser import map_google_person
 from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.repositories.source_record import (
-    SourceRecordRepository,
+    PostgresSourceRecordRepository,
 )
 from rosalind.canonicalization.person import (
     CanonicalizationResult,
@@ -38,7 +38,7 @@ PROCESSING_FAILED = "failed"
 RESULT_OK = "ok"
 RESULT_UNSUPPORTED = "unsupported"
 
-_source_record_repository = SourceRecordRepository()
+_source_record_repository = PostgresSourceRecordRepository()
 
 
 @dataclass(frozen=True)
@@ -122,7 +122,9 @@ def process_import(db: Session, import_id: uuid.UUID) -> ProcessOutcome:
         raise InvalidPayloadError(f"import {import_id} not found")
 
     if import_.source_account_id is None:
-        return ProcessOutcome(result=RESULT_UNSUPPORTED, message="import has no source")
+        return ProcessOutcome(
+            result=RESULT_UNSUPPORTED, message="import has no source"
+        )
 
     records = _source_record_repository.list_for_import(db, import_.id)
     if not records:
@@ -133,7 +135,9 @@ def process_import(db: Session, import_id: uuid.UUID) -> ProcessOutcome:
 
     source_account = db.get(models.SourceAccount, import_.source_account_id)
     if source_account is None:
-        return ProcessOutcome(result=RESULT_UNSUPPORTED, message="source is missing")
+        return ProcessOutcome(
+            result=RESULT_UNSUPPORTED, message="source is missing"
+        )
 
     counters = {
         "people_created": 0,

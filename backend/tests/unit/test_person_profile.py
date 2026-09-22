@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
-from rosalind.adapters.outbound.persistence.repositories.person import PersonRepository
+from rosalind.adapters.outbound.persistence.repositories.person import (
+    PostgresPersonRepository,
+)
 from rosalind.services.people import MAX_SEARCH_RESULTS, PersonService
 
 
@@ -23,7 +25,7 @@ def test_to_profile_maps_all_fields() -> None:
         birth_day=17,
     )
 
-    profile = PersonRepository._to_profile(row)
+    profile = PostgresPersonRepository._to_profile(row)
 
     assert profile.person_id == person_id
     assert profile.display_name == "Alex Morgan"
@@ -53,7 +55,7 @@ def test_to_profile_maps_nulls() -> None:
         birth_day=None,
     )
 
-    profile = PersonRepository._to_profile(row)
+    profile = PostgresPersonRepository._to_profile(row)
 
     assert profile.display_name is None
     assert profile.email_verified is None

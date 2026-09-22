@@ -18,8 +18,10 @@ from rosalind.services.read_models import PersonProfile
 _PROFILE_QUERY = "select * from agent.person_profile"
 
 
-class PersonRepository:
-    def search(self, db: Session, query: str, limit: int) -> list[PersonProfile]:
+class PostgresPersonRepository:
+    def search(
+        self, db: Session, query: str, limit: int
+    ) -> list[PersonProfile]:
         rows = db.execute(
             text(
                 f"{_PROFILE_QUERY} "
@@ -33,7 +35,9 @@ class PersonRepository:
 
     def list_all(self, db: Session, limit: int) -> list[PersonProfile]:
         rows = db.execute(
-            text(f"{_PROFILE_QUERY} order by display_name nulls last limit :limit"),
+            text(
+                f"{_PROFILE_QUERY} order by display_name nulls last limit :limit"
+            ),
             {"limit": limit},
         ).all()
         return [self._to_profile(row) for row in rows]

@@ -14,7 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.inbound.http.schemas import people as schemas
-from rosalind.adapters.outbound.persistence.repositories.person import PersonRepository
+from rosalind.adapters.outbound.persistence.repositories.person import (
+    PostgresPersonRepository,
+)
 from rosalind.adapters.outbound.persistence.session import get_db
 from rosalind.services.people import PersonService
 
@@ -24,7 +26,7 @@ SessionDep = Annotated[Session, Depends(get_db)]
 
 
 def get_service() -> PersonService:
-    return PersonService(PersonRepository())
+    return PersonService(PostgresPersonRepository())
 
 
 ServiceDep = Annotated[PersonService, Depends(get_service)]
@@ -35,7 +37,9 @@ def list_people(
     db: SessionDep,
     svc: ServiceDep,
 ) -> list[schemas.PersonProfileResponse]:
-    return [schemas.PersonProfileResponse(**asdict(p)) for p in svc.list_people(db)]
+    return [
+        schemas.PersonProfileResponse(**asdict(p)) for p in svc.list_people(db)
+    ]
 
 
 @router.get("/search", response_model=list[schemas.PersonProfileResponse])
@@ -45,7 +49,8 @@ def search_people(
     svc: ServiceDep,
 ) -> list[schemas.PersonProfileResponse]:
     return [
-        schemas.PersonProfileResponse(**asdict(p)) for p in svc.search_people(db, q)
+        schemas.PersonProfileResponse(**asdict(p))
+        for p in svc.search_people(db, q)
     ]
 
 
