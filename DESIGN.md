@@ -255,9 +255,21 @@ The backend should keep clear boundaries between:
 ```text
 API schemas        → Pydantic
 Domain objects     → Python classes / dataclasses
+Application services → use cases (``application/services``)
+Ports              → Protocols (``application/ports``)
 Persistence models → SQLAlchemy
 Configuration      → pydantic-settings
 ```
+
+The backend follows a hexagonal (ports & adapters) layout:
+
+```text
+adapters ──► application ──► domain
+```
+
+The `application` layer holds use cases, canonicalization, and ports. It never
+imports concrete adapter classes; `adapters` implements the ports and is the
+only place concrete implementations are wired together (the composition root).
 
 Pydantic should primarily be used at system boundaries and for validation rather than becoming the representation of every internal object.
 
@@ -2945,7 +2957,7 @@ The mapper performs **no value normalization** and has **no database access**. I
 Canonicalization is implemented in:
 
 ```text
-backend/src/rosalind/canonicalization/person.py
+backend/src/rosalind/application/canonicalization/person.py
 ```
 
 The canonicalizer receives:
@@ -2975,7 +2987,7 @@ The canonicalizer uses PostgreSQL uniqueness constraints and `ON CONFLICT`-style
 Email normalization is deliberately outside the provider parser:
 
 ```text
-backend/src/rosalind/canonicalization/email.py
+backend/src/rosalind/application/canonicalization/email.py
 ```
 
 The current `normalize_email()` policy is:
@@ -3017,10 +3029,11 @@ This makes the operation observable and straightforward to test. It also provide
 
 # 36. Ingestion Service
 
-The orchestration entry point for the current Google Person flow is:
+The orchestration entry point for the current Google Person flow is the
+`ProcessingService` in:
 
 ```text
-backend/src/rosalind/ingestion/service.py
+backend/src/rosalind/application/services/processing.py
 ```
 
 with:

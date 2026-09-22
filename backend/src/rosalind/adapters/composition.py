@@ -1,0 +1,39 @@
+"""Composition root: wire application services to concrete adapters.
+
+This is the only place concrete adapter implementations are selected. Application
+services and ports never import these concrete classes. Both the HTTP and MCP
+adapters (and tests) build their service graph from here.
+"""
+
+from __future__ import annotations
+
+from rosalind.adapters.inbound.ingestion.google.parser import GooglePersonParser
+from rosalind.adapters.outbound.google.gateways import (
+    GoogleAuthGatewayImpl,
+    GooglePeopleGatewayImpl,
+)
+from rosalind.adapters.outbound.persistence.repositories.person import (
+    PostgresPersonRepository,
+)
+from rosalind.adapters.outbound.persistence.repositories.source_record import (
+    PostgresSourceRecordRepository,
+)
+from rosalind.application.services.people import PersonService
+from rosalind.application.services.processing import ProcessingService
+from rosalind.application.services.sources import SourceService
+
+google_auth = GoogleAuthGatewayImpl()
+google_people = GooglePeopleGatewayImpl()
+
+source_service = SourceService(google_auth)
+person_service = PersonService(PostgresPersonRepository())
+
+_google_person_parser = GooglePersonParser()
+
+processing_service = ProcessingService(
+    source_records=PostgresSourceRecordRepository(),
+    parsers={_google_person_parser.resource_type: _google_person_parser},
+    google_person_parser=_google_person_parser,
+    google_people=google_people,
+    sources=source_service,
+)

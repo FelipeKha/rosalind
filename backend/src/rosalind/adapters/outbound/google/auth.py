@@ -16,7 +16,7 @@ from google_auth_oauthlib.flow import Flow  # type: ignore[import-untyped]
 from googleapiclient.discovery import Resource, build  # type: ignore[import-untyped]
 
 from rosalind import config
-from rosalind.adapters.outbound.google.errors import ProviderError
+from rosalind.application.errors import ProviderError
 
 GOOGLE_REVOKE_URI = "https://oauth2.googleapis.com/revoke"
 

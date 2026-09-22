@@ -8,12 +8,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
+from rosalind.adapters import composition
 from rosalind.adapters.inbound.http.schemas import sources as schemas
 from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.session import get_db
-from rosalind.services import sources as service
+from rosalind.application.services.sources import SOURCE_CONNECTED, SOURCE_DISCONNECTED
 
 router = APIRouter(prefix="/sources", tags=["sources"])
+
+service = composition.source_service
 
 SessionDep = Annotated[Session, Depends(get_db)]
 
@@ -105,7 +108,5 @@ def _to_detail(
 
 def _status(source: models.SourceAccount, db: Session) -> str:
     return (
-        service.SOURCE_CONNECTED
-        if service.is_connected(db, source.id)
-        else service.SOURCE_DISCONNECTED
+        SOURCE_CONNECTED if service.is_connected(db, source.id) else SOURCE_DISCONNECTED
     )

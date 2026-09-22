@@ -18,7 +18,7 @@ from rosalind.adapters.outbound.persistence.repositories.person import (
     PostgresPersonRepository,
 )
 from rosalind.adapters.outbound.persistence.session import SessionLocal
-from rosalind.services.people import PersonService
+from rosalind.application.services.people import PersonService
 
 mcp = MCPServer("rosalind")
 
@@ -49,9 +49,7 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
     """
     with SessionLocal() as db:
         profile = _service().get_person(db, person_id)
-    return (
-        PersonProfileResult(**asdict(profile)) if profile is not None else None
-    )
+    return PersonProfileResult(**asdict(profile)) if profile is not None else None
 
 
 def main() -> None:
@@ -62,9 +60,7 @@ def main() -> None:
             port=config.settings.mcp_port,
         )
     elif config.settings.mcp_transport == "sse":
-        mcp.run(
-            "sse", host=config.settings.mcp_host, port=config.settings.mcp_port
-        )
+        mcp.run("sse", host=config.settings.mcp_host, port=config.settings.mcp_port)
     else:
         mcp.run()
 

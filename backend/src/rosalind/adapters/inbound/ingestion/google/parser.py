@@ -6,7 +6,10 @@ matching. It must produce the same ``PersonObservation`` for the same input.
 
 from __future__ import annotations
 
+from typing import Any
+
 from rosalind.adapters.inbound.ingestion.google.models import (
+    GOOGLE_PERSON_RESOURCE_TYPE,
     GoogleBirthday,
     GoogleEmailAddress,
     GoogleFieldMetadata,
@@ -16,6 +19,7 @@ from rosalind.adapters.inbound.ingestion.google.models import (
     GooglePerson,
     GoogleSource,
 )
+from rosalind.application.errors import InvalidPayloadError
 from rosalind.domain.person import (
     DateObservation,
     EmailObservation,
@@ -180,3 +184,25 @@ def _map_locale(locale: GoogleLocale, index: int) -> LocaleObservation:
         source_verified=verified,
         field_path=f"$.locales[{index}]",
     )
+
+
+class GooglePersonParser:
+    """``PersonParser`` implementation for the Google People ``Person`` resource.
+
+    Provider-specific concerns (resource identity, etag, validation) stay here;
+    the resulting ``PersonObservation`` is provider-independent.
+    """
+
+    resource_type = GOOGLE_PERSON_RESOURCE_TYPE
+
+    def external_id(self, payload: dict[str, Any]) -> str:
+        resource_name = payload.get("resourceName")
+        if not resource_name:
+            raise InvalidPayloadError("provider payload is missing resourceName")
+        return resource_name if isinstance(resource_name, str) else str(resource_name)
+
+    def source_etag(self, payload: dict[str, Any]) -> str | None:
+        return payload.get("etag")
+
+    def parse(self, payload: dict[str, Any]) -> PersonObservation:
+        return map_google_person(GooglePerson.model_validate(payload))

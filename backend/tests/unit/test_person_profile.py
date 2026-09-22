@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from rosalind.adapters.outbound.persistence.repositories.person import (
     PostgresPersonRepository,
 )
-from rosalind.services.people import MAX_SEARCH_RESULTS, PersonService
+from rosalind.application.services.people import MAX_SEARCH_RESULTS, PersonService
 
 
 def test_to_profile_maps_all_fields() -> None:

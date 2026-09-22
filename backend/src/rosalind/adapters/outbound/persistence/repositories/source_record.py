@@ -71,9 +71,7 @@ class PostgresSourceRecordRepository:
             raise RuntimeError("source record not found after upsert")
         return record
 
-    def list_for_import(
-        self, db: Session, import_id: uuid.UUID
-    ) -> list[SourceRecord]:
+    def list_for_import(self, db: Session, import_id: uuid.UUID) -> list[SourceRecord]:
         return list(
             db.scalars(
                 select(SourceRecord).where(SourceRecord.import_id == import_id)

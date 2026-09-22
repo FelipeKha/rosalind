@@ -3,14 +3,15 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
-from rosalind.adapters.inbound.ingestion import manifest
-from rosalind.adapters.inbound.ingestion.errors import (
+from rosalind.adapters import composition
+from rosalind.adapters.outbound.persistence import models
+from rosalind.application import manifest
+from rosalind.application.errors import (
     ImportNotFoundError,
     InvalidImportStateError,
     InvalidManifestError,
 )
-from rosalind.adapters.outbound.persistence import models
-from rosalind.services import imports, sources
+from rosalind.application.services import imports
 
 
 def _entry(
@@ -20,7 +21,9 @@ def _entry(
 
 
 def _source(db: Session) -> models.SourceAccount:
-    return sources.create_source(db, provider="google", name="google-personal")
+    return composition.source_service.create_source(
+        db, provider="google", name="google-personal"
+    )
 
 
 def test_create_and_complete_import(db_session: Session) -> None:
@@ -88,10 +91,10 @@ def test_get_import_unknown_id(db_session: Session) -> None:
 
 
 def test_list_imports_returns_all(db_session: Session) -> None:
-    first_source = sources.create_source(
+    first_source = composition.source_service.create_source(
         db_session, provider="google", name="google-personal"
     )
-    second_source = sources.create_source(
+    second_source = composition.source_service.create_source(
         db_session, provider="apple", name="apple-personal"
     )
 
@@ -124,7 +127,7 @@ def test_delete_import_unknown_id(db_session: Session) -> None:
 
 
 def test_create_import_requires_source(db_session: Session) -> None:
-    from rosalind.adapters.outbound.google.errors import SourceNotFoundError
+    from rosalind.application.errors import SourceNotFoundError
 
     with pytest.raises(SourceNotFoundError):
-        sources.resolve_source(db_session, "does-not-exist")
+        composition.source_service.resolve_source(db_session, "does-not-exist")

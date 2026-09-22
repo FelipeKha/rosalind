@@ -3,9 +3,6 @@
 These are plain value objects: no SQL, no HTTP, no MCP concerns. They mirror the
 ``agent.person_profile`` view (the canonical read model) and are shared by the
 REST API and MCP adapters.
-
-Note: read models currently live in the services package as a temporary home.
-They will be relocated into a dedicated application/query-model layer.
 """
 
 from __future__ import annotations

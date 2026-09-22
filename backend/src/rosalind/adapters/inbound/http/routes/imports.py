@@ -9,14 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from rosalind import config
+from rosalind.adapters import composition
 from rosalind.adapters.inbound.http.schemas import imports as schemas
-from rosalind.adapters.inbound.ingestion import manifest
 from rosalind.adapters.outbound.object_storage import s3
 from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.session import get_db
-from rosalind.services import imports as imports_service
-from rosalind.services import processing
-from rosalind.services import sources as sources_service
+from rosalind.application import manifest
+from rosalind.application.services import imports as imports_service
+from rosalind.application.services.processing import PROCESSING_COMPLETED
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -40,15 +40,15 @@ def create_import(
     body: schemas.ImportCreateRequest,
     db: SessionDep,
 ) -> schemas.ImportCreatedResponse:
-    source = sources_service.resolve_source(db, body.source_name)
+    source = composition.source_service.resolve_source(db, body.source_name)
 
     if body.type == imports_service.IMPORT_TYPE_TAKEOUT:
         import_ = imports_service.create_import(db, source, body.type)
     elif body.type == imports_service.IMPORT_TYPE_API:
         import_ = imports_service.create_import(db, source, body.type)
-        processing.import_api_profile(db, source, import_)
+        composition.processing_service.import_api_profile(db, source, import_)
         import_.ingestion_status = imports_service.INGESTION_COMPLETED
-        import_.processing_status = processing.PROCESSING_COMPLETED
+        import_.processing_status = PROCESSING_COMPLETED
         db.commit()
         db.refresh(import_)
     else:
@@ -100,7 +100,7 @@ def process_import(
     import_id: uuid.UUID,
     db: SessionDep,
 ) -> schemas.ProcessingResultResponse:
-    outcome = processing.process_import(db, import_id)
+    outcome = composition.processing_service.process_import(db, import_id)
     return schemas.ProcessingResultResponse(
         import_id=import_id,
         processing_status=_processing_status(db, import_id),
