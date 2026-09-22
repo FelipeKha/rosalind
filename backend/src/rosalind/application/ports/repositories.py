@@ -8,16 +8,41 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
 from rosalind.application.read_models import PersonProfile
-from rosalind.domain.source import Import, ImportFile, SourceAccount
+from rosalind.domain.person import (
+    DateObservation,
+    EmailObservation,
+    GenderObservation,
+    LocaleObservation,
+    NameObservation,
+)
+from rosalind.domain.source import (
+    Import,
+    ImportFile,
+    SourceAccount,
+    SourceRecord,
+    SourceRef,
+)
 
-if TYPE_CHECKING:
-    from rosalind.adapters.outbound.persistence.models.source import SourceRecord
+
+@dataclass(frozen=True)
+class FactUpsertResult:
+    """Outcome of recording one observation as a canonical fact.
+
+    Reports whether the canonical fact and its supporting assertion were newly
+    created, so the caller can tally idempotency counters without knowing how
+    many rows (fact, assertion, link) the adapter touched.
+    """
+
+    fact_id: uuid.UUID
+    fact_created: bool
+    assertion_created: bool
 
 
 class PersonRepository(Protocol):
@@ -98,3 +123,97 @@ class ImportRepository(Protocol):
     ) -> Import: ...
 
     def delete(self, db: Session, import_id: uuid.UUID) -> None: ...
+
+
+class CanonicalPersonRepository(Protocol):
+    """Write port for canonicalizing person observations.
+
+    Operates only on domain value objects; the adapter owns the SQL and the
+    concrete fact/assertion/link tables behind each operation.
+    """
+
+    def find_person_ids(
+        self, db: Session, *, source_account_id: uuid.UUID, refs: tuple[SourceRef, ...]
+    ) -> set[uuid.UUID]: ...
+
+    def create_person(self, db: Session) -> uuid.UUID: ...
+
+    def upsert_source_identity(
+        self,
+        db: Session,
+        *,
+        source_account_id: uuid.UUID,
+        person_id: uuid.UUID,
+        refs: tuple[SourceRef, ...],
+        resource_name: str,
+    ) -> dict[SourceRef, uuid.UUID]: ...
+
+    def upsert_name(
+        self,
+        db: Session,
+        *,
+        person_id: uuid.UUID,
+        observation: NameObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_email(
+        self,
+        db: Session,
+        *,
+        person_id: uuid.UUID,
+        observation: EmailObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_date(
+        self,
+        db: Session,
+        *,
+        person_id: uuid.UUID,
+        observation: DateObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_gender(
+        self,
+        db: Session,
+        *,
+        person_id: uuid.UUID,
+        observation: GenderObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_locale(
+        self,
+        db: Session,
+        *,
+        person_id: uuid.UUID,
+        observation: LocaleObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def set_name_primary(
+        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_email_primary(
+        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_date_primary(
+        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_gender_primary(
+        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_locale_primary(
+        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...

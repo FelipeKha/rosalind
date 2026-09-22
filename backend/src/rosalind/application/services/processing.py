@@ -13,13 +13,13 @@ import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from rosalind.application.canonicalization.person import (
     CanonicalizationResult,
-    canonicalize,
+    CanonicalizationService,
 )
 from rosalind.application.errors import InvalidPayloadError, SourceNotFoundError
 from rosalind.application.ports.parsers import PersonParser
@@ -29,10 +29,7 @@ from rosalind.application.ports.repositories import (
     SourceRecordRepository,
 )
 from rosalind.application.services.sources import SourceService
-from rosalind.domain.source import Import, SourceAccount
-
-if TYPE_CHECKING:
-    from rosalind.adapters.outbound.persistence.models.source import SourceRecord
+from rosalind.domain.source import Import, SourceAccount, SourceRecord
 
 PROCESSING_PENDING = "pending"
 PROCESSING_COMPLETED = "completed"
@@ -71,6 +68,7 @@ class ProcessingService:
         people: PeopleGateway,
         sources: SourceService,
         imports: ImportRepository,
+        canonicalizer: CanonicalizationService,
     ):
         self._source_records = source_records
         self._parsers = parsers
@@ -78,6 +76,7 @@ class ProcessingService:
         self._people = people
         self._sources = sources
         self._imports = imports
+        self._canonicalizer = canonicalizer
 
     def ingest_person(
         self,
@@ -178,7 +177,9 @@ class ProcessingService:
         )
 
         observation = parser.parse(payload)
-        result = canonicalize(db, source_account, source_record, observation)
+        result = self._canonicalizer.canonicalize(
+            db, source_account, source_record, observation
+        )
         db.commit()
         return result
 
@@ -194,4 +195,6 @@ class ProcessingService:
                 f"no canonicalizer for resource type {source_record.resource_type!r}"
             )
         observation = parser.parse(source_record.payload)
-        return canonicalize(db, source_account, source_record, observation)
+        return self._canonicalizer.canonicalize(
+            db, source_account, source_record, observation
+        )

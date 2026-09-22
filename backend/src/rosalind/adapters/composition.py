@@ -10,6 +10,9 @@ from __future__ import annotations
 from rosalind.adapters.inbound.ingestion.google.parser import GooglePersonParser
 from rosalind.adapters.outbound.google.auth import GoogleAuthGateway
 from rosalind.adapters.outbound.google.people import GooglePeopleGateway
+from rosalind.adapters.outbound.persistence.repositories.canonical_person import (
+    PostgresCanonicalPersonRepository,
+)
 from rosalind.adapters.outbound.persistence.repositories.imports import (
     PostgresImportRepository,
 )
@@ -22,6 +25,7 @@ from rosalind.adapters.outbound.persistence.repositories.source_account import (
 from rosalind.adapters.outbound.persistence.repositories.source_record import (
     PostgresSourceRecordRepository,
 )
+from rosalind.application.canonicalization.person import CanonicalizationService
 from rosalind.application.services import imports as imports_service
 from rosalind.application.services.people import PersonService
 from rosalind.application.services.processing import ProcessingService
@@ -44,4 +48,5 @@ processing_service = ProcessingService(
     people=google_people,
     sources=source_service,
     imports=PostgresImportRepository(),
+    canonicalizer=CanonicalizationService(PostgresCanonicalPersonRepository()),
 )

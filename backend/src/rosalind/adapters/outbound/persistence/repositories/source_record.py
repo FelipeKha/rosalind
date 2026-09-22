@@ -11,8 +11,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.outbound.persistence.models.base import utcnow
-from rosalind.adapters.outbound.persistence.models.source import SourceRecord
-from rosalind.domain.source import SourceAccount
+from rosalind.adapters.outbound.persistence.models.source import (
+    SourceRecord as SourceRecordModel,
+)
+from rosalind.domain.source import SourceAccount, SourceRecord
 
 
 class PostgresSourceRecordRepository:
@@ -48,30 +50,44 @@ class PostgresSourceRecordRepository:
             "payload_sha256": payload_sha256,
         }
         record_id = db.scalar(
-            pg_insert(SourceRecord)
+            pg_insert(SourceRecordModel)
             .values(**values)
             .on_conflict_do_nothing(constraint="uq_source_record_snapshot")
-            .returning(SourceRecord.id)
+            .returning(SourceRecordModel.id)
         )
         if record_id is None:
             record_id = db.scalar(
-                select(SourceRecord.id).where(
-                    SourceRecord.source_account_id == source_account.id,
-                    SourceRecord.resource_type == resource_type,
-                    SourceRecord.external_id == external_id,
-                    SourceRecord.payload_sha256 == payload_sha256,
+                select(SourceRecordModel.id).where(
+                    SourceRecordModel.source_account_id == source_account.id,
+                    SourceRecordModel.resource_type == resource_type,
+                    SourceRecordModel.external_id == external_id,
+                    SourceRecordModel.payload_sha256 == payload_sha256,
                 )
             )
 
         db.commit()
-        record = db.get(SourceRecord, record_id)
+        record = db.get(SourceRecordModel, record_id)
         if record is None:
             raise RuntimeError("source record not found after upsert")
-        return record
+        return self._to_domain(record)
 
     def list_for_import(self, db: Session, import_id: uuid.UUID) -> list[SourceRecord]:
-        return list(
-            db.scalars(
-                select(SourceRecord).where(SourceRecord.import_id == import_id)
+        return [
+            self._to_domain(record)
+            for record in db.scalars(
+                select(SourceRecordModel).where(
+                    SourceRecordModel.import_id == import_id
+                )
             ).all()
+        ]
+
+    @staticmethod
+    def _to_domain(record: SourceRecordModel) -> SourceRecord:
+        return SourceRecord(
+            id=record.id,
+            source_account_id=record.source_account_id,
+            resource_type=record.resource_type,
+            external_id=record.external_id,
+            payload=record.payload,
+            payload_sha256=record.payload_sha256,
         )
