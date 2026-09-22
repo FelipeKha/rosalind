@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from rosalind.domain.models import PersonProfile
+from rosalind.services.read_models import PersonProfile
 
 _PROFILE_QUERY = "select * from agent.person_profile"
 

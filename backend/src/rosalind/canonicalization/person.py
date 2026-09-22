@@ -21,15 +21,15 @@ from sqlalchemy.orm import Session
 from rosalind.adapters.inbound.ingestion.errors import EntityResolutionConflictError
 from rosalind.adapters.outbound.persistence import models
 from rosalind.canonicalization.email import normalize_email
-from rosalind.domain.observations.person import (
+from rosalind.domain.person import (
     DateObservation,
     EmailObservation,
     GenderObservation,
     LocaleObservation,
     NameObservation,
     PersonObservation,
-    SourceRef,
 )
+from rosalind.domain.source import SourceRef
 
 
 @dataclass(frozen=True)

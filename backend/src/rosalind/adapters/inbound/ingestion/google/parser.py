@@ -16,15 +16,15 @@ from rosalind.adapters.inbound.ingestion.google.models import (
     GooglePerson,
     GoogleSource,
 )
-from rosalind.domain.observations.person import (
+from rosalind.domain.person import (
     DateObservation,
     EmailObservation,
     GenderObservation,
     LocaleObservation,
     NameObservation,
     PersonObservation,
-    SourceRef,
 )
+from rosalind.domain.source import SourceRef
 
 
 def map_google_person(person: GooglePerson) -> PersonObservation:

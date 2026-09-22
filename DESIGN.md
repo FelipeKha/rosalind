@@ -2874,7 +2874,7 @@ Pydantic model
 The validated Google object is mapped into frozen dataclasses in:
 
 ```text
-backend/src/rosalind/domain/observations/person.py
+backend/src/rosalind/domain/person/observations.py
 ```
 
 The current observation types are:

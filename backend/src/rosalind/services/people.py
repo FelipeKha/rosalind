@@ -16,7 +16,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.outbound.persistence.repositories.person import PersonRepository
-from rosalind.domain.models import PersonProfile
+from rosalind.services.read_models import PersonProfile
 
 MAX_SEARCH_RESULTS = 25
 MAX_LIST_RESULTS = 100
