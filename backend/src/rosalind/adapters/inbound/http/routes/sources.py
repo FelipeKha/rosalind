@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from rosalind import models
-from rosalind.api.schemas import sources as schemas
+from rosalind.adapters.inbound.http.schemas import sources as schemas
 from rosalind.db import get_db
 from rosalind.services import sources as service
 

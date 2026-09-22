@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from rosalind.api.routes import auth, health, imports, people, sources
+from rosalind.adapters.inbound.http.routes import auth, health, imports, people, sources
 from rosalind.auth.errors import (
     InvalidStateError,
     ProviderError,

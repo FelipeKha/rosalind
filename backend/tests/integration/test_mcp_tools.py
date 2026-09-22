@@ -8,9 +8,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
-import rosalind.mcp.server as mcp_server
+import rosalind.adapters.inbound.mcp.server as mcp_server
 from rosalind import models
-from rosalind.mcp.schemas import PersonProfileResult
+from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
 from rosalind.services import processing
 
 FIXTURE = (

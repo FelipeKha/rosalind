@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from rosalind.api.schemas import people as schemas
+from rosalind.adapters.inbound.http.schemas import people as schemas
 from rosalind.db import get_db
 from rosalind.repositories.person_repository import PersonRepository
 from rosalind.services.people import PersonService

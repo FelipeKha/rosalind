@@ -13,8 +13,8 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from rosalind import config
+from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
 from rosalind.db import SessionLocal
-from rosalind.mcp.schemas import PersonProfileResult
 from rosalind.repositories.person_repository import PersonRepository
 from rosalind.services.people import PersonService
 

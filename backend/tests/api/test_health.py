@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from rosalind.api.app import app
+from rosalind.adapters.inbound.http.app import app
 
 client = TestClient(app)
 

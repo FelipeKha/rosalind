@@ -422,7 +422,7 @@ format:
     uv run ruff format .
 
 serve:
-    uv run uvicorn rosalind.api.app:app --reload
+    uv run uvicorn rosalind.adapters.inbound.http.app:app --reload
 
 ci: lint typecheck test
 ```
@@ -1852,7 +1852,7 @@ This prevents MCP-specific business logic or SQL from diverging from the public 
 The MCP server is part of the backend application:
 
 ```text
-backend/src/rosalind/mcp/
+backend/src/rosalind/adapters/inbound/mcp/
 ├── __init__.py
 ├── schemas.py
 └── server.py

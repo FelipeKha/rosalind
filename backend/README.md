@@ -14,7 +14,7 @@ uv sync
 just migrate
 just serve
 # or
-uv run uvicorn rosalind.api.app:app --reload
+uv run uvicorn rosalind.adapters.inbound.http.app:app --reload
 ```
 
 The API is served at `http://localhost:8000`.

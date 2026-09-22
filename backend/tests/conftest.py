@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.community.postgres import PostgresContainer
 
 from rosalind import config
-from rosalind.api.app import app
+from rosalind.adapters.inbound.http.app import app
 from rosalind.db import get_db
 from rosalind.models import Base
 from tests._db import make_migrated_engine, reset_schemas
