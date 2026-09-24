@@ -7,21 +7,31 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 
-from rosalind.adapters import composition
-from rosalind.adapters.composition import get_uow
+from rosalind.adapters.composition import (
+    get_import_service,
+    get_object_storage,
+    get_processing_service,
+    get_uow,
+)
 from rosalind.adapters.inbound.http.schemas import imports as schemas
 from rosalind.application import manifest
+from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
+from rosalind.application.services.imports import ImportService
+from rosalind.application.services.processing import ProcessingService
 from rosalind.domain.source import Import, ImportFile
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
 UowDep = Annotated[UnitOfWork, Depends(get_uow)]
+ImportDep = Annotated[ImportService, Depends(get_import_service)]
+ProcessingDep = Annotated[ProcessingService, Depends(get_processing_service)]
+StorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]
 
 
 @router.get("", response_model=schemas.ImportListResponse)
-def list_imports(uow: UowDep) -> schemas.ImportListResponse:
-    imports = composition.import_service.list_imports(uow)
+def list_imports(uow: UowDep, import_service: ImportDep) -> schemas.ImportListResponse:
+    imports = import_service.list_imports(uow)
     return schemas.ImportListResponse(
         imports=[_to_summary(import_) for import_ in imports]
     )
@@ -35,14 +45,16 @@ def list_imports(uow: UowDep) -> schemas.ImportListResponse:
 def create_import(
     body: schemas.ImportCreateRequest,
     uow: UowDep,
+    import_service: ImportDep,
+    storage: StorageDep,
 ) -> schemas.ImportCreatedResponse:
-    import_ = composition.import_service.create_import(uow, body.source_name, body.type)
+    import_ = import_service.create_import(uow, body.source_name, body.type)
     return schemas.ImportCreatedResponse(
         import_id=import_.id,
         source_id=import_.source_account_id,
         source_name=import_.source_name,
         type=import_.type,
-        bucket=composition.object_storage.bucket,
+        bucket=storage.bucket,
         storage_prefix=manifest.storage_prefix(import_.id),
         ingestion_status=import_.ingestion_status,
         processing_status=import_.processing_status,
@@ -57,6 +69,7 @@ def complete_import(
     import_id: uuid.UUID,
     body: schemas.ManifestRequest,
     uow: UowDep,
+    import_service: ImportDep,
 ) -> schemas.ImportSummaryResponse:
     entries = [
         manifest.FileEntry(
@@ -68,7 +81,7 @@ def complete_import(
         )
         for f in body.files
     ]
-    import_ = composition.import_service.complete_import(uow, import_id, entries)
+    import_ = import_service.complete_import(uow, import_id, entries)
     return _to_summary(import_)
 
 
@@ -79,8 +92,9 @@ def complete_import(
 def process_import(
     import_id: uuid.UUID,
     uow: UowDep,
+    processing: ProcessingDep,
 ) -> schemas.ProcessingResultResponse:
-    outcome = composition.processing_service.process_import(uow, import_id)
+    outcome = processing.process_import(uow, import_id)
     return schemas.ProcessingResultResponse(
         import_id=import_id,
         processing_status=outcome.processing_status,
@@ -100,8 +114,9 @@ def process_import(
 def get_import(
     import_id: uuid.UUID,
     uow: UowDep,
+    import_service: ImportDep,
 ) -> schemas.ImportDetailResponse:
-    import_ = composition.import_service.get_import(uow, import_id)
+    import_ = import_service.get_import(uow, import_id)
     return schemas.ImportDetailResponse(
         **_to_summary(import_).model_dump(),
         files=[_to_file(f) for f in import_.files],
@@ -115,8 +130,9 @@ def get_import(
 def delete_import(
     import_id: uuid.UUID,
     uow: UowDep,
+    import_service: ImportDep,
 ) -> Response:
-    composition.import_service.delete_import(uow, import_id)
+    import_service.delete_import(uow, import_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

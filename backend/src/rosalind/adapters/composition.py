@@ -21,6 +21,7 @@ from rosalind.adapters.outbound.persistence.repositories.person import (
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.application.canonicalization.person import CanonicalizationService
+from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.imports import ImportService
 from rosalind.application.services.people import PersonService
@@ -75,3 +76,19 @@ def get_person_service() -> Iterator[PersonService]:
     """Provide a session-bound read-only person service for a request."""
     with SessionLocal() as session:
         yield build_person_service(session)
+
+
+def get_source_service() -> SourceService:
+    return source_service
+
+
+def get_processing_service() -> ProcessingService:
+    return processing_service
+
+
+def get_import_service() -> ImportService:
+    return import_service
+
+
+def get_object_storage() -> ObjectStorage:
+    return object_storage
