@@ -25,9 +25,11 @@ class PostgresSourceRecordRepository:
     a new observation.
     """
 
+    def __init__(self, session: Session):
+        self._session = session
+
     def persist(
         self,
-        db: Session,
         *,
         source_account: SourceAccount,
         resource_type: str,
@@ -49,14 +51,14 @@ class PostgresSourceRecordRepository:
             "payload": payload,
             "payload_sha256": payload_sha256,
         }
-        record_id = db.scalar(
+        record_id = self._session.scalar(
             pg_insert(SourceRecordModel)
             .values(**values)
             .on_conflict_do_nothing(constraint="uq_source_record_snapshot")
             .returning(SourceRecordModel.id)
         )
         if record_id is None:
-            record_id = db.scalar(
+            record_id = self._session.scalar(
                 select(SourceRecordModel.id).where(
                     SourceRecordModel.source_account_id == source_account.id,
                     SourceRecordModel.resource_type == resource_type,
@@ -65,16 +67,16 @@ class PostgresSourceRecordRepository:
                 )
             )
 
-        db.commit()
-        record = db.get(SourceRecordModel, record_id)
+        self._session.flush()
+        record = self._session.get(SourceRecordModel, record_id)
         if record is None:
             raise RuntimeError("source record not found after upsert")
         return self._to_domain(record)
 
-    def list_for_import(self, db: Session, import_id: uuid.UUID) -> list[SourceRecord]:
+    def list_for_import(self, import_id: uuid.UUID) -> list[SourceRecord]:
         return [
             self._to_domain(record)
-            for record in db.scalars(
+            for record in self._session.scalars(
                 select(SourceRecordModel).where(
                     SourceRecordModel.import_id == import_id
                 )

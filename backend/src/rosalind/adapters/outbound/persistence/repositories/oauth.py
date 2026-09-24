@@ -27,9 +27,12 @@ _TOKEN_TYPE = "Bearer"  # nosec B105
 
 
 class PostgresOAuthCredentialRepository:
-    def exists(self, db: Session, source_account_id: uuid.UUID) -> bool:
+    def __init__(self, session: Session):
+        self._session = session
+
+    def exists(self, source_account_id: uuid.UUID) -> bool:
         return (
-            db.scalar(
+            self._session.scalar(
                 select(OAuthCredentialModel.id).where(
                     OAuthCredentialModel.source_account_id == source_account_id
                 )
@@ -37,10 +40,8 @@ class PostgresOAuthCredentialRepository:
             is not None
         )
 
-    def get_latest(
-        self, db: Session, source_account_id: uuid.UUID
-    ) -> StoredCredential | None:
-        model = db.scalars(
+    def get_latest(self, source_account_id: uuid.UUID) -> StoredCredential | None:
+        model = self._session.scalars(
             select(OAuthCredentialModel)
             .where(OAuthCredentialModel.source_account_id == source_account_id)
             .order_by(OAuthCredentialModel.created_at.desc())
@@ -49,10 +50,8 @@ class PostgresOAuthCredentialRepository:
             return None
         return self._to_domain(model, tolerate_decrypt_failure=False)
 
-    def list_all(
-        self, db: Session, source_account_id: uuid.UUID
-    ) -> list[StoredCredential]:
-        models = db.scalars(
+    def list_all(self, source_account_id: uuid.UUID) -> list[StoredCredential]:
+        models = self._session.scalars(
             select(OAuthCredentialModel).where(
                 OAuthCredentialModel.source_account_id == source_account_id
             )
@@ -63,7 +62,6 @@ class PostgresOAuthCredentialRepository:
 
     def upsert(
         self,
-        db: Session,
         *,
         account_id: uuid.UUID,
         provider: str,
@@ -72,7 +70,7 @@ class PostgresOAuthCredentialRepository:
         scopes: list[str] | None,
         expires_at: datetime | None,
     ) -> None:
-        credential = db.scalars(
+        credential = self._session.scalars(
             select(OAuthCredentialModel).where(
                 OAuthCredentialModel.source_account_id == account_id,
                 OAuthCredentialModel.provider == provider,
@@ -82,7 +80,7 @@ class PostgresOAuthCredentialRepository:
             credential = OAuthCredentialModel(
                 provider=provider, source_account_id=account_id
             )
-            db.add(credential)
+            self._session.add(credential)
 
         credential.token_type = _TOKEN_TYPE
         credential.access_token_encrypted = security.encrypt_secret(access_token)
@@ -94,14 +92,13 @@ class PostgresOAuthCredentialRepository:
 
     def update_tokens(
         self,
-        db: Session,
         *,
         account_id: uuid.UUID,
         provider: str,
         access_token: str,
         expires_at: datetime | None,
     ) -> None:
-        credential = db.scalars(
+        credential = self._session.scalars(
             select(OAuthCredentialModel).where(
                 OAuthCredentialModel.source_account_id == account_id,
                 OAuthCredentialModel.provider == provider,
@@ -112,14 +109,14 @@ class PostgresOAuthCredentialRepository:
         credential.access_token_encrypted = security.encrypt_secret(access_token)
         credential.expires_at = expires_at
 
-    def delete_all(self, db: Session, source_account_id: uuid.UUID) -> None:
-        models = db.scalars(
+    def delete_all(self, source_account_id: uuid.UUID) -> None:
+        models = self._session.scalars(
             select(OAuthCredentialModel).where(
                 OAuthCredentialModel.source_account_id == source_account_id
             )
         ).all()
         for model in models:
-            db.delete(model)
+            self._session.delete(model)
 
     @staticmethod
     def _to_domain(
@@ -148,9 +145,11 @@ class PostgresOAuthCredentialRepository:
 
 
 class PostgresOAuthAuthRequestRepository:
+    def __init__(self, session: Session):
+        self._session = session
+
     def create(
         self,
-        db: Session,
         *,
         state: str,
         source_account_id: uuid.UUID,
@@ -158,7 +157,7 @@ class PostgresOAuthAuthRequestRepository:
         code_verifier: str | None,
         expires_at: datetime,
     ) -> None:
-        db.add(
+        self._session.add(
             OAuthAuthRequestModel(
                 state=state,
                 source_account_id=source_account_id,
@@ -168,8 +167,8 @@ class PostgresOAuthAuthRequestRepository:
             )
         )
 
-    def get(self, db: Session, state: str) -> AuthRequest | None:
-        model = db.get(OAuthAuthRequestModel, state)
+    def get(self, state: str) -> AuthRequest | None:
+        model = self._session.get(OAuthAuthRequestModel, state)
         if model is None:
             return None
         return AuthRequest(
@@ -182,15 +181,15 @@ class PostgresOAuthAuthRequestRepository:
             consumed_at=model.consumed_at,
         )
 
-    def reassign(self, db: Session, state: str, source_account_id: uuid.UUID) -> None:
-        model = db.get(OAuthAuthRequestModel, state)
+    def reassign(self, state: str, source_account_id: uuid.UUID) -> None:
+        model = self._session.get(OAuthAuthRequestModel, state)
         if model is None:
             return
         model.source_account_id = source_account_id
-        db.flush()
+        self._session.flush()
 
-    def mark_connected(self, db: Session, state: str, consumed_at: datetime) -> None:
-        model = db.get(OAuthAuthRequestModel, state)
+    def mark_connected(self, state: str, consumed_at: datetime) -> None:
+        model = self._session.get(OAuthAuthRequestModel, state)
         if model is None:
             return
         model.status = "connected"

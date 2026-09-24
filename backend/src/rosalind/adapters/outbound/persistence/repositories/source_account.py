@@ -20,20 +20,23 @@ from rosalind.domain.source import SourceAccount
 
 
 class PostgresSourceAccountRepository:
-    def get(self, db: Session, source_id: uuid.UUID) -> SourceAccount | None:
-        account = db.get(SourceAccountModel, source_id)
+    def __init__(self, session: Session):
+        self._session = session
+
+    def get(self, source_id: uuid.UUID) -> SourceAccount | None:
+        account = self._session.get(SourceAccountModel, source_id)
         return self._to_domain(account) if account is not None else None
 
-    def get_by_name(self, db: Session, name: str) -> SourceAccount | None:
-        account = db.scalar(
+    def get_by_name(self, name: str) -> SourceAccount | None:
+        account = self._session.scalar(
             select(SourceAccountModel).where(SourceAccountModel.name == name)
         )
         return self._to_domain(account) if account is not None else None
 
     def get_by_identity(
-        self, db: Session, provider: str, account_identifier: str
+        self, provider: str, account_identifier: str
     ) -> SourceAccount | None:
-        account = db.scalar(
+        account = self._session.scalar(
             select(SourceAccountModel).where(
                 SourceAccountModel.provider == provider,
                 SourceAccountModel.account_identifier == account_identifier,
@@ -41,37 +44,35 @@ class PostgresSourceAccountRepository:
         )
         return self._to_domain(account) if account is not None else None
 
-    def list(self, db: Session) -> list[SourceAccount]:
-        accounts = db.scalars(
+    def list(self) -> list[SourceAccount]:
+        accounts = self._session.scalars(
             select(SourceAccountModel).order_by(SourceAccountModel.created_at)
         ).all()
         return [self._to_domain(account) for account in accounts]
 
-    def create(
-        self, db: Session, *, provider: str, name: str | None = None
-    ) -> SourceAccount:
+    def create(self, *, provider: str, name: str | None = None) -> SourceAccount:
         account = SourceAccountModel(provider=provider, name=name)
-        db.add(account)
-        db.flush()
+        self._session.add(account)
+        self._session.flush()
         return self._to_domain(account)
 
-    def update(self, db: Session, account: SourceAccount) -> SourceAccount:
-        model = db.get(SourceAccountModel, account.id)
+    def update(self, account: SourceAccount) -> SourceAccount:
+        model = self._session.get(SourceAccountModel, account.id)
         if model is None:
             raise ValueError(f"source account {account.id} not found")
         model.provider = account.provider
         model.name = account.name
         model.account_identifier = account.account_identifier
         model.display_name = account.display_name
-        db.flush()
+        self._session.flush()
         return self._to_domain(model)
 
-    def delete(self, db: Session, source_id: uuid.UUID) -> None:
-        model = db.get(SourceAccountModel, source_id)
+    def delete(self, source_id: uuid.UUID) -> None:
+        model = self._session.get(SourceAccountModel, source_id)
         if model is None:
             return
-        db.delete(model)
-        db.flush()
+        self._session.delete(model)
+        self._session.flush()
 
     @staticmethod
     def _to_domain(account: SourceAccountModel) -> SourceAccount:

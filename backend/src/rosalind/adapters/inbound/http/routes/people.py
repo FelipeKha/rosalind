@@ -11,51 +11,37 @@ from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
-from rosalind.adapters import composition
 from rosalind.adapters.inbound.http.schemas import people as schemas
-from rosalind.adapters.outbound.persistence.session import get_db
+from rosalind.adapters.outbound.persistence.session import get_person_service
 from rosalind.application.services.people import PersonService
 
 router = APIRouter(prefix="/people", tags=["people"])
 
-SessionDep = Annotated[Session, Depends(get_db)]
-
-
-def get_service() -> PersonService:
-    return composition.person_service
-
-
-ServiceDep = Annotated[PersonService, Depends(get_service)]
+ServiceDep = Annotated[PersonService, Depends(get_person_service)]
 
 
 @router.get("", response_model=list[schemas.PersonProfileResponse])
 def list_people(
-    db: SessionDep,
     svc: ServiceDep,
 ) -> list[schemas.PersonProfileResponse]:
-    return [schemas.PersonProfileResponse(**asdict(p)) for p in svc.list_people(db)]
+    return [schemas.PersonProfileResponse(**asdict(p)) for p in svc.list_people()]
 
 
 @router.get("/search", response_model=list[schemas.PersonProfileResponse])
 def search_people(
     q: str,
-    db: SessionDep,
     svc: ServiceDep,
 ) -> list[schemas.PersonProfileResponse]:
-    return [
-        schemas.PersonProfileResponse(**asdict(p)) for p in svc.search_people(db, q)
-    ]
+    return [schemas.PersonProfileResponse(**asdict(p)) for p in svc.search_people(q)]
 
 
 @router.get("/{person_id}", response_model=schemas.PersonProfileResponse)
 def get_person(
     person_id: uuid.UUID,
-    db: SessionDep,
     svc: ServiceDep,
 ) -> schemas.PersonProfileResponse:
-    profile = svc.get_person(db, person_id)
+    profile = svc.get_person(person_id)
     if profile is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

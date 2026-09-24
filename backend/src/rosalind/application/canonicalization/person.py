@@ -9,8 +9,8 @@ invariant: it is Rosalind that decides ``is_primary``.
 
 This module owns canonicalization *decisions* (which fact is primary, sorting,
 conflict detection) and delegates all persistence to the
-``CanonicalPersonRepository`` port. It never imports SQLAlchemy or concrete
-models.
+``PersonCanonicalRepository`` port (reached via the injected ``UnitOfWork``).
+It never imports SQLAlchemy or concrete models.
 """
 
 from __future__ import annotations
@@ -18,14 +18,10 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy.orm import Session
-
 from rosalind.application.canonicalization.email import normalize_email
 from rosalind.application.errors import EntityResolutionConflictError
-from rosalind.application.ports.repositories import (
-    CanonicalPersonRepository,
-    FactUpsertResult,
-)
+from rosalind.application.ports.repositories import FactUpsertResult
+from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.domain.person import (
     DateObservation,
     NameObservation,
@@ -44,12 +40,9 @@ class CanonicalizationResult:
 
 
 class CanonicalizationService:
-    def __init__(self, repo: CanonicalPersonRepository):
-        self._repo = repo
-
     def canonicalize(
         self,
-        db: Session,
+        uow: UnitOfWork,
         source_account: SourceAccount,
         source_record: SourceRecord,
         observation: PersonObservation,
@@ -59,10 +52,9 @@ class CanonicalizationService:
         Runs within the caller's transaction; flushes but does not commit.
         """
         person_id, created = self._resolve_or_create_person(
-            db, source_account, observation.source_identities
+            uow, source_account, observation.source_identities
         )
-        identities = self._repo.upsert_source_identity(
-            db,
+        identities = uow.person_canonical.upsert_source_identity(
             source_account_id=source_account.id,
             person_id=person_id,
             refs=observation.source_identities,
@@ -73,8 +65,7 @@ class CanonicalizationService:
 
         name_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
         for name_obs in observation.names:
-            result = self._repo.upsert_name(
-                db,
+            result = uow.person_canonical.upsert_name(
                 person_id=person_id,
                 observation=name_obs,
                 source_record_id=source_record.id,
@@ -87,8 +78,7 @@ class CanonicalizationService:
 
         email_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
         for email_obs in observation.emails:
-            result = self._repo.upsert_email(
-                db,
+            result = uow.person_canonical.upsert_email(
                 person_id=person_id,
                 observation=email_obs,
                 source_record_id=source_record.id,
@@ -105,8 +95,7 @@ class CanonicalizationService:
 
         date_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
         for date_obs in observation.dates:
-            result = self._repo.upsert_date(
-                db,
+            result = uow.person_canonical.upsert_date(
                 person_id=person_id,
                 observation=date_obs,
                 source_record_id=source_record.id,
@@ -119,8 +108,7 @@ class CanonicalizationService:
 
         gender_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
         for gender_obs in observation.genders:
-            result = self._repo.upsert_gender(
-                db,
+            result = uow.person_canonical.upsert_gender(
                 person_id=person_id,
                 observation=gender_obs,
                 source_record_id=source_record.id,
@@ -133,8 +121,7 @@ class CanonicalizationService:
 
         locale_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
         for locale_obs in observation.locales:
-            result = self._repo.upsert_locale(
-                db,
+            result = uow.person_canonical.upsert_locale(
                 person_id=person_id,
                 observation=locale_obs,
                 source_record_id=source_record.id,
@@ -145,23 +132,23 @@ class CanonicalizationService:
                 (result.fact_id, locale_obs.source_primary, locale_obs.value)
             )
 
-        self._repo.set_name_primary(
-            db, person_id=person_id, fact_id=_select_primary(name_candidates)
+        uow.person_canonical.set_name_primary(
+            person_id=person_id, fact_id=_select_primary(name_candidates)
         )
-        self._repo.set_email_primary(
-            db, person_id=person_id, fact_id=_select_primary(email_candidates)
+        uow.person_canonical.set_email_primary(
+            person_id=person_id, fact_id=_select_primary(email_candidates)
         )
-        self._repo.set_date_primary(
-            db, person_id=person_id, fact_id=_select_primary(date_candidates)
+        uow.person_canonical.set_date_primary(
+            person_id=person_id, fact_id=_select_primary(date_candidates)
         )
-        self._repo.set_gender_primary(
-            db, person_id=person_id, fact_id=_select_primary(gender_candidates)
+        uow.person_canonical.set_gender_primary(
+            person_id=person_id, fact_id=_select_primary(gender_candidates)
         )
-        self._repo.set_locale_primary(
-            db, person_id=person_id, fact_id=_select_primary(locale_candidates)
+        uow.person_canonical.set_locale_primary(
+            person_id=person_id, fact_id=_select_primary(locale_candidates)
         )
 
-        db.flush()
+        uow.flush()
         return CanonicalizationResult(
             person_id=person_id,
             created=created,
@@ -171,10 +158,13 @@ class CanonicalizationService:
         )
 
     def _resolve_or_create_person(
-        self, db: Session, source_account: SourceAccount, refs: tuple[SourceRef, ...]
+        self,
+        uow: UnitOfWork,
+        source_account: SourceAccount,
+        refs: tuple[SourceRef, ...],
     ) -> tuple[uuid.UUID, bool]:
-        person_ids = self._repo.find_person_ids(
-            db, source_account_id=source_account.id, refs=refs
+        person_ids = uow.person_canonical.find_person_ids(
+            source_account_id=source_account.id, refs=refs
         )
         if len(person_ids) > 1:
             raise EntityResolutionConflictError(
@@ -184,7 +174,7 @@ class CanonicalizationService:
         if len(person_ids) == 1:
             return person_ids.pop(), False
 
-        return self._repo.create_person(db), True
+        return uow.person_canonical.create_person(), True
 
     @staticmethod
     def _count_fact(counters: dict[str, int], result: FactUpsertResult) -> None:

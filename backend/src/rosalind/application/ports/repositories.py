@@ -1,7 +1,9 @@
 """Persistence ports (interfaces) for repositories.
 
 The concrete implementations live in ``adapters.outbound.persistence`` and
-satisfy these protocols structurally.
+satisfy these protocols structurally. Repositories are session-bound: they are
+constructed with a database session by the persistence adapter and expose
+session-free methods to the application layer.
 """
 
 from __future__ import annotations
@@ -11,8 +13,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
-
-from sqlalchemy.orm import Session
 
 from rosalind.application.read_models import PersonProfile
 from rosalind.domain.person import (
@@ -75,17 +75,16 @@ class AuthRequest:
 
 
 class PersonRepository(Protocol):
-    def search(self, db: Session, query: str, limit: int) -> list[PersonProfile]: ...
+    def search(self, query: str, limit: int) -> list[PersonProfile]: ...
 
-    def list_all(self, db: Session, limit: int) -> list[PersonProfile]: ...
+    def list_all(self, limit: int) -> list[PersonProfile]: ...
 
-    def get(self, db: Session, person_id: uuid.UUID) -> PersonProfile | None: ...
+    def get(self, person_id: uuid.UUID) -> PersonProfile | None: ...
 
 
 class SourceRecordRepository(Protocol):
     def persist(
         self,
-        db: Session,
         *,
         source_account: SourceAccount,
         resource_type: str,
@@ -97,45 +96,36 @@ class SourceRecordRepository(Protocol):
         import_id: uuid.UUID | None = None,
     ) -> SourceRecord: ...
 
-    def list_for_import(
-        self, db: Session, import_id: uuid.UUID
-    ) -> list[SourceRecord]: ...
+    def list_for_import(self, import_id: uuid.UUID) -> list[SourceRecord]: ...
 
 
 class SourceAccountRepository(Protocol):
-    def get(self, db: Session, source_id: uuid.UUID) -> SourceAccount | None: ...
+    def get(self, source_id: uuid.UUID) -> SourceAccount | None: ...
 
-    def get_by_name(self, db: Session, name: str) -> SourceAccount | None: ...
+    def get_by_name(self, name: str) -> SourceAccount | None: ...
 
     def get_by_identity(
-        self, db: Session, provider: str, account_identifier: str
+        self, provider: str, account_identifier: str
     ) -> SourceAccount | None: ...
 
-    def list(self, db: Session) -> list[SourceAccount]: ...
+    def list(self) -> list[SourceAccount]: ...
 
-    def create(
-        self, db: Session, *, provider: str, name: str | None = None
-    ) -> SourceAccount: ...
+    def create(self, *, provider: str, name: str | None = None) -> SourceAccount: ...
 
-    def update(self, db: Session, account: SourceAccount) -> SourceAccount: ...
+    def update(self, account: SourceAccount) -> SourceAccount: ...
 
-    def delete(self, db: Session, source_id: uuid.UUID) -> None: ...
+    def delete(self, source_id: uuid.UUID) -> None: ...
 
 
 class OAuthCredentialRepository(Protocol):
-    def exists(self, db: Session, source_account_id: uuid.UUID) -> bool: ...
+    def exists(self, source_account_id: uuid.UUID) -> bool: ...
 
-    def get_latest(
-        self, db: Session, source_account_id: uuid.UUID
-    ) -> StoredCredential | None: ...
+    def get_latest(self, source_account_id: uuid.UUID) -> StoredCredential | None: ...
 
-    def list_all(
-        self, db: Session, source_account_id: uuid.UUID
-    ) -> list[StoredCredential]: ...
+    def list_all(self, source_account_id: uuid.UUID) -> list[StoredCredential]: ...
 
     def upsert(
         self,
-        db: Session,
         *,
         account_id: uuid.UUID,
         provider: str,
@@ -147,7 +137,6 @@ class OAuthCredentialRepository(Protocol):
 
     def update_tokens(
         self,
-        db: Session,
         *,
         account_id: uuid.UUID,
         provider: str,
@@ -155,13 +144,12 @@ class OAuthCredentialRepository(Protocol):
         expires_at: datetime | None,
     ) -> None: ...
 
-    def delete_all(self, db: Session, source_account_id: uuid.UUID) -> None: ...
+    def delete_all(self, source_account_id: uuid.UUID) -> None: ...
 
 
 class OAuthAuthRequestRepository(Protocol):
     def create(
         self,
-        db: Session,
         *,
         state: str,
         source_account_id: uuid.UUID,
@@ -170,29 +158,22 @@ class OAuthAuthRequestRepository(Protocol):
         expires_at: datetime,
     ) -> None: ...
 
-    def get(self, db: Session, state: str) -> AuthRequest | None: ...
+    def get(self, state: str) -> AuthRequest | None: ...
 
-    def reassign(
-        self, db: Session, state: str, source_account_id: uuid.UUID
-    ) -> None: ...
+    def reassign(self, state: str, source_account_id: uuid.UUID) -> None: ...
 
-    def mark_connected(
-        self, db: Session, state: str, consumed_at: datetime
-    ) -> None: ...
+    def mark_connected(self, state: str, consumed_at: datetime) -> None: ...
 
 
 class ImportRepository(Protocol):
-    def create(
-        self, db: Session, *, source_account_id: uuid.UUID, type_: str
-    ) -> Import: ...
+    def create(self, *, source_account_id: uuid.UUID, type_: str) -> Import: ...
 
-    def get(self, db: Session, import_id: uuid.UUID) -> Import | None: ...
+    def get(self, import_id: uuid.UUID) -> Import | None: ...
 
-    def list(self, db: Session) -> list[Import]: ...
+    def list(self) -> list[Import]: ...
 
     def complete(
         self,
-        db: Session,
         import_id: uuid.UUID,
         *,
         files: Sequence[ImportFile],
@@ -202,18 +183,16 @@ class ImportRepository(Protocol):
         completed_at: datetime,
     ) -> Import: ...
 
-    def set_processing_status(
-        self, db: Session, import_id: uuid.UUID, status: str
-    ) -> Import: ...
+    def set_processing_status(self, import_id: uuid.UUID, status: str) -> Import: ...
 
     def mark_completed(
-        self, db: Session, import_id: uuid.UUID, *, completed_at: datetime
+        self, import_id: uuid.UUID, *, completed_at: datetime
     ) -> Import: ...
 
-    def delete(self, db: Session, import_id: uuid.UUID) -> None: ...
+    def delete(self, import_id: uuid.UUID) -> None: ...
 
 
-class CanonicalPersonRepository(Protocol):
+class PersonCanonicalRepository(Protocol):
     """Write port for canonicalizing person observations.
 
     Operates only on domain value objects; the adapter owns the SQL and the
@@ -221,14 +200,13 @@ class CanonicalPersonRepository(Protocol):
     """
 
     def find_person_ids(
-        self, db: Session, *, source_account_id: uuid.UUID, refs: tuple[SourceRef, ...]
+        self, *, source_account_id: uuid.UUID, refs: tuple[SourceRef, ...]
     ) -> set[uuid.UUID]: ...
 
-    def create_person(self, db: Session) -> uuid.UUID: ...
+    def create_person(self) -> uuid.UUID: ...
 
     def upsert_source_identity(
         self,
-        db: Session,
         *,
         source_account_id: uuid.UUID,
         person_id: uuid.UUID,
@@ -238,7 +216,6 @@ class CanonicalPersonRepository(Protocol):
 
     def upsert_name(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: NameObservation,
@@ -248,7 +225,6 @@ class CanonicalPersonRepository(Protocol):
 
     def upsert_email(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: EmailObservation,
@@ -258,7 +234,6 @@ class CanonicalPersonRepository(Protocol):
 
     def upsert_date(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: DateObservation,
@@ -268,7 +243,6 @@ class CanonicalPersonRepository(Protocol):
 
     def upsert_gender(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: GenderObservation,
@@ -278,7 +252,6 @@ class CanonicalPersonRepository(Protocol):
 
     def upsert_locale(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: LocaleObservation,
@@ -287,21 +260,21 @@ class CanonicalPersonRepository(Protocol):
     ) -> FactUpsertResult: ...
 
     def set_name_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None: ...
 
     def set_email_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None: ...
 
     def set_date_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None: ...
 
     def set_gender_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None: ...
 
     def set_locale_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None: ...

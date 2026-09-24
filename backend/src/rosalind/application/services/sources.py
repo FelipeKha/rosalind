@@ -7,7 +7,8 @@ It has a human-facing ``name`` (the CLI slug) and an immutable provider identity
 
 Account CRUD goes through the ``SourceAccountRepository`` port; OAuth credentials
 and authorization requests go through the ``OAuthCredentialRepository`` and
-``OAuthAuthRequestRepository`` ports.
+``OAuthAuthRequestRepository`` ports, all reached through the injected
+``UnitOfWork``.
 """
 
 from __future__ import annotations
@@ -18,8 +19,6 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy.orm import Session
-
 from rosalind.application.errors import (
     InvalidStateError,
     ProviderError,
@@ -27,12 +26,8 @@ from rosalind.application.errors import (
     TokenNotFoundError,
 )
 from rosalind.application.ports.providers import AuthGateway, ProviderCredentials
-from rosalind.application.ports.repositories import (
-    OAuthAuthRequestRepository,
-    OAuthCredentialRepository,
-    SourceAccountRepository,
-    StoredCredential,
-)
+from rosalind.application.ports.repositories import StoredCredential
+from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.domain.source import SourceAccount
 
 STATUS_PENDING = "pending"
@@ -74,43 +69,34 @@ def default_source_name(provider: str) -> str:
 
 
 class SourceService:
-    def __init__(
-        self,
-        auth: AuthGateway,
-        accounts: SourceAccountRepository,
-        credentials: OAuthCredentialRepository,
-        auth_requests: OAuthAuthRequestRepository,
-    ):
+    def __init__(self, auth: AuthGateway):
         self._auth = auth
-        self._accounts = accounts
-        self._credentials = credentials
-        self._auth_requests = auth_requests
 
-    def resolve_source(self, db: Session, name: str) -> SourceAccount:
-        account = self._accounts.get_by_name(db, name)
+    def resolve_source(self, uow: UnitOfWork, name: str) -> SourceAccount:
+        account = uow.source_accounts.get_by_name(name)
         if account is None:
             raise SourceNotFoundError(f"source {name!r} not found")
         return account
 
-    def get_source(self, db: Session, source_id: uuid.UUID) -> SourceAccount:
-        account = self._accounts.get(db, source_id)
+    def get_source(self, uow: UnitOfWork, source_id: uuid.UUID) -> SourceAccount:
+        account = uow.source_accounts.get(source_id)
         if account is None:
             raise SourceNotFoundError(f"source {source_id} not found")
         return account
 
-    def list_sources(self, db: Session) -> list[SourceAccount]:
-        return self._accounts.list(db)
+    def list_sources(self, uow: UnitOfWork) -> list[SourceAccount]:
+        return uow.source_accounts.list()
 
-    def create_source(self, db: Session, provider: str, name: str) -> SourceAccount:
-        account = self._accounts.create(db, provider=provider, name=name)
-        db.commit()
+    def create_source(self, uow: UnitOfWork, provider: str, name: str) -> SourceAccount:
+        account = uow.source_accounts.create(provider=provider, name=name)
+        uow.commit()
         return account
 
-    def is_connected(self, db: Session, source_id: uuid.UUID) -> bool:
-        return self._credentials.exists(db, source_id)
+    def is_connected(self, uow: UnitOfWork, source_id: uuid.UUID) -> bool:
+        return uow.credentials.exists(source_id)
 
     def start_connect(
-        self, db: Session, provider: str, name: str | None = None
+        self, uow: UnitOfWork, provider: str, name: str | None = None
     ) -> ConnectStart:
         """Begin OAuth for a provider, stashing the requested name on the auth request.
 
@@ -118,12 +104,11 @@ class SourceService:
         with the ``uq_source_account_name`` constraint before OAuth resolves the
         account's identity; the name is applied in ``complete_connect``.
         """
-        account = self._accounts.create(db, provider=provider, name=None)
+        account = uow.source_accounts.create(provider=provider, name=None)
 
         state = secrets.token_urlsafe(32)
         auth_url, code_verifier = self._auth.build_authorization_url(state)
-        self._auth_requests.create(
-            db,
+        uow.auth_requests.create(
             state=state,
             source_account_id=account.id,
             source_name=name or default_source_name(provider),
@@ -131,17 +116,17 @@ class SourceService:
             expires_at=datetime.now(UTC) + _AUTH_REQUEST_TTL,
         )
 
-        db.commit()
+        uow.commit()
         return ConnectStart(source_id=account.id, auth_url=auth_url, state=state)
 
-    def complete_connect(self, db: Session, state: str, code: str) -> SourceAccount:
-        request = self._auth_requests.get(db, state)
+    def complete_connect(self, uow: UnitOfWork, state: str, code: str) -> SourceAccount:
+        request = uow.auth_requests.get(state)
         if request is None or request.expires_at < datetime.now(UTC):
             raise InvalidStateError("authorization request is unknown or expired")
         if request.consumed_at is not None:
             raise InvalidStateError("authorization request was already consumed")
 
-        pending = self._accounts.get(db, request.source_account_id)
+        pending = uow.source_accounts.get(request.source_account_id)
         if pending is None:
             raise InvalidStateError(
                 "authorization request references an unknown account"
@@ -158,34 +143,31 @@ class SourceService:
                 f"failed to exchange authorization code: {exc}"
             ) from exc
 
-        account = self._accounts.get_by_identity(
-            db, provider, identity.account_identifier
+        account = uow.source_accounts.get_by_identity(
+            provider, identity.account_identifier
         )
 
         if account is not None:
             if pending.id != account.id:
-                self._auth_requests.reassign(db, state, account.id)
-                self._accounts.delete(db, pending.id)
+                uow.auth_requests.reassign(state, account.id)
+                uow.source_accounts.delete(pending.id)
         else:
             account = pending
-            account = self._accounts.update(
-                db,
+            account = uow.source_accounts.update(
                 replace(account, account_identifier=identity.account_identifier),
             )
 
         # The name is the current CLI slug, so assign it on every connect. A
         # re-authenticated account must pick up the current (or explicitly
         # requested) name rather than keeping a stale one.
-        account = self._accounts.update(
-            db,
+        account = uow.source_accounts.update(
             replace(
                 account,
                 name=request.source_name,
                 display_name=identity.display_name,
             ),
         )
-        self._credentials.upsert(
-            db,
+        uow.credentials.upsert(
             account_id=account.id,
             provider=provider,
             access_token=credentials.access_token,
@@ -194,17 +176,17 @@ class SourceService:
             expires_at=credentials.expires_at,
         )
 
-        self._auth_requests.mark_connected(db, state, datetime.now(UTC))
-        db.commit()
+        uow.auth_requests.mark_connected(state, datetime.now(UTC))
+        uow.commit()
         return account
 
-    def get_connect_status(self, db: Session, state: str) -> AuthStatus:
-        request = self._auth_requests.get(db, state)
+    def get_connect_status(self, uow: UnitOfWork, state: str) -> AuthStatus:
+        request = uow.auth_requests.get(state)
         if request is None:
             return AuthStatus(status=STATUS_NOT_FOUND)
 
         if request.status == STATUS_CONNECTED:
-            account = self._accounts.get(db, request.source_account_id)
+            account = uow.source_accounts.get(request.source_account_id)
             return AuthStatus(
                 status=STATUS_CONNECTED,
                 source_id=request.source_account_id,
@@ -218,15 +200,15 @@ class SourceService:
 
         return AuthStatus(status=STATUS_PENDING, source_id=request.source_account_id)
 
-    def disconnect(self, db: Session, source_id: uuid.UUID) -> DisconnectResult:
+    def disconnect(self, uow: UnitOfWork, source_id: uuid.UUID) -> DisconnectResult:
         """Revoke and remove stored credentials for a source account.
 
         Revocation at the provider is best-effort; local credentials are removed
         regardless so the backend no longer holds a live grant. The source account,
         its imports, and raw/canonical data are intentionally left untouched.
         """
-        source = self.get_source(db, source_id)
-        stored = self._credentials.list_all(db, source.id)
+        source = self.get_source(uow, source_id)
+        stored = uow.credentials.list_all(source.id)
         if not stored:
             return DisconnectResult(status=STATUS_ALREADY_DISCONNECTED, revoked=False)
 
@@ -238,14 +220,14 @@ class SourceService:
                     self._auth.revoke(token)
                     revoked = True
 
-        self._credentials.delete_all(db, source.id)
-        db.commit()
+        uow.credentials.delete_all(source.id)
+        uow.commit()
         return DisconnectResult(status=STATUS_DISCONNECTED, revoked=revoked)
 
     def load_credentials(
-        self, db: Session, source_id: uuid.UUID
+        self, uow: UnitOfWork, source_id: uuid.UUID
     ) -> tuple[SourceAccount, ProviderCredentials]:
-        stored = self._credentials.get_latest(db, source_id)
+        stored = uow.credentials.get_latest(source_id)
         if stored is None:
             raise TokenNotFoundError(f"no stored credentials for source {source_id}")
 
@@ -267,16 +249,15 @@ class SourceService:
                 credentials = self._auth.refresh(credentials)
             except Exception as exc:  # provider boundary
                 raise ProviderError(f"failed to refresh credentials: {exc}") from exc
-            self._credentials.update_tokens(
-                db,
+            uow.credentials.update_tokens(
                 account_id=source_id,
                 provider=stored.provider,
                 access_token=credentials.access_token,
                 expires_at=credentials.expires_at,
             )
-            db.commit()
+            uow.commit()
 
-        account = self._accounts.get(db, source_id)
+        account = uow.source_accounts.get(source_id)
         if account is None:
             raise SourceNotFoundError(f"source {source_id} not found")
         return account, credentials

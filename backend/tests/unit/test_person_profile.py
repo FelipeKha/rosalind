@@ -1,8 +1,6 @@
 import uuid
 from types import SimpleNamespace
 
-from sqlalchemy.orm import Session
-
 from rosalind.adapters.outbound.persistence.repositories.person import (
     PostgresPersonRepository,
 )
@@ -67,14 +65,17 @@ def test_search_people_clamps_limit() -> None:
         def __init__(self) -> None:
             self.seen_limit: int | None = None
 
-        def search(self, db: Session, query: str, limit: int) -> list:
+        def search(self, query: str, limit: int) -> list:
             self.seen_limit = limit
             return []
 
-        def get(self, db: Session, person_id: uuid.UUID):
+        def list_all(self, limit: int) -> list:
+            return []
+
+        def get(self, person_id: uuid.UUID):
             return None
 
     repo = FakeRepo()
-    PersonService(repo).search_people(object(), "Alex")  # type: ignore[arg-type]
+    PersonService(repo).search_people("Alex")
 
     assert repo.seen_limit == MAX_SEARCH_RESULTS

@@ -27,15 +27,18 @@ from rosalind.domain.person import (
 from rosalind.domain.source import SourceRef
 
 
-class PostgresCanonicalPersonRepository:
+class PostgresPersonCanonicalRepository:
     """Canonical-fact, provenance, and identity persistence for people."""
 
+    def __init__(self, session: Session):
+        self._session = session
+
     def find_person_ids(
-        self, db: Session, *, source_account_id: uuid.UUID, refs: tuple[SourceRef, ...]
+        self, *, source_account_id: uuid.UUID, refs: tuple[SourceRef, ...]
     ) -> set[uuid.UUID]:
         person_ids: set[uuid.UUID] = set()
         for ref in refs:
-            person_id = db.scalar(
+            person_id = self._session.scalar(
                 select(models.SourceIdentity.person_id).where(
                     models.SourceIdentity.source_account_id == source_account_id,
                     models.SourceIdentity.source_type == ref.source_type,
@@ -46,15 +49,14 @@ class PostgresCanonicalPersonRepository:
                 person_ids.add(person_id)
         return person_ids
 
-    def create_person(self, db: Session) -> uuid.UUID:
+    def create_person(self) -> uuid.UUID:
         person = models.Person()
-        db.add(person)
-        db.flush()
+        self._session.add(person)
+        self._session.flush()
         return person.id
 
     def upsert_source_identity(
         self,
-        db: Session,
         *,
         source_account_id: uuid.UUID,
         person_id: uuid.UUID,
@@ -71,7 +73,6 @@ class PostgresCanonicalPersonRepository:
                 "resource_name": resource_name,
             }
             identity_id, _ = self._upsert_returning(
-                db,
                 models.SourceIdentity,
                 values,
                 "uq_source_identity_account_type_external",
@@ -86,7 +87,6 @@ class PostgresCanonicalPersonRepository:
 
     def upsert_name(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: NameObservation,
@@ -94,7 +94,6 @@ class PostgresCanonicalPersonRepository:
         source_identity_id: uuid.UUID | None,
     ) -> FactUpsertResult:
         fact_id, fact_created = self._upsert_returning(
-            db,
             models.PersonName,
             {
                 "person_id": person_id,
@@ -112,7 +111,6 @@ class PostgresCanonicalPersonRepository:
             ),
         )
         return self._finish(
-            db,
             models.PersonNameAssertion,
             "person_name_id",
             fact_id,
@@ -126,7 +124,6 @@ class PostgresCanonicalPersonRepository:
 
     def upsert_email(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: EmailObservation,
@@ -135,7 +132,6 @@ class PostgresCanonicalPersonRepository:
     ) -> FactUpsertResult:
         normalized = normalize_email(observation.value)
         fact_id, fact_created = self._upsert_returning(
-            db,
             models.PersonEmail,
             {
                 "person_id": person_id,
@@ -152,7 +148,6 @@ class PostgresCanonicalPersonRepository:
             ),
         )
         return self._finish(
-            db,
             models.PersonEmailAssertion,
             "person_email_id",
             fact_id,
@@ -166,7 +161,6 @@ class PostgresCanonicalPersonRepository:
 
     def upsert_date(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: DateObservation,
@@ -174,7 +168,6 @@ class PostgresCanonicalPersonRepository:
         source_identity_id: uuid.UUID | None,
     ) -> FactUpsertResult:
         fact_id, fact_created = self._upsert_returning(
-            db,
             models.PersonDate,
             {
                 "person_id": person_id,
@@ -194,7 +187,6 @@ class PostgresCanonicalPersonRepository:
             ),
         )
         return self._finish(
-            db,
             models.PersonDateAssertion,
             "person_date_id",
             fact_id,
@@ -208,7 +200,6 @@ class PostgresCanonicalPersonRepository:
 
     def upsert_gender(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: GenderObservation,
@@ -216,7 +207,6 @@ class PostgresCanonicalPersonRepository:
         source_identity_id: uuid.UUID | None,
     ) -> FactUpsertResult:
         fact_id, fact_created = self._upsert_returning(
-            db,
             models.PersonGender,
             {"person_id": person_id, "value": observation.value, "is_primary": False},
             "uq_person_gender_value",
@@ -226,7 +216,6 @@ class PostgresCanonicalPersonRepository:
             ),
         )
         return self._finish(
-            db,
             models.PersonGenderAssertion,
             "person_gender_id",
             fact_id,
@@ -240,7 +229,6 @@ class PostgresCanonicalPersonRepository:
 
     def upsert_locale(
         self,
-        db: Session,
         *,
         person_id: uuid.UUID,
         observation: LocaleObservation,
@@ -248,7 +236,6 @@ class PostgresCanonicalPersonRepository:
         source_identity_id: uuid.UUID | None,
     ) -> FactUpsertResult:
         fact_id, fact_created = self._upsert_returning(
-            db,
             models.PersonLocale,
             {"person_id": person_id, "value": observation.value, "is_primary": False},
             "uq_person_locale_value",
@@ -258,7 +245,6 @@ class PostgresCanonicalPersonRepository:
             ),
         )
         return self._finish(
-            db,
             models.PersonLocaleAssertion,
             "person_locale_id",
             fact_id,
@@ -271,33 +257,32 @@ class PostgresCanonicalPersonRepository:
         )
 
     def set_name_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None:
-        self._set_primary(db, models.PersonName, person_id, fact_id)
+        self._set_primary(models.PersonName, person_id, fact_id)
 
     def set_email_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None:
-        self._set_primary(db, models.PersonEmail, person_id, fact_id)
+        self._set_primary(models.PersonEmail, person_id, fact_id)
 
     def set_date_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None:
-        self._set_primary(db, models.PersonDate, person_id, fact_id)
+        self._set_primary(models.PersonDate, person_id, fact_id)
 
     def set_gender_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None:
-        self._set_primary(db, models.PersonGender, person_id, fact_id)
+        self._set_primary(models.PersonGender, person_id, fact_id)
 
     def set_locale_primary(
-        self, db: Session, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None:
-        self._set_primary(db, models.PersonLocale, person_id, fact_id)
+        self._set_primary(models.PersonLocale, person_id, fact_id)
 
     def _finish(
         self,
-        db: Session,
         link_entity: Any,
         fact_column: str,
         fact_id: uuid.UUID,
@@ -309,7 +294,6 @@ class PostgresCanonicalPersonRepository:
         source_verified: bool | None,
     ) -> FactUpsertResult:
         assertion_id, assertion_created = self._upsert_returning(
-            db,
             models.SourceAssertion,
             {
                 "source_record_id": source_record_id,
@@ -326,7 +310,7 @@ class PostgresCanonicalPersonRepository:
                 models.SourceAssertion.field_path == field_path,
             ),
         )
-        db.execute(
+        self._session.execute(
             pg_insert(link_entity)
             .values(**{"assertion_id": assertion_id, fact_column: fact_id})
             .on_conflict_do_nothing()
@@ -337,9 +321,8 @@ class PostgresCanonicalPersonRepository:
             assertion_created=assertion_created,
         )
 
-    @staticmethod
     def _upsert_returning(
-        db: Session,
+        self,
         entity: Any,
         values: dict[str, Any],
         constraint: str,
@@ -350,7 +333,7 @@ class PostgresCanonicalPersonRepository:
         Returns ``(id, created)`` where ``created`` is False when an existing row
         (found via ``lookup``) was reused.
         """
-        inserted_id = db.scalar(
+        inserted_id = self._session.scalar(
             pg_insert(entity)
             .values(**values)
             .on_conflict_do_nothing(constraint=constraint)
@@ -359,19 +342,18 @@ class PostgresCanonicalPersonRepository:
         if inserted_id is not None:
             return inserted_id, True
 
-        existing_id = db.scalar(lookup)
+        existing_id = self._session.scalar(lookup)
         if existing_id is None:
             raise RuntimeError("row not found after upsert")
         return existing_id, False
 
-    @staticmethod
     def _set_primary(
-        db: Session, entity: Any, person_id: uuid.UUID, selected_id: uuid.UUID | None
+        self, entity: Any, person_id: uuid.UUID, selected_id: uuid.UUID | None
     ) -> None:
-        db.execute(
+        self._session.execute(
             update(entity).where(entity.person_id == person_id).values(is_primary=False)
         )
         if selected_id is not None:
-            db.execute(
+            self._session.execute(
                 update(entity).where(entity.id == selected_id).values(is_primary=True)
             )

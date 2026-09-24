@@ -3,29 +3,29 @@ import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 from rosalind.adapters import composition
+from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
 )
 
 
-def _ingest(db: Session) -> uuid.UUID:
+def _ingest(uow: SqlAlchemyUnitOfWork) -> uuid.UUID:
     account = composition.source_service.create_source(
-        db, provider="google", name="test-account"
+        uow, provider="google", name="test-account"
     )
     result = composition.processing_service.ingest_person(
-        db, account, json.loads(FIXTURE.read_text())
+        uow, account, json.loads(FIXTURE.read_text())
     )
     return result.person_id
 
 
 def test_search_people(
-    migrated_api_client: TestClient, migrated_db_session: Session
+    migrated_api_client: TestClient, migrated_uow: SqlAlchemyUnitOfWork
 ) -> None:
-    _ingest(migrated_db_session)
+    _ingest(migrated_uow)
 
     response = migrated_api_client.get("/people/search", params={"q": "Alex"})
 
@@ -36,9 +36,9 @@ def test_search_people(
 
 
 def test_get_person(
-    migrated_api_client: TestClient, migrated_db_session: Session
+    migrated_api_client: TestClient, migrated_uow: SqlAlchemyUnitOfWork
 ) -> None:
-    person_id = _ingest(migrated_db_session)
+    person_id = _ingest(migrated_uow)
 
     response = migrated_api_client.get(f"/people/{person_id}")
 

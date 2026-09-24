@@ -23,8 +23,8 @@ from rosalind.application.services.people import PersonService
 mcp = MCPServer("rosalind")
 
 
-def _service() -> PersonService:
-    return PersonService(PostgresPersonRepository())
+def _service(session) -> PersonService:
+    return PersonService(PostgresPersonRepository(session))
 
 
 @mcp.tool()
@@ -35,8 +35,8 @@ def search_people(query: str) -> list[PersonProfileResult]:
     name or primary email contains the query. This is a person lookup, not a
     general personal-data search.
     """
-    with SessionLocal() as db:
-        results = _service().search_people(db, query)
+    with SessionLocal() as session:
+        results = _service(session).search_people(query)
     return [PersonProfileResult(**asdict(profile)) for profile in results]
 
 
@@ -47,8 +47,8 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
     Use this after identifying a person with search_people. Returns None if no
     such person exists.
     """
-    with SessionLocal() as db:
-        profile = _service().get_person(db, person_id)
+    with SessionLocal() as session:
+        profile = _service(session).get_person(person_id)
     return PersonProfileResult(**asdict(profile)) if profile is not None else None
 
 

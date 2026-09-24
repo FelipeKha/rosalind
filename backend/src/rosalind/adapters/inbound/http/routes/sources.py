@@ -6,11 +6,11 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy.orm import Session
 
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.http.schemas import sources as schemas
-from rosalind.adapters.outbound.persistence.session import get_db
+from rosalind.adapters.outbound.persistence.session import get_uow
+from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.sources import SOURCE_CONNECTED, SOURCE_DISCONNECTED
 from rosalind.domain.source import SourceAccount
 
@@ -18,13 +18,13 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 
 service = composition.source_service
 
-SessionDep = Annotated[Session, Depends(get_db)]
+UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 
 
 @router.get("", response_model=schemas.SourceListResponse)
-def list_sources(db: SessionDep) -> schemas.SourceListResponse:
+def list_sources(uow: UowDep) -> schemas.SourceListResponse:
     return schemas.SourceListResponse(
-        sources=[_to_summary(source, db) for source in service.list_sources(db)]
+        sources=[_to_summary(source, uow) for source in service.list_sources(uow)]
     )
 
 
@@ -35,18 +35,18 @@ def list_sources(db: SessionDep) -> schemas.SourceListResponse:
 )
 def create_source(
     body: schemas.SourceCreateRequest,
-    db: SessionDep,
+    uow: UowDep,
 ) -> schemas.SourceSummaryResponse:
-    source = service.create_source(db, provider=body.provider, name=body.name)
-    return _to_summary(source, db)
+    source = service.create_source(uow, provider=body.provider, name=body.name)
+    return _to_summary(source, uow)
 
 
 @router.post("/connect", response_model=schemas.ConnectResponse)
 def connect(
     body: schemas.SourceConnectRequest,
-    db: SessionDep,
+    uow: UowDep,
 ) -> schemas.ConnectResponse:
-    result = service.start_connect(db, provider=body.provider, name=body.name)
+    result = service.start_connect(uow, provider=body.provider, name=body.name)
     return schemas.ConnectResponse(
         source_id=result.source_id,
         auth_url=result.auth_url,
@@ -55,8 +55,8 @@ def connect(
 
 
 @router.get("/connect/status", response_model=schemas.ConnectStatusResponse)
-def connect_status(state: str, db: SessionDep) -> schemas.ConnectStatusResponse:
-    result = service.get_connect_status(db, state)
+def connect_status(state: str, uow: UowDep) -> schemas.ConnectStatusResponse:
+    result = service.get_connect_status(uow, state)
     return schemas.ConnectStatusResponse(
         status=result.status,
         source_id=result.source_id,
@@ -65,44 +65,48 @@ def connect_status(state: str, db: SessionDep) -> schemas.ConnectStatusResponse:
 
 
 @router.get("/{source_id}", response_model=schemas.SourceDetailResponse)
-def get_source(source_id: uuid.UUID, db: SessionDep) -> schemas.SourceDetailResponse:
-    source = service.get_source(db, source_id)
-    return _to_detail(source, db)
+def get_source(source_id: uuid.UUID, uow: UowDep) -> schemas.SourceDetailResponse:
+    source = service.get_source(uow, source_id)
+    return _to_detail(source, uow)
 
 
 @router.post(
     "/{source_id}/disconnect",
     response_model=schemas.DisconnectResponse,
 )
-def disconnect(source_id: uuid.UUID, db: SessionDep) -> schemas.DisconnectResponse:
-    result = service.disconnect(db, source_id)
+def disconnect(source_id: uuid.UUID, uow: UowDep) -> schemas.DisconnectResponse:
+    result = service.disconnect(uow, source_id)
     return schemas.DisconnectResponse(status=result.status, revoked=result.revoked)
 
 
-def _to_summary(source: SourceAccount, db: Session) -> schemas.SourceSummaryResponse:
+def _to_summary(
+    source: SourceAccount, uow: UnitOfWork
+) -> schemas.SourceSummaryResponse:
     return schemas.SourceSummaryResponse(
         source_id=source.id,
         name=source.name,
         provider=source.provider,
         display_name=source.display_name,
-        status=_status(source, db),
+        status=_status(source, uow),
         created_at=source.created_at,
     )
 
 
-def _to_detail(source: SourceAccount, db: Session) -> schemas.SourceDetailResponse:
+def _to_detail(source: SourceAccount, uow: UnitOfWork) -> schemas.SourceDetailResponse:
     return schemas.SourceDetailResponse(
         source_id=source.id,
         name=source.name,
         provider=source.provider,
         display_name=source.display_name,
-        status=_status(source, db),
+        status=_status(source, uow),
         created_at=source.created_at,
         account_identifier=source.account_identifier,
     )
 
 
-def _status(source: SourceAccount, db: Session) -> str:
+def _status(source: SourceAccount, uow: UnitOfWork) -> str:
     return (
-        SOURCE_CONNECTED if service.is_connected(db, source.id) else SOURCE_DISCONNECTED
+        SOURCE_CONNECTED
+        if service.is_connected(uow, source.id)
+        else SOURCE_DISCONNECTED
     )

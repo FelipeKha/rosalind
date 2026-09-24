@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy.orm import Session
-
 from rosalind.application.ports.repositories import PersonRepository
 from rosalind.application.read_models import PersonProfile
 
@@ -26,13 +24,13 @@ class PersonService:
     def __init__(self, repo: PersonRepository):
         self._repo = repo
 
-    def search_people(self, db: Session, query: str) -> list[PersonProfile]:
+    def search_people(self, query: str) -> list[PersonProfile]:
         # Bounded responses by design: this is an AI-facing interface, so the
         # caller can never request an unbounded result set.
-        return self._repo.search(db, query, limit=MAX_SEARCH_RESULTS)
+        return self._repo.search(query, limit=MAX_SEARCH_RESULTS)
 
-    def list_people(self, db: Session) -> list[PersonProfile]:
-        return self._repo.list_all(db, limit=MAX_LIST_RESULTS)
+    def list_people(self) -> list[PersonProfile]:
+        return self._repo.list_all(limit=MAX_LIST_RESULTS)
 
-    def get_person(self, db: Session, person_id: uuid.UUID) -> PersonProfile | None:
-        return self._repo.get(db, person_id)
+    def get_person(self, person_id: uuid.UUID) -> PersonProfile | None:
+        return self._repo.get(person_id)

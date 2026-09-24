@@ -15,8 +15,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy.orm import Session
-
 from rosalind.application.canonicalization.person import (
     CanonicalizationResult,
     CanonicalizationService,
@@ -24,10 +22,7 @@ from rosalind.application.canonicalization.person import (
 from rosalind.application.errors import InvalidPayloadError, SourceNotFoundError
 from rosalind.application.ports.parsers import PersonParser
 from rosalind.application.ports.providers import PeopleGateway
-from rosalind.application.ports.repositories import (
-    ImportRepository,
-    SourceRecordRepository,
-)
+from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.sources import SourceService
 from rosalind.domain.source import Import, SourceAccount, SourceRecord
 
@@ -62,51 +57,49 @@ def payload_sha256(payload: dict[str, Any]) -> str:
 class ProcessingService:
     def __init__(
         self,
-        source_records: SourceRecordRepository,
         parsers: Mapping[str, PersonParser],
         person_parser: PersonParser,
         people: PeopleGateway,
         sources: SourceService,
-        imports: ImportRepository,
         canonicalizer: CanonicalizationService,
     ):
-        self._source_records = source_records
         self._parsers = parsers
         self._person_parser = person_parser
         self._people = people
         self._sources = sources
-        self._imports = imports
         self._canonicalizer = canonicalizer
 
     def ingest_person(
         self,
-        db: Session,
+        uow: UnitOfWork,
         source_account: SourceAccount,
         payload: dict[str, Any],
         import_id: uuid.UUID | None = None,
     ) -> CanonicalizationResult:
         """Persist a provider person payload and canonicalize it."""
-        return self._ingest(db, source_account, self._person_parser, payload, import_id)
+        return self._ingest(
+            uow, source_account, self._person_parser, payload, import_id
+        )
 
     def import_api_profile(
         self,
-        db: Session,
+        uow: UnitOfWork,
         source_account: SourceAccount,
         import_: Import,
     ) -> CanonicalizationResult:
         """Fetch the provider API profile and ingest it into the given import."""
-        _, credentials = self._sources.load_credentials(db, source_account.id)
+        _, credentials = self._sources.load_credentials(uow, source_account.id)
         payload = self._people.fetch_profile(credentials)
-        return self.ingest_person(db, source_account, payload, import_id=import_.id)
+        return self.ingest_person(uow, source_account, payload, import_id=import_.id)
 
-    def process_import(self, db: Session, import_id: uuid.UUID) -> ProcessOutcome:
+    def process_import(self, uow: UnitOfWork, import_id: uuid.UUID) -> ProcessOutcome:
         """Canonicalize the raw source records produced by an import.
 
         Idempotent: canonicalization is guarded by database uniqueness constraints,
         so re-processing an import never creates duplicates. Imports whose type has
         no parser yet (e.g. Takeout) report ``unsupported`` and are left pending.
         """
-        import_ = self._imports.get(db, import_id)
+        import_ = uow.imports.get(import_id)
         if import_ is None:
             raise InvalidPayloadError(f"import {import_id} not found")
 
@@ -115,7 +108,7 @@ class ProcessingService:
                 result=RESULT_UNSUPPORTED, message="import has no source"
             )
 
-        records = self._source_records.list_for_import(db, import_.id)
+        records = uow.source_records.list_for_import(import_.id)
         if not records:
             return ProcessOutcome(
                 result=RESULT_UNSUPPORTED,
@@ -123,7 +116,7 @@ class ProcessingService:
             )
 
         try:
-            source_account = self._sources.get_source(db, import_.source_account_id)
+            source_account = self._sources.get_source(uow, import_.source_account_id)
         except SourceNotFoundError:
             return ProcessOutcome(
                 result=RESULT_UNSUPPORTED, message="source is missing"
@@ -136,15 +129,15 @@ class ProcessingService:
             "assertions_created": 0,
         }
         for record in records:
-            result = self._canonicalize_record(db, source_account, record)
+            result = self._canonicalize_record(uow, source_account, record)
             if result.created:
                 counters["people_created"] += 1
             counters["facts_created"] += result.facts_created
             counters["facts_reused"] += result.facts_reused
             counters["assertions_created"] += result.assertions_created
 
-        self._imports.set_processing_status(db, import_.id, PROCESSING_COMPLETED)
-        db.commit()
+        uow.imports.set_processing_status(import_.id, PROCESSING_COMPLETED)
+        uow.commit()
 
         return ProcessOutcome(
             result=RESULT_OK,
@@ -156,7 +149,7 @@ class ProcessingService:
 
     def _ingest(
         self,
-        db: Session,
+        uow: UnitOfWork,
         source_account: SourceAccount,
         parser: PersonParser,
         payload: dict[str, Any],
@@ -165,8 +158,7 @@ class ProcessingService:
         if not isinstance(payload, dict):
             raise InvalidPayloadError("provider payload must be a JSON object")
 
-        source_record = self._source_records.persist(
-            db,
+        source_record = uow.source_records.persist(
             source_account=source_account,
             resource_type=parser.resource_type,
             external_id=parser.external_id(payload),
@@ -176,16 +168,20 @@ class ProcessingService:
             import_id=import_id,
         )
 
+        # Commit the raw observation before parsing/validation so a malformed or
+        # provider-changed payload is still retained as evidence.
+        uow.commit()
+
         observation = parser.parse(payload)
         result = self._canonicalizer.canonicalize(
-            db, source_account, source_record, observation
+            uow, source_account, source_record, observation
         )
-        db.commit()
+        uow.commit()
         return result
 
     def _canonicalize_record(
         self,
-        db: Session,
+        uow: UnitOfWork,
         source_account: SourceAccount,
         source_record: SourceRecord,
     ) -> CanonicalizationResult:
@@ -196,5 +192,5 @@ class ProcessingService:
             )
         observation = parser.parse(source_record.payload)
         return self._canonicalizer.canonicalize(
-            db, source_account, source_record, observation
+            uow, source_account, source_record, observation
         )

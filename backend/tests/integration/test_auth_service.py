@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from rosalind.adapters import composition
 from rosalind.adapters.outbound.persistence import models
+from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.application.ports.providers import ProviderCredentials, UserIdentity
 from rosalind.domain.source import SourceAccount
 
@@ -31,8 +32,7 @@ def _create_account_with_credentials(
     db.add(account)
     db.flush()
     credentials = _credentials(expiry)
-    composition.oauth_credential_repository.upsert(
-        db,
+    SqlAlchemyUnitOfWork(db).credentials.upsert(
         account_id=account.id,
         provider="google",
         access_token=credentials.access_token,
@@ -49,7 +49,7 @@ def test_load_credentials_roundtrips_stored_tokens(db_session: Session) -> None:
     account = _create_account_with_credentials(db_session, future)
 
     loaded_account, credentials = composition.source_service.load_credentials(
-        db_session, account.id
+        SqlAlchemyUnitOfWork(db_session), account.id
     )
 
     assert loaded_account.account_identifier == "12345"
@@ -73,7 +73,9 @@ def test_load_credentials_refreshes_expired_token(
 
     monkeypatch.setattr(composition.google_auth, "refresh", fake_refresh)
 
-    _, credentials = composition.source_service.load_credentials(db_session, account.id)
+    _, credentials = composition.source_service.load_credentials(
+        SqlAlchemyUnitOfWork(db_session), account.id
+    )
 
     assert credentials.access_token == "refreshed-access-token"
 
@@ -88,7 +90,9 @@ def test_disconnect_removes_credentials_keeps_account(
         composition.google_auth, "revoke", lambda token: revoked.append(token)
     )
 
-    result = composition.source_service.disconnect(db_session, account.id)
+    result = composition.source_service.disconnect(
+        SqlAlchemyUnitOfWork(db_session), account.id
+    )
 
     assert result.status == "disconnected"
     assert result.revoked is True
@@ -120,8 +124,9 @@ def _stub_oauth(monkeypatch, identifier: str = "12345", name: str = "Jane Doe") 
 
 
 def _complete(db: Session) -> SourceAccount:
-    start = composition.source_service.start_connect(db, "google")
-    return composition.source_service.complete_connect(db, start.state, "auth-code")
+    uow = SqlAlchemyUnitOfWork(db)
+    start = composition.source_service.start_connect(uow, "google")
+    return composition.source_service.complete_connect(uow, start.state, "auth-code")
 
 
 def test_complete_connect_reuses_existing_account(
@@ -186,7 +191,9 @@ def test_disconnect_then_reconnect_reuses_account(
     first = _complete(db_session)
     first_id = first.id
 
-    result = composition.source_service.disconnect(db_session, first_id)
+    result = composition.source_service.disconnect(
+        SqlAlchemyUnitOfWork(db_session), first_id
+    )
     assert result.status == "disconnected"
     assert db_session.get(models.SourceAccount, first_id) is not None
     assert db_session.scalars(select(models.OAuthCredential)).all() == []

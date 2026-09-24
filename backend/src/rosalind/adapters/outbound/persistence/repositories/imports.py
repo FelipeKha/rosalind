@@ -21,21 +21,22 @@ from rosalind.domain.source import Import, ImportFile
 
 
 class PostgresImportRepository:
-    def create(
-        self, db: Session, *, source_account_id: uuid.UUID, type_: str
-    ) -> Import:
+    def __init__(self, session: Session):
+        self._session = session
+
+    def create(self, *, source_account_id: uuid.UUID, type_: str) -> Import:
         model = ImportModel(
             source_account_id=source_account_id,
             type=type_,
             ingestion_status="uploading",
             processing_status="pending",
         )
-        db.add(model)
-        db.flush()
+        self._session.add(model)
+        self._session.flush()
         return self._to_domain(model)
 
-    def get(self, db: Session, import_id: uuid.UUID) -> Import | None:
-        model = db.scalar(
+    def get(self, import_id: uuid.UUID) -> Import | None:
+        model = self._session.scalar(
             select(ImportModel)
             .options(
                 selectinload(ImportModel.files),
@@ -45,8 +46,8 @@ class PostgresImportRepository:
         )
         return self._to_domain(model) if model is not None else None
 
-    def list(self, db: Session) -> list[Import]:
-        models = db.scalars(
+    def list(self) -> list[Import]:
+        models = self._session.scalars(
             select(ImportModel)
             .options(
                 selectinload(ImportModel.files),
@@ -58,7 +59,6 @@ class PostgresImportRepository:
 
     def complete(
         self,
-        db: Session,
         import_id: uuid.UUID,
         *,
         files: Sequence[ImportFile],
@@ -67,7 +67,7 @@ class PostgresImportRepository:
         import_hash: str,
         completed_at: datetime,
     ) -> Import:
-        model = db.get(ImportModel, import_id)
+        model = self._session.get(ImportModel, import_id)
         if model is None:
             raise ValueError(f"import {import_id} not found")
 
@@ -89,37 +89,33 @@ class PostgresImportRepository:
         model.ingestion_status = "completed"
         model.completed_at = completed_at
 
-        db.flush()
+        self._session.flush()
         return self._to_domain(model)
 
-    def set_processing_status(
-        self, db: Session, import_id: uuid.UUID, status: str
-    ) -> Import:
-        model = db.get(ImportModel, import_id)
+    def set_processing_status(self, import_id: uuid.UUID, status: str) -> Import:
+        model = self._session.get(ImportModel, import_id)
         if model is None:
             raise ValueError(f"import {import_id} not found")
         model.processing_status = status
-        db.flush()
+        self._session.flush()
         return self._to_domain(model)
 
-    def mark_completed(
-        self, db: Session, import_id: uuid.UUID, *, completed_at: datetime
-    ) -> Import:
-        model = db.get(ImportModel, import_id)
+    def mark_completed(self, import_id: uuid.UUID, *, completed_at: datetime) -> Import:
+        model = self._session.get(ImportModel, import_id)
         if model is None:
             raise ValueError(f"import {import_id} not found")
         model.ingestion_status = "completed"
         model.processing_status = "completed"
         model.completed_at = completed_at
-        db.flush()
+        self._session.flush()
         return self._to_domain(model)
 
-    def delete(self, db: Session, import_id: uuid.UUID) -> None:
-        model = db.get(ImportModel, import_id)
+    def delete(self, import_id: uuid.UUID) -> None:
+        model = self._session.get(ImportModel, import_id)
         if model is None:
             return
-        db.delete(model)
-        db.flush()
+        self._session.delete(model)
+        self._session.flush()
 
     @staticmethod
     def _to_domain(model: ImportModel) -> Import:

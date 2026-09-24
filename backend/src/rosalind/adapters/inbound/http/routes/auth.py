@@ -11,21 +11,21 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
 
 from rosalind.adapters import composition
-from rosalind.adapters.outbound.persistence.session import get_db
+from rosalind.adapters.outbound.persistence.session import get_uow
+from rosalind.application.ports.unit_of_work import UnitOfWork
 
 router = APIRouter(prefix="/auth/google", tags=["auth"])
 
 service = composition.source_service
 
-SessionDep = Annotated[Session, Depends(get_db)]
+UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 
 
 @router.get("/callback", response_class=HTMLResponse)
-def callback(state: str, code: str, db: SessionDep) -> HTMLResponse:
-    service.complete_connect(db, state, code)
+def callback(state: str, code: str, uow: UowDep) -> HTMLResponse:
+    service.complete_connect(uow, state, code)
     return HTMLResponse(
         "<h1>Rosalind</h1><p>Google account connected. You can close this tab.</p>"
     )

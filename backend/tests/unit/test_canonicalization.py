@@ -1,6 +1,5 @@
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -45,10 +44,15 @@ def test_date_sort_key_pads_components() -> None:
 
 def test_canonicalize_raises_on_identity_conflict() -> None:
     class FakeRepo:
-        def find_person_ids(self, db, *, source_account_id, refs):
+        def find_person_ids(self, *, source_account_id, refs):
             return {_id(), _id()}
 
-    service = CanonicalizationService(FakeRepo())  # type: ignore[arg-type]
+    class FakeUow:
+        def __init__(self, repo) -> None:
+            self.person_canonical = repo
+
+    service = CanonicalizationService()
+    uow = FakeUow(FakeRepo())
     account = SourceAccount(_id(), "google", None, None, None, datetime.now(UTC))
     record = SourceRecord(_id(), account.id, "person", "people/x", {}, "sha256")
     observation = PersonObservation(
@@ -61,4 +65,4 @@ def test_canonicalize_raises_on_identity_conflict() -> None:
     )
 
     with pytest.raises(EntityResolutionConflictError):
-        service.canonicalize(MagicMock(), account, record, observation)
+        service.canonicalize(uow, account, record, observation)  # type: ignore[arg-type]

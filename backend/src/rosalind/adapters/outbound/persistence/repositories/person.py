@@ -19,8 +19,11 @@ _PROFILE_QUERY = "select * from agent.person_profile"
 
 
 class PostgresPersonRepository:
-    def search(self, db: Session, query: str, limit: int) -> list[PersonProfile]:
-        rows = db.execute(
+    def __init__(self, session: Session):
+        self._session = session
+
+    def search(self, query: str, limit: int) -> list[PersonProfile]:
+        rows = self._session.execute(
             text(
                 f"{_PROFILE_QUERY} "
                 "where display_name ilike '%' || :q || '%' "
@@ -31,15 +34,15 @@ class PostgresPersonRepository:
         ).all()
         return [self._to_profile(row) for row in rows]
 
-    def list_all(self, db: Session, limit: int) -> list[PersonProfile]:
-        rows = db.execute(
+    def list_all(self, limit: int) -> list[PersonProfile]:
+        rows = self._session.execute(
             text(f"{_PROFILE_QUERY} order by display_name nulls last limit :limit"),
             {"limit": limit},
         ).all()
         return [self._to_profile(row) for row in rows]
 
-    def get(self, db: Session, person_id: uuid.UUID) -> PersonProfile | None:
-        row = db.execute(
+    def get(self, person_id: uuid.UUID) -> PersonProfile | None:
+        row = self._session.execute(
             text(f"{_PROFILE_QUERY} where person_id = :person_id"),
             {"person_id": person_id},
         ).first()
