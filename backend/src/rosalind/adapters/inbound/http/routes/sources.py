@@ -8,8 +8,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 
 from rosalind.adapters import composition
+from rosalind.adapters.composition import get_uow
 from rosalind.adapters.inbound.http.schemas import sources as schemas
-from rosalind.adapters.outbound.persistence.session import get_uow
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.sources import SOURCE_CONNECTED, SOURCE_DISCONNECTED
 from rosalind.domain.source import SourceAccount

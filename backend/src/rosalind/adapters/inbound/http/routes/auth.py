@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 
 from rosalind.adapters import composition
-from rosalind.adapters.outbound.persistence.session import get_uow
+from rosalind.adapters.composition import get_uow
 from rosalind.application.ports.unit_of_work import UnitOfWork
 
 router = APIRouter(prefix="/auth/google", tags=["auth"])

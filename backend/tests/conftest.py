@@ -8,12 +8,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.community.postgres import PostgresContainer
 
 from rosalind import config
+from rosalind.adapters.composition import (
+    build_person_service,
+    get_person_service,
+    get_uow,
+)
 from rosalind.adapters.inbound.http.app import app
 from rosalind.adapters.outbound.persistence.models import Base
-from rosalind.adapters.outbound.persistence.repositories.person import (
-    PostgresPersonRepository,
-)
-from rosalind.adapters.outbound.persistence.session import get_person_service, get_uow
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.application.services.people import PersonService
 from tests._db import make_migrated_engine, reset_schemas
@@ -80,7 +81,7 @@ def api_client(postgres_url: str):
 
     def override_get_person_service() -> Iterator[PersonService]:
         with factory() as session:
-            yield PersonService(PostgresPersonRepository(session))
+            yield build_person_service(session)
 
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_person_service] = override_get_person_service
@@ -139,7 +140,7 @@ def migrated_api_client(migrated_engine: Engine):
 
     def override_get_person_service() -> Iterator[PersonService]:
         with factory() as session:
-            yield PersonService(PostgresPersonRepository(session))
+            yield build_person_service(session)
 
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_person_service] = override_get_person_service

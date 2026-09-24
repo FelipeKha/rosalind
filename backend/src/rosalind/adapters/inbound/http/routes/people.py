@@ -12,8 +12,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from rosalind.adapters.composition import get_person_service
 from rosalind.adapters.inbound.http.schemas import people as schemas
-from rosalind.adapters.outbound.persistence.session import get_person_service
 from rosalind.application.services.people import PersonService
 
 router = APIRouter(prefix="/people", tags=["people"])

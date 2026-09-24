@@ -13,18 +13,11 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from rosalind import config
+from rosalind.adapters import composition
 from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
-from rosalind.adapters.outbound.persistence.repositories.person import (
-    PostgresPersonRepository,
-)
 from rosalind.adapters.outbound.persistence.session import SessionLocal
-from rosalind.application.services.people import PersonService
 
 mcp = MCPServer("rosalind")
-
-
-def _service(session) -> PersonService:
-    return PersonService(PostgresPersonRepository(session))
 
 
 @mcp.tool()
@@ -36,7 +29,7 @@ def search_people(query: str) -> list[PersonProfileResult]:
     general personal-data search.
     """
     with SessionLocal() as session:
-        results = _service(session).search_people(query)
+        results = composition.build_person_service(session).search_people(query)
     return [PersonProfileResult(**asdict(profile)) for profile in results]
 
 
@@ -48,7 +41,7 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
     such person exists.
     """
     with SessionLocal() as session:
-        profile = _service(session).get_person(person_id)
+        profile = composition.build_person_service(session).get_person(person_id)
     return PersonProfileResult(**asdict(profile)) if profile is not None else None
 
 

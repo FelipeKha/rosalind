@@ -7,12 +7,23 @@ adapters (and tests) build their service graph from here.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
+from sqlalchemy.orm import Session
+
 from rosalind.adapters.inbound.ingestion.google.parser import GooglePersonParser
 from rosalind.adapters.outbound.google.auth import GoogleAuthGateway
 from rosalind.adapters.outbound.google.people import GooglePeopleGateway
 from rosalind.adapters.outbound.object_storage.s3 import S3ObjectStorage
+from rosalind.adapters.outbound.persistence.repositories.person import (
+    PostgresPersonRepository,
+)
+from rosalind.adapters.outbound.persistence.session import SessionLocal
+from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.application.canonicalization.person import CanonicalizationService
+from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.imports import ImportService
+from rosalind.application.services.people import PersonService
 from rosalind.application.services.processing import ProcessingService
 from rosalind.application.services.sources import SourceService
 
@@ -38,3 +49,29 @@ import_service = ImportService(
     sources=source_service,
     processing=processing_service,
 )
+
+
+def build_person_service(session: Session) -> PersonService:
+    return PersonService(PostgresPersonRepository(session))
+
+
+def get_uow() -> Iterator[UnitOfWork]:
+    """Provide a transaction-scoped unit of work for a request.
+
+    Explicitly rolls back on exception and always closes the session, rather
+    than relying on pool-level connection reset behavior.
+    """
+    session = SessionLocal()
+    try:
+        yield SqlAlchemyUnitOfWork(session)
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def get_person_service() -> Iterator[PersonService]:
+    """Provide a session-bound read-only person service for a request."""
+    with SessionLocal() as session:
+        yield build_person_service(session)

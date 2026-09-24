@@ -8,8 +8,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Response, status
 
 from rosalind.adapters import composition
+from rosalind.adapters.composition import get_uow
 from rosalind.adapters.inbound.http.schemas import imports as schemas
-from rosalind.adapters.outbound.persistence.session import get_uow
 from rosalind.application import manifest
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.domain.source import Import, ImportFile
