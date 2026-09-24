@@ -8,7 +8,6 @@ MCP tool calls instead of HTTP requests. It reuses the backend's single
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict
 
 from mcp.server.mcpserver import MCPServer
 
@@ -16,6 +15,7 @@ from rosalind import config
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
 from rosalind.adapters.outbound.persistence.session import SessionLocal
+from rosalind.application.read_models import PersonProfile
 
 mcp = MCPServer("rosalind")
 
@@ -30,7 +30,7 @@ def search_people(query: str) -> list[PersonProfileResult]:
     """
     with SessionLocal() as session:
         results = composition.build_person_service(session).search_people(query)
-    return [PersonProfileResult(**asdict(profile)) for profile in results]
+    return [_to_result(profile) for profile in results]
 
 
 @mcp.tool()
@@ -42,7 +42,23 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
     """
     with SessionLocal() as session:
         profile = composition.build_person_service(session).get_person(person_id)
-    return PersonProfileResult(**asdict(profile)) if profile is not None else None
+    return _to_result(profile) if profile is not None else None
+
+
+def _to_result(profile: PersonProfile) -> PersonProfileResult:
+    return PersonProfileResult(
+        person_id=profile.person_id,
+        display_name=profile.display_name,
+        given_name=profile.given_name,
+        family_name=profile.family_name,
+        primary_email=profile.primary_email,
+        email_verified=profile.email_verified,
+        gender=profile.gender,
+        locale=profile.locale,
+        birth_year=profile.birth_year,
+        birth_month=profile.birth_month,
+        birth_day=profile.birth_day,
+    )
 
 
 def main() -> None:
