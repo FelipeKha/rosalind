@@ -10,6 +10,7 @@ from rosalind.application.errors import (
     ProviderError,
     SourceNotFoundError,
     TokenNotFoundError,
+    UnsupportedImportTypeError,
 )
 from rosalind.security import SecurityError
 
@@ -41,6 +42,13 @@ async def _invalid_import_state(
 
 @app.exception_handler(InvalidManifestError)
 async def _invalid_manifest(_: Request, exc: InvalidManifestError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(UnsupportedImportTypeError)
+async def _unsupported_import_type(
+    _: Request, exc: UnsupportedImportTypeError
+) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 

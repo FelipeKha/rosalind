@@ -21,9 +21,10 @@ def _stub_client(monkeypatch) -> _FakeS3:
 
 def test_delete_objects_batches(monkeypatch) -> None:
     fake = _stub_client(monkeypatch)
+    storage = s3.S3ObjectStorage(bucket="bucket")
     keys = [f"key-{i}" for i in range(2500)]
 
-    s3.delete_objects("bucket", keys)
+    storage.delete_objects(keys)
 
     assert len(fake.calls) == 3
     flattened = [key for _, batch in fake.calls for key in batch]
@@ -32,15 +33,23 @@ def test_delete_objects_batches(monkeypatch) -> None:
 
 def test_delete_objects_skips_empty_keys(monkeypatch) -> None:
     fake = _stub_client(monkeypatch)
+    storage = s3.S3ObjectStorage(bucket="bucket")
 
-    s3.delete_objects("bucket", ["", "a", "", "b"])
+    storage.delete_objects(["", "a", "", "b"])
 
     assert fake.calls == [("bucket", ["a", "b"])]
 
 
 def test_delete_objects_no_keys_is_noop(monkeypatch) -> None:
     fake = _stub_client(monkeypatch)
+    storage = s3.S3ObjectStorage(bucket="bucket")
 
-    s3.delete_objects("bucket", [])
+    storage.delete_objects([])
 
     assert fake.calls == []
+
+
+def test_bucket_defaults_to_config(monkeypatch) -> None:
+    monkeypatch.setattr(s3.config.settings, "s3_bucket", "from-config")
+
+    assert s3.S3ObjectStorage().bucket == "from-config"

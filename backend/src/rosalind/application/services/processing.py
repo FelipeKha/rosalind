@@ -39,6 +39,7 @@ class ProcessOutcome:
     """Summary of one ``process`` operation on an import."""
 
     result: str
+    processing_status: str
     message: str | None = None
     people_created: int = 0
     facts_created: int = 0
@@ -105,13 +106,16 @@ class ProcessingService:
 
         if import_.source_account_id is None:
             return ProcessOutcome(
-                result=RESULT_UNSUPPORTED, message="import has no source"
+                result=RESULT_UNSUPPORTED,
+                processing_status=import_.processing_status,
+                message="import has no source",
             )
 
         records = uow.source_records.list_for_import(import_.id)
         if not records:
             return ProcessOutcome(
                 result=RESULT_UNSUPPORTED,
+                processing_status=import_.processing_status,
                 message="No parser available for this import type.",
             )
 
@@ -119,7 +123,9 @@ class ProcessingService:
             source_account = self._sources.get_source(uow, import_.source_account_id)
         except SourceNotFoundError:
             return ProcessOutcome(
-                result=RESULT_UNSUPPORTED, message="source is missing"
+                result=RESULT_UNSUPPORTED,
+                processing_status=import_.processing_status,
+                message="source is missing",
             )
 
         counters = {
@@ -141,6 +147,7 @@ class ProcessingService:
 
         return ProcessOutcome(
             result=RESULT_OK,
+            processing_status=PROCESSING_COMPLETED,
             people_created=counters["people_created"],
             facts_created=counters["facts_created"],
             facts_reused=counters["facts_reused"],

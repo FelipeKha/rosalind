@@ -21,6 +21,10 @@ class InvalidManifestError(IngestionError):
     """Raised when a completion manifest is malformed."""
 
 
+class UnsupportedImportTypeError(IngestionError):
+    """Raised when an import type has no known ingestion path."""
+
+
 class InvalidPayloadError(IngestionError):
     """Raised when a provider payload cannot be mapped to a source record."""
 

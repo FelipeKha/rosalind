@@ -38,20 +38,26 @@ def _build_client() -> S3Client:
 _client: S3Client | None = None
 
 
-def delete_objects(bucket: str, keys: Sequence[str]) -> None:
-    """Delete the given object keys from the bucket in batches."""
-    global _client
+class S3ObjectStorage:
+    """``ObjectStorage`` implementation backed by S3-compatible storage."""
 
-    keys = [key for key in keys if key]
-    if not keys:
-        return
+    def __init__(self, bucket: str | None = None) -> None:
+        self.bucket = bucket if bucket is not None else config.settings.s3_bucket
 
-    if _client is None:
-        _client = _build_client()
+    def delete_objects(self, keys: Sequence[str]) -> None:
+        """Delete the given object keys from the bucket in batches."""
+        global _client
 
-    for start in range(0, len(keys), _DELETE_BATCH_SIZE):
-        batch = keys[start : start + _DELETE_BATCH_SIZE]
-        _client.delete_objects(
-            Bucket=bucket,
-            Delete={"Objects": [{"Key": key} for key in batch]},
-        )
+        keys = [key for key in keys if key]
+        if not keys:
+            return
+
+        if _client is None:
+            _client = _build_client()
+
+        for start in range(0, len(keys), _DELETE_BATCH_SIZE):
+            batch = keys[start : start + _DELETE_BATCH_SIZE]
+            _client.delete_objects(
+                Bucket=self.bucket,
+                Delete={"Objects": [{"Key": key} for key in batch]},
+            )

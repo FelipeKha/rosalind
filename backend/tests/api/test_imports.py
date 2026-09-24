@@ -2,7 +2,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from rosalind.adapters.outbound.object_storage import s3
+from rosalind.adapters import composition
 
 SHA256 = "a" * 64
 
@@ -117,9 +117,9 @@ def test_delete_import(api_client: TestClient, monkeypatch) -> None:
 
     deleted_keys: list[str] = []
     monkeypatch.setattr(
-        s3,
+        composition.object_storage,
         "delete_objects",
-        lambda bucket, keys: deleted_keys.extend(keys),
+        lambda keys: deleted_keys.extend(keys),
     )
 
     response = api_client.delete(f"/imports/{import_id}")
@@ -144,11 +144,11 @@ def test_delete_import_deletes_objects_before_rows(
 
     calls: list[str] = []
 
-    def fake_delete(bucket: str, keys: list[str]) -> None:
+    def fake_delete(keys: list[str]) -> None:
         calls.append("objects")
         assert api_client.get(f"/imports/{import_id}").status_code == 200
 
-    monkeypatch.setattr(s3, "delete_objects", fake_delete)
+    monkeypatch.setattr(composition.object_storage, "delete_objects", fake_delete)
 
     assert api_client.delete(f"/imports/{import_id}").status_code == 204
     assert calls == ["objects"]

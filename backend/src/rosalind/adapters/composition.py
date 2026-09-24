@@ -10,12 +10,16 @@ from __future__ import annotations
 from rosalind.adapters.inbound.ingestion.google.parser import GooglePersonParser
 from rosalind.adapters.outbound.google.auth import GoogleAuthGateway
 from rosalind.adapters.outbound.google.people import GooglePeopleGateway
+from rosalind.adapters.outbound.object_storage.s3 import S3ObjectStorage
 from rosalind.application.canonicalization.person import CanonicalizationService
+from rosalind.application.services.imports import ImportService
 from rosalind.application.services.processing import ProcessingService
 from rosalind.application.services.sources import SourceService
 
 google_auth = GoogleAuthGateway()
 google_people = GooglePeopleGateway()
+
+object_storage = S3ObjectStorage()
 
 source_service = SourceService(google_auth)
 
@@ -27,4 +31,10 @@ processing_service = ProcessingService(
     people=google_people,
     sources=source_service,
     canonicalizer=CanonicalizationService(),
+)
+
+import_service = ImportService(
+    storage=object_storage,
+    sources=source_service,
+    processing=processing_service,
 )

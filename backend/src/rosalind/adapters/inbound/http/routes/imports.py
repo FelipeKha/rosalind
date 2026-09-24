@@ -5,16 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 
-from rosalind import config
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.http.schemas import imports as schemas
-from rosalind.adapters.outbound.object_storage import s3
 from rosalind.adapters.outbound.persistence.session import get_uow
 from rosalind.application import manifest
 from rosalind.application.ports.unit_of_work import UnitOfWork
-from rosalind.application.services import imports as imports_service
 from rosalind.domain.source import Import, ImportFile
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -24,7 +21,7 @@ UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 
 @router.get("", response_model=schemas.ImportListResponse)
 def list_imports(uow: UowDep) -> schemas.ImportListResponse:
-    imports = imports_service.list_imports(uow)
+    imports = composition.import_service.list_imports(uow)
     return schemas.ImportListResponse(
         imports=[_to_summary(import_) for import_ in imports]
     )
@@ -39,26 +36,13 @@ def create_import(
     body: schemas.ImportCreateRequest,
     uow: UowDep,
 ) -> schemas.ImportCreatedResponse:
-    source = composition.source_service.resolve_source(uow, body.source_name)
-
-    if body.type == imports_service.IMPORT_TYPE_TAKEOUT:
-        import_ = imports_service.create_import(uow, source, body.type)
-    elif body.type == imports_service.IMPORT_TYPE_API:
-        import_ = imports_service.create_import(uow, source, body.type)
-        composition.processing_service.import_api_profile(uow, source, import_)
-        import_ = imports_service.complete_api_import(uow, import_.id)
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"unsupported import type {body.type!r}",
-        )
-
+    import_ = composition.import_service.create_import(uow, body.source_name, body.type)
     return schemas.ImportCreatedResponse(
         import_id=import_.id,
         source_id=import_.source_account_id,
-        source_name=source.name,
+        source_name=import_.source_name,
         type=import_.type,
-        bucket=config.settings.s3_bucket,
+        bucket=composition.object_storage.bucket,
         storage_prefix=manifest.storage_prefix(import_.id),
         ingestion_status=import_.ingestion_status,
         processing_status=import_.processing_status,
@@ -84,7 +68,7 @@ def complete_import(
         )
         for f in body.files
     ]
-    import_ = imports_service.complete_import(uow, import_id, entries)
+    import_ = composition.import_service.complete_import(uow, import_id, entries)
     return _to_summary(import_)
 
 
@@ -99,7 +83,7 @@ def process_import(
     outcome = composition.processing_service.process_import(uow, import_id)
     return schemas.ProcessingResultResponse(
         import_id=import_id,
-        processing_status=_processing_status(uow, import_id),
+        processing_status=outcome.processing_status,
         result=outcome.result,
         message=outcome.message,
         people_created=outcome.people_created,
@@ -117,7 +101,7 @@ def get_import(
     import_id: uuid.UUID,
     uow: UowDep,
 ) -> schemas.ImportDetailResponse:
-    import_ = imports_service.get_import(uow, import_id)
+    import_ = composition.import_service.get_import(uow, import_id)
     return schemas.ImportDetailResponse(
         **_to_summary(import_).model_dump(),
         files=[_to_file(f) for f in import_.files],
@@ -132,15 +116,8 @@ def delete_import(
     import_id: uuid.UUID,
     uow: UowDep,
 ) -> Response:
-    import_ = imports_service.get_import(uow, import_id)
-    s3.delete_objects(config.settings.s3_bucket, [f.storage_key for f in import_.files])
-    imports_service.delete_import(uow, import_id)
+    composition.import_service.delete_import(uow, import_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-def _processing_status(uow: UnitOfWork, import_id: uuid.UUID) -> str:
-    import_ = imports_service.get_import(uow, import_id)
-    return import_.processing_status
 
 
 def _to_summary(import_: Import) -> schemas.ImportSummaryResponse:
