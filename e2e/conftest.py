@@ -123,7 +123,7 @@ def backend_base_url(
     container.with_env("ROSALIND_S3_REGION", S3_REGION)
     container.with_command(
         "sh -lc 'uv run alembic upgrade head && "
-        "uv run uvicorn rosalind.api.app:app --host 0.0.0.0 --port 8000'"
+        "uv run uvicorn rosalind.adapters.inbound.http.app:app --host 0.0.0.0 --port 8000'"
     )
     container.with_exposed_ports(8000)
     container.start()

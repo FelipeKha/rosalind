@@ -2,8 +2,8 @@ import uuid
 
 import pytest
 
-from rosalind.ingestion import manifest
-from rosalind.ingestion.errors import InvalidManifestError
+from rosalind.application import manifest
+from rosalind.application.errors import InvalidManifestError
 
 
 def test_storage_key_uses_import_id_and_path() -> None:

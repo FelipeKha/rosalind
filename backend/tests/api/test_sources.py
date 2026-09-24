@@ -1,50 +1,44 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
-from google.oauth2.credentials import Credentials
 
-from rosalind.auth.errors import ProviderError
-from rosalind.providers.google import people as google_people
-from rosalind.services import sources as sources_service
+from rosalind.adapters import composition
+from rosalind.application.errors import ProviderError
+from rosalind.application.ports.providers import ProviderCredentials, UserIdentity
 
 FAKE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth?foo=bar"
 
 
-def _fake_credentials() -> Credentials:
-    return Credentials(
-        token="access-token",
+def _fake_credentials() -> ProviderCredentials:
+    return ProviderCredentials(
+        access_token="access-token",
         refresh_token="refresh-token",
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id="client-id",
-        client_secret="client-secret",
         scopes=[
             "openid",
             "https://www.googleapis.com/auth/userinfo.profile",
             "https://www.googleapis.com/auth/userinfo.email",
         ],
-        expiry=datetime.now(UTC) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
 
 
 def _stub_google(monkeypatch) -> None:
     monkeypatch.setattr(
-        sources_service.google_auth,
+        composition.google_auth,
         "build_authorization_url",
         lambda state: (FAKE_AUTH_URL, "code-verifier"),
     )
     monkeypatch.setattr(
-        sources_service.google_auth,
+        composition.google_auth,
         "exchange_code",
         lambda state, code, code_verifier: _fake_credentials(),
     )
     monkeypatch.setattr(
-        sources_service.google_auth,
+        composition.google_auth,
         "fetch_userinfo",
-        lambda credentials: {
-            "id": "12345",
-            "email": "jane@example.com",
-            "name": "Jane Doe",
-        },
+        lambda credentials: UserIdentity(
+            account_identifier="12345", display_name="Jane Doe"
+        ),
     )
 
 
@@ -129,7 +123,7 @@ def test_api_import_creates_canonical_data(
 ) -> None:
     _stub_google(monkeypatch)
     monkeypatch.setattr(
-        google_people,
+        composition.google_people,
         "fetch_profile",
         lambda credentials: {
             "resourceName": "people/12345",
@@ -177,7 +171,7 @@ def test_disconnect_removes_credentials(api_client: TestClient, monkeypatch) -> 
     _stub_google(monkeypatch)
     revoke_calls: list[str] = []
     monkeypatch.setattr(
-        sources_service.google_auth, "revoke", lambda token: revoke_calls.append(token)
+        composition.google_auth, "revoke", lambda token: revoke_calls.append(token)
     )
 
     body = _connect(api_client)
@@ -211,7 +205,7 @@ def test_disconnect_revocation_failure_still_removes(
     def boom(token: str) -> None:
         raise ProviderError("network down")
 
-    monkeypatch.setattr(sources_service.google_auth, "revoke", boom)
+    monkeypatch.setattr(composition.google_auth, "revoke", boom)
 
     body = _connect(api_client)
     api_client.get(
@@ -240,7 +234,7 @@ def test_disconnect_already_disconnected(api_client: TestClient, monkeypatch) ->
 
 def test_reconnect_reuses_account(api_client: TestClient, monkeypatch) -> None:
     _stub_google(monkeypatch)
-    monkeypatch.setattr(sources_service.google_auth, "revoke", lambda token: None)
+    monkeypatch.setattr(composition.google_auth, "revoke", lambda token: None)
 
     first_state = _connect(api_client)["state"]
     api_client.get(

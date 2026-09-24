@@ -29,7 +29,7 @@ check: lint typecheck test security
 
 # Start the development server
 serve:
-    uv run uvicorn rosalind.api.app:app --reload
+    uv run uvicorn rosalind.adapters.inbound.http.app:app --reload
 
 # Start the MCP server (transport via ROSALIND_MCP_TRANSPORT: stdio, sse, or streamable-http)
 mcp-serve:

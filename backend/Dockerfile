@@ -22,4 +22,4 @@ RUN uv sync --locked && \
 
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "rosalind.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "rosalind.adapters.inbound.http.app:app", "--host", "0.0.0.0", "--port", "8000"]

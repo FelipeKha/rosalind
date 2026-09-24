@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from rosalind.ingestion.google.models import GooglePerson
-from rosalind.ingestion.google.parser import map_google_person
+from rosalind.adapters.inbound.ingestion.google.models import GooglePerson
+from rosalind.adapters.inbound.ingestion.google.parser import map_google_person
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"

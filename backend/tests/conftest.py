@@ -8,9 +8,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.community.postgres import PostgresContainer
 
 from rosalind import config
-from rosalind.api.app import app
-from rosalind.db import get_db
-from rosalind.models import Base
+from rosalind.adapters.composition import (
+    build_person_service,
+    get_person_service,
+    get_uow,
+)
+from rosalind.adapters.inbound.http.app import app
+from rosalind.adapters.outbound.persistence.models import Base
+from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.application.services.people import PersonService
 from tests._db import make_migrated_engine, reset_schemas
 
 
@@ -60,15 +66,25 @@ def db_session(postgres_url: str) -> Iterator[Session]:
 
 
 @pytest.fixture()
+def uow(db_session: Session) -> SqlAlchemyUnitOfWork:
+    return SqlAlchemyUnitOfWork(db_session)
+
+
+@pytest.fixture()
 def api_client(postgres_url: str):
     engine = _make_engine(postgres_url)
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
-    def override_get_db() -> Iterator[Session]:
+    def override_get_uow() -> Iterator[SqlAlchemyUnitOfWork]:
         with factory() as session:
-            yield session
+            yield SqlAlchemyUnitOfWork(session)
 
-    app.dependency_overrides[get_db] = override_get_db
+    def override_get_person_service() -> Iterator[PersonService]:
+        with factory() as session:
+            yield build_person_service(session)
+
+    app.dependency_overrides[get_uow] = override_get_uow
+    app.dependency_overrides[get_person_service] = override_get_person_service
     client = TestClient(app)
     try:
         yield client
@@ -107,17 +123,27 @@ def migrated_db_session(migrated_engine: Engine) -> Iterator[Session]:
 
 
 @pytest.fixture()
+def migrated_uow(migrated_db_session: Session) -> SqlAlchemyUnitOfWork:
+    return SqlAlchemyUnitOfWork(migrated_db_session)
+
+
+@pytest.fixture()
 def migrated_api_client(migrated_engine: Engine):
     """A TestClient backed by the real Alembic-migrated database."""
     factory = sessionmaker(
         bind=migrated_engine, autoflush=False, expire_on_commit=False
     )
 
-    def override_get_db() -> Iterator[Session]:
+    def override_get_uow() -> Iterator[SqlAlchemyUnitOfWork]:
         with factory() as session:
-            yield session
+            yield SqlAlchemyUnitOfWork(session)
 
-    app.dependency_overrides[get_db] = override_get_db
+    def override_get_person_service() -> Iterator[PersonService]:
+        with factory() as session:
+            yield build_person_service(session)
+
+    app.dependency_overrides[get_uow] = override_get_uow
+    app.dependency_overrides[get_person_service] = override_get_person_service
     client = TestClient(app)
     try:
         yield client

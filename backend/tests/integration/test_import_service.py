@@ -1,16 +1,43 @@
 import uuid
+from collections.abc import Callable, Sequence
 
 import pytest
-from sqlalchemy.orm import Session
 
-from rosalind import models
-from rosalind.ingestion import manifest
-from rosalind.ingestion.errors import (
+from rosalind.adapters import composition
+from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.application import manifest
+from rosalind.application.errors import (
     ImportNotFoundError,
     InvalidImportStateError,
     InvalidManifestError,
 )
-from rosalind.services import imports, sources
+from rosalind.application.services import imports
+from rosalind.domain.source import SourceAccount
+
+SOURCE_NAME = "google-personal"
+
+
+class _FakeStorage:
+    bucket: str
+    deleted: list[str]
+
+    def __init__(self) -> None:
+        self.bucket = "test-bucket"
+        self.deleted = []
+        self.on_delete: Callable[[Sequence[str]], None] | None = None
+
+    def delete_objects(self, keys: Sequence[str]) -> None:
+        self.deleted.extend(keys)
+        if self.on_delete is not None:
+            self.on_delete(keys)
+
+
+def _service(storage: _FakeStorage | None = None) -> imports.ImportService:
+    return imports.ImportService(
+        storage=storage or _FakeStorage(),
+        sources=composition.source_service,
+        processing=composition.processing_service,
+    )
 
 
 def _entry(
@@ -19,18 +46,21 @@ def _entry(
     return manifest.FileEntry(path=path, sha256=sha256, size=size, format="json")
 
 
-def _source(db: Session) -> models.SourceAccount:
-    return sources.create_source(db, provider="google", name="google-personal")
+def _source(uow: SqlAlchemyUnitOfWork) -> SourceAccount:
+    return composition.source_service.create_source(
+        uow, provider="google", name=SOURCE_NAME
+    )
 
 
-def test_create_and_complete_import(db_session: Session) -> None:
-    source = _source(db_session)
-    imp = imports.create_import(db_session, source, "takeout")
+def test_create_and_complete_import(uow: SqlAlchemyUnitOfWork) -> None:
+    source = _source(uow)
+    svc = _service()
+    imp = svc.create_import(uow, SOURCE_NAME, "takeout")
     assert imp.ingestion_status == "uploading"
     assert imp.processing_status == "pending"
     assert imp.source_account_id == source.id
 
-    completed = imports.complete_import(db_session, imp.id, [_entry()])
+    completed = svc.complete_import(uow, imp.id, [_entry()])
     assert completed.ingestion_status == "completed"
     assert completed.file_count == 1
     assert completed.total_size == 1
@@ -39,92 +69,118 @@ def test_create_and_complete_import(db_session: Session) -> None:
     assert completed.files[0].storage_key == f"imports/{imp.id}/a.json"
 
 
-def test_get_import_returns_files(db_session: Session) -> None:
-    source = _source(db_session)
-    imp = imports.create_import(db_session, source, "takeout")
-    imports.complete_import(
-        db_session, imp.id, [_entry("Contacts/contacts.json", "b" * 64, 42)]
-    )
+def test_get_import_returns_files(uow: SqlAlchemyUnitOfWork) -> None:
+    _source(uow)
+    svc = _service()
+    imp = svc.create_import(uow, SOURCE_NAME, "takeout")
+    svc.complete_import(uow, imp.id, [_entry("Contacts/contacts.json", "b" * 64, 42)])
 
-    fetched = imports.get_import(db_session, imp.id)
+    fetched = svc.get_import(uow, imp.id)
     assert fetched.file_count == 1
     assert [f.path for f in fetched.files] == ["Contacts/contacts.json"]
 
 
-def test_complete_import_twice_is_rejected(db_session: Session) -> None:
-    source = _source(db_session)
-    imp = imports.create_import(db_session, source, "takeout")
-    imports.complete_import(db_session, imp.id, [_entry()])
+def test_complete_import_twice_is_rejected(uow: SqlAlchemyUnitOfWork) -> None:
+    _source(uow)
+    svc = _service()
+    imp = svc.create_import(uow, SOURCE_NAME, "takeout")
+    svc.complete_import(uow, imp.id, [_entry()])
 
     with pytest.raises(InvalidImportStateError):
-        imports.complete_import(db_session, imp.id, [_entry()])
+        svc.complete_import(uow, imp.id, [_entry()])
 
 
-def test_complete_import_unknown_id(db_session: Session) -> None:
+def test_complete_import_unknown_id(uow: SqlAlchemyUnitOfWork) -> None:
+    svc = _service()
     with pytest.raises(ImportNotFoundError):
-        imports.complete_import(db_session, uuid.uuid4(), [_entry()])
+        svc.complete_import(uow, uuid.uuid4(), [_entry()])
 
 
-def test_complete_import_rejects_duplicate_paths(db_session: Session) -> None:
-    source = _source(db_session)
-    imp = imports.create_import(db_session, source, "takeout")
+def test_complete_import_rejects_duplicate_paths(uow: SqlAlchemyUnitOfWork) -> None:
+    _source(uow)
+    svc = _service()
+    imp = svc.create_import(uow, SOURCE_NAME, "takeout")
     with pytest.raises(InvalidManifestError):
-        imports.complete_import(
-            db_session, imp.id, [_entry("a.json"), _entry("a.json")]
-        )
+        svc.complete_import(uow, imp.id, [_entry("a.json"), _entry("a.json")])
 
 
-def test_complete_import_rejects_invalid_sha256(db_session: Session) -> None:
-    source = _source(db_session)
-    imp = imports.create_import(db_session, source, "takeout")
+def test_complete_import_rejects_invalid_sha256(uow: SqlAlchemyUnitOfWork) -> None:
+    _source(uow)
+    svc = _service()
+    imp = svc.create_import(uow, SOURCE_NAME, "takeout")
     entry = manifest.FileEntry(path="a.json", sha256="bad", size=1)
     with pytest.raises(InvalidManifestError):
-        imports.complete_import(db_session, imp.id, [entry])
+        svc.complete_import(uow, imp.id, [entry])
 
 
-def test_get_import_unknown_id(db_session: Session) -> None:
+def test_get_import_unknown_id(uow: SqlAlchemyUnitOfWork) -> None:
+    svc = _service()
     with pytest.raises(ImportNotFoundError):
-        imports.get_import(db_session, uuid.uuid4())
+        svc.get_import(uow, uuid.uuid4())
 
 
-def test_list_imports_returns_all(db_session: Session) -> None:
-    first_source = sources.create_source(
-        db_session, provider="google", name="google-personal"
+def test_list_imports_returns_all(uow: SqlAlchemyUnitOfWork) -> None:
+    composition.source_service.create_source(
+        uow, provider="google", name="google-personal"
     )
-    second_source = sources.create_source(
-        db_session, provider="apple", name="apple-personal"
+    composition.source_service.create_source(
+        uow, provider="apple", name="apple-personal"
     )
+    svc = _service()
 
-    first = imports.create_import(db_session, first_source, "takeout")
-    second = imports.create_import(db_session, second_source, "takeout")
+    first = svc.create_import(uow, "google-personal", "takeout")
+    second = svc.create_import(uow, "apple-personal", "takeout")
 
-    result = imports.list_imports(db_session)
+    result = svc.list_imports(uow)
 
     assert {imp.id for imp in result} == {first.id, second.id}
 
 
-def test_list_imports_empty(db_session: Session) -> None:
-    assert imports.list_imports(db_session) == []
+def test_list_imports_empty(uow: SqlAlchemyUnitOfWork) -> None:
+    assert _service().list_imports(uow) == []
 
 
-def test_delete_import(db_session: Session) -> None:
-    source = _source(db_session)
-    imp = imports.create_import(db_session, source, "takeout")
-    imports.complete_import(db_session, imp.id, [_entry()])
+def test_delete_import(uow: SqlAlchemyUnitOfWork) -> None:
+    _source(uow)
+    storage = _FakeStorage()
+    svc = _service(storage)
+    imp = svc.create_import(uow, SOURCE_NAME, "takeout")
+    svc.complete_import(uow, imp.id, [_entry()])
 
-    imports.delete_import(db_session, imp.id)
+    svc.delete_import(uow, imp.id)
 
+    assert storage.deleted == [f"imports/{imp.id}/a.json"]
     with pytest.raises(ImportNotFoundError):
-        imports.get_import(db_session, imp.id)
+        svc.get_import(uow, imp.id)
 
 
-def test_delete_import_unknown_id(db_session: Session) -> None:
+def test_delete_import_unknown_id(uow: SqlAlchemyUnitOfWork) -> None:
     with pytest.raises(ImportNotFoundError):
-        imports.delete_import(db_session, uuid.uuid4())
+        _service().delete_import(uow, uuid.uuid4())
 
 
-def test_create_import_requires_source(db_session: Session) -> None:
-    from rosalind.auth.errors import SourceNotFoundError
+def test_delete_import_deletes_objects_before_rows(uow: SqlAlchemyUnitOfWork) -> None:
+    _source(uow)
+    storage = _FakeStorage()
+    svc = _service(storage)
+    imp = svc.create_import(uow, SOURCE_NAME, "takeout")
+    svc.complete_import(uow, imp.id, [_entry()])
+
+    calls: list[str] = []
+
+    def on_delete(keys: Sequence[str]) -> None:
+        calls.append("objects")
+        assert uow.imports.get(imp.id) is not None
+
+    storage.on_delete = on_delete
+
+    svc.delete_import(uow, imp.id)
+
+    assert calls == ["objects"]
+
+
+def test_create_import_requires_source(uow: SqlAlchemyUnitOfWork) -> None:
+    from rosalind.application.errors import SourceNotFoundError
 
     with pytest.raises(SourceNotFoundError):
-        sources.resolve_source(db_session, "does-not-exist")
+        composition.source_service.resolve_source(uow, "does-not-exist")

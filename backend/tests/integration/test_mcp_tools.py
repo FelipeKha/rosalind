@@ -8,10 +8,10 @@ from mcp.server.mcpserver.exceptions import ToolError
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
-import rosalind.mcp.server as mcp_server
-from rosalind import models
-from rosalind.mcp.schemas import PersonProfileResult
-from rosalind.services import processing
+import rosalind.adapters.inbound.mcp.server as mcp_server
+from rosalind.adapters import composition
+from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
+from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -21,12 +21,13 @@ FIXTURE = (
 def _ingest(engine: Engine) -> uuid.UUID:
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     with factory() as db:
-        account = models.SourceAccount(
-            provider="google", account_identifier="test-account"
+        uow = SqlAlchemyUnitOfWork(db)
+        account = composition.source_service.create_source(
+            uow, provider="google", name="test-account"
         )
-        db.add(account)
-        db.commit()
-        result = processing.ingest_person(db, account, json.loads(FIXTURE.read_text()))
+        result = composition.processing_service.ingest_person(
+            uow, account, json.loads(FIXTURE.read_text())
+        )
         return result.person_id
 
 
