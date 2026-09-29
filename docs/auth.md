@@ -81,3 +81,8 @@ logged, and are refreshed from the stored refresh token when expired or on a
 The realm and clients are imported from `keycloak/rosalind-realm.json` on
 container start (`start-dev --import-realm`), so no manual admin-console setup
 is required.
+
+Registration uses **email as username** (`registrationEmailAsUsername: true`,
+`editUsernameAllowed: false`): the registration form asks for first name, last
+name, email, and password (no separate username field), and the Keycloak
+username is derived from the email address.

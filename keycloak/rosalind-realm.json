@@ -2,6 +2,8 @@
   "realm": "rosalind",
   "enabled": true,
   "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "editUsernameAllowed": false,
   "loginWithEmailAllowed": true,
   "resetPasswordAllowed": true,
   "verifyEmail": false,
