@@ -1,0 +1,94 @@
+{
+  "resourceName": "people/123456789012345678901",
+  "etag": "%EiMBAgMFBgcICQoLDA0ODxATFBUWGSEiIyQlJicuNDU3PT4/QBoEAQIFByIMeVNGYkp3c3NDTzg9",
+  "metadata": {
+    "sources": [
+      {
+        "type": "PROFILE",
+        "id": "123456789012345678901",
+        "etag": "#fU+nyYOTnAA=",
+        "profileMetadata": { "objectType": "PERSON", "userTypes": ["GOOGLE_USER"] },
+        "updateTime": "2023-10-23T18:11:19.066056Z"
+      }
+    ],
+    "objectType": "PERSON"
+  },
+  "locales": [
+    {
+      "metadata": {
+        "primary": true,
+        "source": { "type": "ACCOUNT", "id": "123456789012345678901" }
+      },
+      "value": "en-GB"
+    }
+  ],
+  "names": [
+    {
+      "metadata": {
+        "primary": true,
+        "source": { "type": "PROFILE", "id": "123456789012345678901" },
+        "sourcePrimary": true
+      },
+      "displayName": "Alex Morgan",
+      "familyName": "Morgan",
+      "givenName": "Alex",
+      "displayNameLastFirst": "Morgan, Alex",
+      "unstructuredName": "Alex Morgan"
+    }
+  ],
+  "photos": [
+    {
+      "metadata": {
+        "primary": true,
+        "source": { "type": "PROFILE", "id": "123456789012345678901" }
+      },
+      "url": "https://example.com/photo.jpg",
+      "default": true
+    }
+  ],
+  "genders": [
+    {
+      "metadata": {
+        "primary": true,
+        "source": { "type": "PROFILE", "id": "123456789012345678901" }
+      },
+      "value": "female",
+      "formattedValue": "Female"
+    }
+  ],
+  "birthdays": [
+    {
+      "metadata": {
+        "primary": true,
+        "source": { "type": "PROFILE", "id": "123456789012345678901" }
+      },
+      "date": { "year": 1988, "month": 4, "day": 17 }
+    },
+    {
+      "metadata": {
+        "source": { "type": "ACCOUNT", "id": "123456789012345678901" }
+      },
+      "date": { "year": 1988, "month": 4, "day": 17 }
+    }
+  ],
+  "emailAddresses": [
+    {
+      "metadata": {
+        "primary": true,
+        "verified": true,
+        "source": { "type": "ACCOUNT", "id": "123456789012345678901" },
+        "sourcePrimary": true
+      },
+      "value": "alex.morgan@example.com"
+    }
+  ],
+  "ageRanges": [
+    {
+      "metadata": {
+        "primary": true,
+        "source": { "type": "PROFILE", "id": "123456789012345678901" }
+      },
+      "ageRange": "THIRTY_TO_THIRTY_NINE"
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+"""Persistence for source accounts (account-level CRUD only).
+
+OAuth credentials and auth requests remain ORM-internal to ``SourceService``;
+this repository only maps ``public.source_account`` rows to and from the domain
+``SourceAccount`` entity. Mutations flush but do not commit so they can join a
+larger service-level transaction.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from rosalind.adapters.outbound.persistence.models.source import (
+    SourceAccount as SourceAccountModel,
+)
+from rosalind.domain.source import SourceAccount
+
+
+class PostgresSourceAccountRepository:
+    def __init__(self, session: Session):
+        self._session = session
+
+    def get(self, source_id: uuid.UUID) -> SourceAccount | None:
+        account = self._session.get(SourceAccountModel, source_id)
+        return self._to_domain(account) if account is not None else None
+
+    def get_by_name(self, name: str) -> SourceAccount | None:
+        account = self._session.scalar(
+            select(SourceAccountModel).where(SourceAccountModel.name == name)
+        )
+        return self._to_domain(account) if account is not None else None
+
+    def get_by_identity(
+        self, provider: str, account_identifier: str
+    ) -> SourceAccount | None:
+        account = self._session.scalar(
+            select(SourceAccountModel).where(
+                SourceAccountModel.provider == provider,
+                SourceAccountModel.account_identifier == account_identifier,
+            )
+        )
+        return self._to_domain(account) if account is not None else None
+
+    def list(self) -> list[SourceAccount]:
+        accounts = self._session.scalars(
+            select(SourceAccountModel).order_by(SourceAccountModel.created_at)
+        ).all()
+        return [self._to_domain(account) for account in accounts]
+
+    def create(self, *, provider: str, name: str | None = None) -> SourceAccount:
+        account = SourceAccountModel(provider=provider, name=name)
+        self._session.add(account)
+        self._session.flush()
+        return self._to_domain(account)
+
+    def update(self, account: SourceAccount) -> SourceAccount:
+        model = self._session.get(SourceAccountModel, account.id)
+        if model is None:
+            raise ValueError(f"source account {account.id} not found")
+        model.provider = account.provider
+        model.name = account.name
+        model.account_identifier = account.account_identifier
+        model.display_name = account.display_name
+        self._session.flush()
+        return self._to_domain(model)
+
+    def delete(self, source_id: uuid.UUID) -> None:
+        model = self._session.get(SourceAccountModel, source_id)
+        if model is None:
+            return
+        self._session.delete(model)
+        self._session.flush()
+
+    @staticmethod
+    def _to_domain(account: SourceAccountModel) -> SourceAccount:
+        return SourceAccount(
+            id=account.id,
+            provider=account.provider,
+            name=account.name,
+            account_identifier=account.account_identifier,
+            display_name=account.display_name,
+            created_at=account.created_at,
+        )

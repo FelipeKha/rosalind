@@ -1,0 +1,47 @@
+# List available recipes
+default:
+    @just --list
+
+# Format Python code
+format:
+    uv run ruff format .
+
+# Check formatting and linting
+lint:
+    uv run ruff format --check .
+    uv run ruff check .
+
+# Run static type checking
+typecheck:
+    uv run mypy .
+
+# Run tests
+test:
+    uv run pytest
+
+# Run Python security checks
+security:
+    uv run bandit -r src
+    uv run pip-audit
+
+# Run all Python quality checks
+check: lint typecheck test security
+
+# Start the development server
+serve:
+    uv run uvicorn rosalind.adapters.inbound.http.app:app --reload
+
+# Start the MCP server (transport via ROSALIND_MCP_TRANSPORT: stdio, sse, or streamable-http)
+mcp-serve:
+    uv run rosalind-mcp
+
+# Apply database migrations
+migrate:
+    uv run alembic upgrade head
+
+# Generate a new database migration
+revision *ARGS:
+    uv run alembic revision --autogenerate {{ARGS}}
+
+# Run the complete CI-quality suite
+ci: check
