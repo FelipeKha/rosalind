@@ -12,6 +12,7 @@ companion docs linked from each section, not here.
 DESIGN.md                    ← you are here: vision, principles, shape
 docs/schema.md                ← full canonical/raw schema reference
 docs/mcp.md                   ← MCP server design and tool contracts
+docs/auth.md                  ← authentication, account/identity model
 docs/providers/<name>.md      ← per-provider parsing pipelines
 docs/invariants.md            ← the full non-negotiable invariants checklist
 docs/roadmap.md               ← phased build plan
@@ -241,6 +242,27 @@ views (for now) optimized for compact, predictable, low-context responses,
 not for integrity or normalization. They are not sources of truth. See
 [§8](#8-agent-oriented-api) and [`docs/schema.md`](docs/schema.md#agent).
 
+### 6.4 Account & identity
+
+Rosalind delegates identity to an external IdP (Keycloak) and only validates
+bearer tokens — it never issues credentials or stores passwords. Two tables
+separate the concerns:
+
+```text
+Keycloak JWT (iss, sub) ──► AccountIdentity (issuer, subject) ──► Account
+```
+
+* `account` — Rosalind's own notion of a user (`self_person_id` links it,
+  optionally, to the canonical person that represents its owner).
+* `account_identity` — a login from an identity provider, unique on
+  `(issuer, subject)`.
+
+Accounts are just-in-time provisioned on first validated token. The split
+leaves room for multiple IdPs and multiple identities per account without
+leaking provider concepts into the account. FastAPI and MCP validate JWTs
+locally against the IdP's JWKS through a shared `TokenVerifier` port. Full
+details: [`docs/auth.md`](docs/auth.md).
+
 ---
 
 ## 7. Canonical Model
@@ -382,7 +404,10 @@ Detail and current status: [`docs/roadmap.md`](docs/roadmap.md).
 * Explicit temporal validity intervals on canonical facts (e.g. employment
   history) — the raw layer already preserves history; canonical validity
   ranges are a later addition.
-* Remote MCP transport, authN/authZ.
+* Full authorization/RBAC and multi-tenant scoping — authentication is
+  implemented ([`docs/auth.md`](docs/auth.md)); `account_id` is not yet
+  retrofitted onto existing resources, and MCP write tools remain deferred
+  until the Actor/authZ model exists.
 * Full provenance graph exposed via MCP responses (currently deferred;
   underlying data is already provenance-linked).
 

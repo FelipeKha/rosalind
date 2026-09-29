@@ -18,6 +18,7 @@ def reset_schemas(engine: Engine) -> None:
         conn.execute(
             text(
                 "DROP TABLE IF EXISTS "
+                "account_identity, account, "
                 "import_files, imports, oauth_auth_request, "
                 "oauth_credentials, source_account CASCADE"
             )

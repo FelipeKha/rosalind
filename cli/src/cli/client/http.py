@@ -45,14 +45,39 @@ class ApiClient:
         params: dict[str, Any] | None = None,
         json: Any = None,
     ) -> Any:
+        return self._request_with_auth(
+            method, path, params=params, json=json, retried=False
+        )
+
+    def _request_with_auth(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None,
+        json: Any,
+        retried: bool,
+    ) -> Any:
+        from cli.client import auth
+
+        headers: dict[str, str] = {}
+        token = auth.get_access_token(force_refresh=retried)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
         try:
             response = httpx.request(
                 method,
                 f"{self._base_url}{path}",
                 params=params,
                 json=json,
+                headers=headers,
                 timeout=self._timeout,
             )
+            if response.status_code == 401 and not retried and token is not None:
+                return self._request_with_auth(
+                    method, path, params=params, json=json, retried=True
+                )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise ApiClientError(_error_detail(exc.response)) from exc

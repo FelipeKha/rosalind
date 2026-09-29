@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 
 from rosalind.adapters.composition import get_source_service, get_uow
+from rosalind.adapters.inbound.http.dependencies import get_current_account
 from rosalind.adapters.inbound.http.schemas import sources as schemas
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.sources import (
@@ -17,7 +18,9 @@ from rosalind.application.services.sources import (
 )
 from rosalind.domain.source import SourceAccount
 
-router = APIRouter(prefix="/sources", tags=["sources"])
+router = APIRouter(
+    prefix="/sources", tags=["sources"], dependencies=[Depends(get_current_account)]
+)
 
 UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 SourceDep = Annotated[SourceService, Depends(get_source_service)]

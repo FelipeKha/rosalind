@@ -12,11 +12,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from rosalind.adapters.composition import get_person_service
+from rosalind.adapters.inbound.http.dependencies import get_current_account
 from rosalind.adapters.inbound.http.schemas import people as schemas
 from rosalind.application.read_models import PersonProfile
 from rosalind.application.services.people import PersonService
 
-router = APIRouter(prefix="/people", tags=["people"])
+router = APIRouter(
+    prefix="/people", tags=["people"], dependencies=[Depends(get_current_account)]
+)
 
 ServiceDep = Annotated[PersonService, Depends(get_person_service)]
 

@@ -9,15 +9,37 @@ from __future__ import annotations
 
 import uuid
 
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
+from pydantic import AnyHttpUrl
 
 from rosalind import config
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
+from rosalind.adapters.inbound.mcp.verifier import KeycloakMCPTokenVerifier
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.application.read_models import PersonProfile
 
-mcp = MCPServer("rosalind")
+
+def _auth_settings() -> AuthSettings:
+    settings = config.settings
+    return AuthSettings(
+        issuer_url=AnyHttpUrl(
+            f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
+        ),
+        resource_server_url=AnyHttpUrl(
+            f"http://{settings.mcp_host}:{settings.mcp_port}"
+        ),
+        required_scopes=[],
+        validate_token_resource=False,
+    )
+
+
+mcp = MCPServer(
+    "rosalind",
+    token_verifier=KeycloakMCPTokenVerifier(composition.token_verifier),
+    auth=_auth_settings(),
+)
 
 
 @mcp.tool()

@@ -35,6 +35,26 @@ services:
       timeout: 5s
       retries: 10
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/rosalind-realm.json:/opt/keycloak/data/import/rosalind-realm.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /realms/rosalind/.well-known/openid-configuration HTTP/1.0\r\nHost: localhost\r\n\r' >&3 && grep -q 'issuer' <&3",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
 volumes:
   postgres_data:
   seaweedfs_data:

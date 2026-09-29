@@ -16,6 +16,8 @@ from types import TracebackType
 from typing import Protocol, Self
 
 from rosalind.application.ports.repositories import (
+    AccountIdentityRepository,
+    AccountRepository,
     ImportRepository,
     OAuthAuthRequestRepository,
     OAuthCredentialRepository,
@@ -28,6 +30,8 @@ from rosalind.application.ports.repositories import (
 class UnitOfWork(Protocol):
     """Bundles the repositories of one transaction and its commit/flush control."""
 
+    accounts: AccountRepository
+    account_identities: AccountIdentityRepository
     source_accounts: SourceAccountRepository
     source_records: SourceRecordRepository
     credentials: OAuthCredentialRepository

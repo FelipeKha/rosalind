@@ -20,6 +20,8 @@ def test_alembic_upgrade_head_creates_tables(postgres_url: str) -> None:
         "source_account",
         "oauth_credentials",
         "oauth_auth_request",
+        "account",
+        "account_identity",
     } <= set(inspector.get_table_names())
     assert {"source_record"} <= set(inspector.get_table_names(schema="raw"))
     assert {

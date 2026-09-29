@@ -49,5 +49,9 @@ class SourceNotFoundError(AuthError):
     """Raised when a source account does not exist by id or name."""
 
 
+class AccountNotFoundError(AuthError):
+    """Raised when a Rosalind account does not exist for a resolved identity."""
+
+
 class ProviderError(AuthError):
     """Raised when the provider rejects a token exchange or API request."""

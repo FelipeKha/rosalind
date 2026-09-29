@@ -4,6 +4,10 @@ Importing this package registers every model on ``Base.metadata`` so that
 ``create_all`` and Alembic autogenerate see the complete schema.
 """
 
+from rosalind.adapters.outbound.persistence.models.account import (
+    Account,
+    AccountIdentity,
+)
 from rosalind.adapters.outbound.persistence.models.base import Base, utcnow
 from rosalind.adapters.outbound.persistence.models.imports import Import, ImportFile
 from rosalind.adapters.outbound.persistence.models.person import (
@@ -29,6 +33,8 @@ from rosalind.adapters.outbound.persistence.models.source import (
 )
 
 __all__ = [
+    "Account",
+    "AccountIdentity",
     "Base",
     "Import",
     "ImportFile",

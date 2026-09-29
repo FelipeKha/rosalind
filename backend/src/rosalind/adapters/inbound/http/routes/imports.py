@@ -13,6 +13,7 @@ from rosalind.adapters.composition import (
     get_processing_service,
     get_uow,
 )
+from rosalind.adapters.inbound.http.dependencies import get_current_account
 from rosalind.adapters.inbound.http.schemas import imports as schemas
 from rosalind.application import manifest
 from rosalind.application.ports.object_storage import ObjectStorage
@@ -21,7 +22,9 @@ from rosalind.application.services.imports import ImportService
 from rosalind.application.services.processing import ProcessingService
 from rosalind.domain.source import Import, ImportFile
 
-router = APIRouter(prefix="/imports", tags=["imports"])
+router = APIRouter(
+    prefix="/imports", tags=["imports"], dependencies=[Depends(get_current_account)]
+)
 
 UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 ImportDep = Annotated[ImportService, Depends(get_import_service)]

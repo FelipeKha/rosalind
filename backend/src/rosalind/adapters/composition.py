@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from rosalind.adapters.inbound.ingestion.google.parser import GooglePersonParser
 from rosalind.adapters.outbound.google.auth import GoogleAuthGateway
 from rosalind.adapters.outbound.google.people import GooglePeopleGateway
+from rosalind.adapters.outbound.keycloak.jwt import KeycloakJwtVerifier
 from rosalind.adapters.outbound.object_storage.s3 import S3ObjectStorage
 from rosalind.adapters.outbound.persistence.repositories.person import (
     PostgresPersonRepository,
@@ -21,8 +22,10 @@ from rosalind.adapters.outbound.persistence.repositories.person import (
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.application.canonicalization.person import CanonicalizationService
+from rosalind.application.ports.identity import TokenVerifier
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
+from rosalind.application.services.accounts import AccountService
 from rosalind.application.services.imports import ImportService
 from rosalind.application.services.people import PersonService
 from rosalind.application.services.processing import ProcessingService
@@ -34,6 +37,10 @@ google_people = GooglePeopleGateway()
 object_storage = S3ObjectStorage()
 
 source_service = SourceService(google_auth)
+
+account_service = AccountService()
+
+token_verifier: TokenVerifier = KeycloakJwtVerifier()
 
 _google_person_parser = GooglePersonParser()
 
@@ -80,6 +87,14 @@ def get_person_service() -> Iterator[PersonService]:
 
 def get_source_service() -> SourceService:
     return source_service
+
+
+def get_account_service() -> AccountService:
+    return account_service
+
+
+def get_token_verifier() -> TokenVerifier:
+    return token_verifier
 
 
 def get_processing_service() -> ProcessingService:

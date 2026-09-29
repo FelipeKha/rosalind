@@ -1,4 +1,6 @@
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
@@ -11,12 +13,16 @@ from rosalind import config
 from rosalind.adapters.composition import (
     build_person_service,
     get_person_service,
+    get_token_verifier,
     get_uow,
 )
+from rosalind.adapters.inbound.http import dependencies
 from rosalind.adapters.inbound.http.app import app
 from rosalind.adapters.outbound.persistence.models import Base
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.application.ports.identity import VerifiedToken
 from rosalind.application.services.people import PersonService
+from rosalind.domain.account import Account
 from tests._db import make_migrated_engine, reset_schemas
 
 
@@ -25,6 +31,11 @@ def _encryption_key(monkeypatch) -> None:
     monkeypatch.setattr(
         config.settings, "token_encryption_key", Fernet.generate_key().decode()
     )
+
+
+def _stub_account() -> Account:
+    now = datetime.now(UTC)
+    return Account(id=uuid4(), self_person_id=None, created_at=now, updated_at=now)
 
 
 @pytest.fixture(scope="session")
@@ -85,6 +96,7 @@ def api_client(postgres_url: str):
 
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_person_service] = override_get_person_service
+    app.dependency_overrides[dependencies.get_current_account] = _stub_account
     client = TestClient(app)
     try:
         yield client
@@ -144,8 +156,51 @@ def migrated_api_client(migrated_engine: Engine):
 
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_person_service] = override_get_person_service
+    app.dependency_overrides[dependencies.get_current_account] = _stub_account
     client = TestClient(app)
     try:
         yield client
     finally:
         app.dependency_overrides.clear()
+
+
+class _FakeTokenVerifier:
+    """Accepts any non-empty token except the literal ``"bad"``."""
+
+    issuer = "http://localhost:8080/realms/rosalind"
+
+    def verify(self, token: str) -> VerifiedToken | None:
+        if not token or token == "bad":
+            return None
+        return VerifiedToken(
+            issuer=self.issuer,
+            subject="user-test",
+            client_id="rosalind-cli",
+            scopes=["openid"],
+        )
+
+
+@pytest.fixture()
+def auth_api_client(postgres_url: str):
+    """A TestClient with the real auth dependency and a fake token verifier."""
+    engine = _make_engine(postgres_url)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+    def override_get_uow() -> Iterator[SqlAlchemyUnitOfWork]:
+        with factory() as session:
+            yield SqlAlchemyUnitOfWork(session)
+
+    def override_get_person_service() -> Iterator[PersonService]:
+        with factory() as session:
+            yield build_person_service(session)
+
+    app.dependency_overrides[get_uow] = override_get_uow
+    app.dependency_overrides[get_person_service] = override_get_person_service
+    app.dependency_overrides[get_token_verifier] = _FakeTokenVerifier
+    client = TestClient(app)
+    try:
+        yield client
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+        engine.dispose()

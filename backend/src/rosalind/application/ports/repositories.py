@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from rosalind.application.read_models import PersonProfile
+from rosalind.domain.account import Account, AccountIdentity
 from rosalind.domain.person import (
     DateObservation,
     EmailObservation,
@@ -80,6 +81,18 @@ class PersonRepository(Protocol):
     def list_all(self, limit: int) -> list[PersonProfile]: ...
 
     def get(self, person_id: uuid.UUID) -> PersonProfile | None: ...
+
+
+class AccountIdentityRepository(Protocol):
+    def get(self, issuer: str, subject: str) -> AccountIdentity | None: ...
+
+    def get_or_create(self, issuer: str, subject: str) -> AccountIdentity: ...
+
+    def touch(self, identity_id: uuid.UUID, last_seen_at: datetime) -> None: ...
+
+
+class AccountRepository(Protocol):
+    def get(self, account_id: uuid.UUID) -> Account | None: ...
 
 
 class SourceRecordRepository(Protocol):
