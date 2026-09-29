@@ -74,6 +74,7 @@ rosalind auth [command]
 - [rosalind auth sign-in](#rosalind-auth-sign-in)
 - [rosalind auth sign-up](#rosalind-auth-sign-up)
 - [rosalind auth sign-out](#rosalind-auth-sign-out)
+- [rosalind auth whoami](#rosalind-auth-whoami)
 
 ### See also
 
@@ -127,6 +128,27 @@ identity provider (best effort).
 
 ```
 rosalind auth sign-out [flags]
+```
+
+### See also
+
+- [rosalind auth](#rosalind-auth)
+
+## rosalind auth whoami
+
+Show the currently authenticated Rosalind account (id, email, name).
+
+```
+rosalind auth whoami [flags]
+```
+
+### Examples
+
+```bash
+$ rosalind auth whoami
+Account: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+Email:   jane@example.com
+Name:    Jane Doe
 ```
 
 ### See also

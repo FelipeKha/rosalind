@@ -25,5 +25,11 @@ class KeycloakMCPTokenVerifier:
             client_id=verified.client_id or "unknown",
             scopes=verified.scopes or [],
             subject=verified.subject,
-            claims={"iss": verified.issuer},
+            claims={
+                "iss": verified.issuer,
+                "email": verified.email,
+                "preferred_username": verified.preferred_username,
+                "given_name": verified.given_name,
+                "family_name": verified.family_name,
+            },
         )

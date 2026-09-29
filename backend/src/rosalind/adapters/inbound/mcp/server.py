@@ -9,16 +9,22 @@ from __future__ import annotations
 
 import uuid
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 from pydantic import AnyHttpUrl
 
 from rosalind import config
 from rosalind.adapters import composition
-from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
+from rosalind.adapters.inbound.mcp.schemas import MyProfileResult, PersonProfileResult
 from rosalind.adapters.inbound.mcp.verifier import KeycloakMCPTokenVerifier
 from rosalind.adapters.outbound.persistence.session import SessionLocal
-from rosalind.application.read_models import PersonProfile
+from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.application.read_models import (
+    CurrentAccount,
+    PersonProfile,
+    current_account_from,
+)
 
 
 def _auth_settings() -> AuthSettings:
@@ -65,6 +71,45 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
     with SessionLocal() as session:
         profile = composition.build_person_service(session).get_person(person_id)
     return _to_result(profile) if profile is not None else None
+
+
+@mcp.tool()
+def get_my_profile() -> MyProfileResult | None:
+    """Return the authenticated user's Rosalind account and profile.
+
+    Resolves the account from the current request's bearer token, so it
+    requires an authenticated (HTTP) transport. Returns None when no token is
+    present (e.g. the local stdio transport).
+    """
+    token = get_access_token()
+    if token is None or token.subject is None or token.claims is None:
+        return None
+
+    issuer = token.claims.get("iss") or ""
+    with SessionLocal() as session:
+        uow = SqlAlchemyUnitOfWork(session)
+        account = composition.account_service.get_or_create(uow, issuer, token.subject)
+        uow.commit()
+        profile = current_account_from(
+            account,
+            subject=token.subject,
+            email=token.claims.get("email"),
+            preferred_username=token.claims.get("preferred_username"),
+            given_name=token.claims.get("given_name"),
+            family_name=token.claims.get("family_name"),
+        )
+    return _to_profile_result(profile)
+
+
+def _to_profile_result(profile: CurrentAccount) -> MyProfileResult:
+    return MyProfileResult(
+        account_id=profile.account_id,
+        self_person_id=profile.self_person_id,
+        email=profile.email,
+        preferred_username=profile.preferred_username,
+        given_name=profile.given_name,
+        family_name=profile.family_name,
+    )
 
 
 def _to_result(profile: PersonProfile) -> PersonProfileResult:

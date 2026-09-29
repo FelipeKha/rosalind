@@ -21,8 +21,9 @@ from rosalind.adapters.composition import (
     get_uow,
 )
 from rosalind.application.errors import AccountNotFoundError
-from rosalind.application.ports.identity import TokenVerifier
+from rosalind.application.ports.identity import TokenVerifier, VerifiedToken
 from rosalind.application.ports.unit_of_work import UnitOfWork
+from rosalind.application.read_models import CurrentAccount, current_account_from
 from rosalind.application.services.accounts import AccountService
 from rosalind.domain.account import Account
 
@@ -40,27 +41,51 @@ _ANONYMOUS_ACCOUNT = Account(
     updated_at=datetime.now(UTC),
 )
 
+_ANONYMOUS_TOKEN = VerifiedToken(issuer="local", subject="anonymous")
 
-def get_current_account(
+
+def get_verified_token(
     credentials: CredentialsDep,
-    uow: UowDep,
     verifier: VerifierDep,
-    service: AccountServiceDep,
-) -> Account:
+) -> VerifiedToken:
     if not config.settings.auth_enabled:
-        return _ANONYMOUS_ACCOUNT
+        return _ANONYMOUS_TOKEN
 
     token = credentials.credentials if credentials is not None else None
     verified = verifier.verify(token) if token is not None else None
     if verified is None:
         raise _unauthorized()
+    return verified
+
+
+def get_current_account(
+    token: Annotated[VerifiedToken, Depends(get_verified_token)],
+    uow: UowDep,
+    service: AccountServiceDep,
+) -> Account:
+    if not config.settings.auth_enabled:
+        return _ANONYMOUS_ACCOUNT
 
     try:
-        account = service.get_or_create(uow, verified.issuer, verified.subject)
+        account = service.get_or_create(uow, token.issuer, token.subject)
     except AccountNotFoundError:
         raise _unauthorized() from None
     uow.commit()
     return account
+
+
+def get_current_account_profile(
+    account: Annotated[Account, Depends(get_current_account)],
+    token: Annotated[VerifiedToken, Depends(get_verified_token)],
+) -> CurrentAccount:
+    return current_account_from(
+        account,
+        subject=token.subject,
+        email=token.email,
+        preferred_username=token.preferred_username,
+        given_name=token.given_name,
+        family_name=token.family_name,
+    )
 
 
 def _unauthorized() -> HTTPException:
@@ -69,6 +94,3 @@ def _unauthorized() -> HTTPException:
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-
-
-CurrentAccountDep = Annotated[Account, Depends(get_current_account)]

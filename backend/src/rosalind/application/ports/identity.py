@@ -20,6 +20,10 @@ class VerifiedToken:
     subject: str
     client_id: str | None = None
     scopes: list[str] | None = None
+    email: str | None = None
+    preferred_username: str | None = None
+    given_name: str | None = None
+    family_name: str | None = None
 
 
 class TokenVerifier(Protocol):

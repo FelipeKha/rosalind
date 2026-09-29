@@ -79,6 +79,30 @@ def test_verifies_valid_token(monkeypatch) -> None:
     assert verified.scopes == ["openid"]
 
 
+def test_extracts_profile_claims(monkeypatch) -> None:
+    private_key = _private_key()
+    verifier = _verifier(monkeypatch, private_key)
+    claims = {
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "sub": "user-123",
+        "exp": datetime.now(UTC) + timedelta(minutes=5),
+        "email": "jane@example.com",
+        "preferred_username": "jane@example.com",
+        "given_name": "Jane",
+        "family_name": "Doe",
+    }
+    token = jwt.encode(claims, private_key, algorithm="RS256")
+
+    verified = verifier.verify(token)
+
+    assert verified is not None
+    assert verified.email == "jane@example.com"
+    assert verified.preferred_username == "jane@example.com"
+    assert verified.given_name == "Jane"
+    assert verified.family_name == "Doe"
+
+
 def test_rejects_tampered_token(monkeypatch) -> None:
     private_key = _private_key()
     verifier = _verifier(monkeypatch, private_key)

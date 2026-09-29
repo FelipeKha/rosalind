@@ -4,13 +4,16 @@ import uuid
 from pathlib import Path
 
 import pytest
+from mcp.server.auth.middleware.auth_context import auth_context_var
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+from mcp.server.auth.provider import AccessToken
 from mcp.server.mcpserver.exceptions import ToolError
 from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
 import rosalind.adapters.inbound.mcp.server as mcp_server
 from rosalind.adapters import composition
-from rosalind.adapters.inbound.mcp.schemas import PersonProfileResult
+from rosalind.adapters.inbound.mcp.schemas import MyProfileResult, PersonProfileResult
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 FIXTURE = (
@@ -53,3 +56,39 @@ def test_mcp_tools_share_person_service(migrated_engine: Engine, monkeypatch) ->
 def test_mcp_get_person_rejects_malformed_id() -> None:
     with pytest.raises(ToolError):
         asyncio.run(mcp_server.mcp.call_tool("get_person", {"person_id": "not-a-uuid"}))
+
+
+def test_get_my_profile(migrated_engine: Engine, monkeypatch) -> None:
+    factory = sessionmaker(
+        bind=migrated_engine, autoflush=False, expire_on_commit=False
+    )
+    monkeypatch.setattr(mcp_server, "SessionLocal", factory)
+
+    token = AccessToken(
+        token="t",
+        client_id="rosalind-cli",
+        scopes=["openid"],
+        subject="user-1",
+        claims={
+            "iss": "http://localhost:8080/realms/rosalind",
+            "email": "jane@example.com",
+            "preferred_username": "jane@example.com",
+            "given_name": "Jane",
+            "family_name": "Doe",
+        },
+    )
+    reset = auth_context_var.set(AuthenticatedUser(token))
+    try:
+        result = mcp_server.get_my_profile()
+    finally:
+        auth_context_var.reset(reset)
+
+    assert isinstance(result, MyProfileResult)
+    assert result.email == "jane@example.com"
+    assert result.given_name == "Jane"
+    assert result.family_name == "Doe"
+    assert result.account_id is not None
+
+
+def test_get_my_profile_returns_none_without_token() -> None:
+    assert mcp_server.get_my_profile() is None

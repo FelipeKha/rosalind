@@ -25,3 +25,12 @@ class PersonProfileResult(BaseModel):
     birth_year: int | None = None
     birth_month: int | None = None
     birth_day: int | None = None
+
+
+class MyProfileResult(BaseModel):
+    account_id: uuid.UUID
+    self_person_id: uuid.UUID | None = None
+    email: str | None = None
+    preferred_username: str | None = None
+    given_name: str | None = None
+    family_name: str | None = None

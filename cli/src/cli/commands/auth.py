@@ -7,7 +7,10 @@ from typing import Annotated
 
 import typer
 
-from cli.client import auth
+from cli import output
+from cli.client import ApiClientError, auth
+from cli.client import account as account_client
+from cli.output import json as json_output
 from cli.storage.credentials import CredentialStore
 
 auth_app = typer.Typer(help="Authenticate with the Rosalind identity provider.")
@@ -89,3 +92,31 @@ def sign_out() -> None:
             auth.revoke(credentials.access_token)
     store.clear()
     typer.echo("Signed out.")
+
+
+@auth_app.command("whoami")
+def whoami() -> None:
+    """Show the currently authenticated Rosalind account."""
+    try:
+        profile = account_client.whoami()
+    except ApiClientError as exc:
+        typer.echo(f"Not signed in: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if output.json_mode:
+        json_output.render_json(profile)
+        return
+
+    typer.echo(f"Account: {profile['account_id']}")
+    email = profile.get("email") or profile.get("preferred_username")
+    if email:
+        typer.echo(f"Email:   {email}")
+    name = _full_name(profile)
+    if name:
+        typer.echo(f"Name:    {name}")
+
+
+def _full_name(profile: dict) -> str | None:
+    parts = [profile.get("given_name"), profile.get("family_name")]
+    present = [part for part in parts if part]
+    return " ".join(present) if present else None

@@ -54,6 +54,10 @@ class KeycloakJwtVerifier:
             subject=subject,
             client_id=claims.get("azp") or claims.get("client_id"),
             scopes=scope.split() if isinstance(scope, str) else None,
+            email=claims.get("email"),
+            preferred_username=claims.get("preferred_username"),
+            given_name=claims.get("given_name"),
+            family_name=claims.get("family_name"),
         )
 
 

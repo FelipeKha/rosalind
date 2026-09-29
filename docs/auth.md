@@ -53,6 +53,21 @@ it (`adapters/inbound/mcp/verifier.py`).
   `WWW-Authenticate: Bearer`. `stdio` is local/trusted and unauthenticated.
 - New routers/tools must opt in explicitly.
 
+## "Who am I"
+
+The current authenticated account is exposed as a derived projection of the
+persisted `Account` plus the token's identity claims (`email`, name) — Keycloak
+remains the source of truth for profile data; Rosalind only persists the
+identity mapping.
+
+- **REST**: `GET /me` → `{ account_id, self_person_id, created_at, subject,
+  email, preferred_username, given_name, family_name }`.
+- **MCP**: the read-only `get_my_profile` tool returns the same data.
+- **CLI**: `rosalind auth whoami` prints it.
+
+The CLI requests the `openid email profile` scopes, and `email` is a default
+client scope on `rosalind-cli`, so the access token carries the profile claims.
+
 ## CLI authentication (device flow)
 
 The CLI is a public OAuth client and uses the Device Authorization Grant:
@@ -61,6 +76,7 @@ The CLI is a public OAuth client and uses the Device Authorization Grant:
 rosalind auth sign-in   → prints a URL + user code, opens browser, polls, stores tokens
 rosalind auth sign-up   → same flow; the Keycloak page offers registration
 rosalind auth sign-out  → clears local tokens + best-effort Keycloak revocation
+rosalind auth whoami    → prints the authenticated account (id, email, name)
 ```
 
 Tokens live in `~/.config/rosalind/credentials.json` (mode `0600`), are never

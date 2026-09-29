@@ -177,6 +177,10 @@ class _FakeTokenVerifier:
             subject="user-test",
             client_id="rosalind-cli",
             scopes=["openid"],
+            email="jane@example.com",
+            preferred_username="jane@example.com",
+            given_name="Jane",
+            family_name="Doe",
         )
 
 

@@ -28,6 +28,7 @@
         "acr",
         "profile",
         "roles",
+        "email",
         "rosalind-audience"
       ],
       "redirectUris": []

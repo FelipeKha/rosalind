@@ -38,7 +38,7 @@ def _revoke_endpoint() -> str:
     return f"{_realm_base()}/protocol/openid-connect/revoke"
 
 
-def start_device_flow(scope: str = "openid") -> dict:
+def start_device_flow(scope: str = "openid email profile") -> dict:
     data = {"client_id": config.keycloak_client_id(), "scope": scope}
     try:
         response = httpx.post(_device_endpoint(), data=data, timeout=10.0)
