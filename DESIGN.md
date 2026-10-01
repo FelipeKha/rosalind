@@ -68,7 +68,7 @@ Agent / API read models        "What's most useful to software and AI?"
 
 The key failure-domain boundary: **raw persistence happens before provider
 validation or canonicalization.** A provider format change or a parsing bug
-must never cause the original payload to be discarded — see [§8](#8-raw-layer).
+must never cause the original payload to be discarded — see [§6.1](#61-raw-layer).
 
 ### 2.2 Code layering (hexagonal)
 
@@ -120,7 +120,7 @@ where useful.
    stored as-is in `raw.source_record` before any parsing happens, and is
    never cascade-deleted when canonical data is deleted. It's the audit
    trail the canonical model can always be rebuilt from. See
-   [§8](#8-raw-layer).
+   [§6.1](#61-raw-layer).
 
 3. **Source identity ≠ canonical identity.** A provider's ID
    (`people/c123`) is not Rosalind's identity for that entity.
@@ -146,6 +146,11 @@ where useful.
    agent output are recorded as derived interpretations and must never
    silently overwrite a canonical fact.
 
+8. **Identity is delegated; authentication is not authorization.** Rosalind
+   validates bearer tokens from an external IdP (Keycloak) and never issues
+   credentials or stores passwords. Knowing *who* is calling says nothing
+   about *what* they may access. See [§6.4](#64-account--identity).
+
 The full, exhaustive list of invariants (including narrower ones like "MCP
 search results are bounded") lives in [`docs/invariants.md`](docs/invariants.md).
 
@@ -155,7 +160,7 @@ search results are bounded") lives in [`docs/invariants.md`](docs/invariants.md)
 
 ```text
 Python 3.14+ · uv (env/deps) · FastAPI · Pydantic v2 · pydantic-settings
-SQLAlchemy 2 · psycopg 3 · Alembic · httpx
+SQLAlchemy 2 · psycopg 3 · Alembic · httpx · PyJWT
 pytest · Hypothesis · Testcontainers
 Ruff · mypy · just · pre-commit
 Bandit · pip-audit · Gitleaks · Hadolint · Trivy · ShellCheck · shfmt
@@ -166,6 +171,11 @@ The backend is a single application (no microservices) for now. The CLI is
 a separate client project (may use Typer) and is not a backend dependency.
 Rust and Celery/Redis are deliberately deferred until a measured bottleneck
 or workload requires them.
+
+External services: PostgreSQL, object storage (SeaweedFS in the compose
+stack), and Keycloak (identity provider, with its own dedicated Postgres
+database). Keycloak is a deliberate exception to "minimal infrastructure":
+running an IdP is cheaper and safer than building credential handling.
 
 Boundaries between representations are kept explicit:
 
@@ -230,8 +240,8 @@ person_*_assertion        link tables: one fact ↔ many supporting assertions
 Each fact table has its own normalization, an `is_primary` uniqueness
 constraint, and a value-uniqueness constraint so re-imports don't create
 duplicate facts. `core.person` deliberately has **no `me` vs `other`
-distinction** — "self" is an account-level `self_person_id` relationship,
-kept outside the person entity to leave room for future person-sharing
+distinction** — "self" is an account-level `self_person_id` relationship
+([§6.4](#64-account--identity)), kept outside the person entity to leave room for future person-sharing
 between accounts. Full schema and the worked Google-Person example:
 [`docs/schema.md`](docs/schema.md#core).
 
@@ -240,28 +250,46 @@ between accounts. Full schema and the worked Google-Person example:
 `agent.person_profile` and friends are **derived read models** — database
 views (for now) optimized for compact, predictable, low-context responses,
 not for integrity or normalization. They are not sources of truth. See
-[§8](#8-agent-oriented-api) and [`docs/schema.md`](docs/schema.md#agent).
+[§10](#10-agent-oriented-api) and [`docs/schema.md`](docs/schema.md#agent).
 
 ### 6.4 Account & identity
 
 Rosalind delegates identity to an external IdP (Keycloak) and only validates
-bearer tokens — it never issues credentials or stores passwords. Two tables
-separate the concerns:
+bearer tokens — it never issues credentials, stores passwords, or renders
+login UI. Two tables separate the concerns:
 
 ```text
 Keycloak JWT (iss, sub) ──► AccountIdentity (issuer, subject) ──► Account
 ```
 
-* `account` — Rosalind's own notion of a user (`self_person_id` links it,
-  optionally, to the canonical person that represents its owner).
+* `account` — Rosalind's own notion of a user. `self_person_id` optionally
+  links it to the canonical person that represents its owner; it is set
+  explicitly, never inferred. Not to be confused with `source_account`, which
+  is a *provider data* account such as "Google personal".
 * `account_identity` — a login from an identity provider, unique on
-  `(issuer, subject)`.
+  `(issuer, subject)`. The split leaves room for multiple IdPs and multiple
+  identities per account without leaking provider concepts into the account.
 
-Accounts are just-in-time provisioned on first validated token. The split
-leaves room for multiple IdPs and multiple identities per account without
-leaking provider concepts into the account. FastAPI and MCP validate JWTs
-locally against the IdP's JWKS through a shared `TokenVerifier` port. Full
-details: [`docs/auth.md`](docs/auth.md).
+Rules:
+
+* Accounts are just-in-time provisioned on the first validated token
+  (idempotent).
+* Accounts are identified **only** by `(iss, sub)`. Email and other profile
+  claims are mutable and never identify or merge accounts.
+* Profile data (email, name) stays in Keycloak. It is merged from the token
+  at request time (`GET /me`, `get_my_profile`) and is not persisted.
+* One verifier: FastAPI and MCP validate JWTs locally against the IdP's JWKS
+  through a shared `TokenVerifier` port. PyJWT and Keycloak specifics live in
+  adapters only.
+* REST routes are protected except `/health` and `/auth/google/callback`.
+  MCP `streamable-http`/`sse` require auth; `stdio` is local and trusted.
+  The CLI is a public client using the Device Authorization Grant.
+* **Authentication is not authorization.** Authenticated accounts are not yet
+  scoped to their own data (see [§12](#12-open-questions--deliberately-deferred)).
+* `ROSALIND_AUTH_ENABLED=false` exists for local dev/e2e only and is never a
+  production setting.
+
+Full details, configuration, and operational notes: [`docs/auth.md`](docs/auth.md).
 
 ---
 
@@ -351,6 +379,10 @@ data plane for imports (reads bytes, hashes, uploads to object storage) but
 never parses or interprets provider content — the backend is authoritative
 for import lifecycle and statistics.
 
+Every client authenticates with a bearer token issued by the IdP
+([§6.4](#64-account--identity)); the CLI uses the OAuth Device Authorization
+Grant as a public client.
+
 ---
 
 ## 10. Agent-Oriented API
@@ -361,8 +393,9 @@ Do not expose SQL to AI agents. Expose semantic operations instead:
 over the same `application` services — neither contains direct SQL.
 
 **MCP** (Model Context Protocol) is the current AI-facing adapter:
-stdio transport, strictly read-only in the MVP (`search_people`,
-`get_person`), bounded results (max 25), explicit Pydantic response schemas
+strictly read-only (`search_people`, `get_person`, `get_my_profile`),
+`stdio` local and unauthenticated while remote transports
+(`streamable-http`, `sse`) require bearer-token auth, bounded results (max 25), explicit Pydantic response schemas
 (never `dataclasses.asdict`), protocol stdout kept clean of logs. Full
 design, deferred write-tool plan, and testing strategy:
 [`docs/mcp.md`](docs/mcp.md).
@@ -398,9 +431,10 @@ Detail and current status: [`docs/roadmap.md`](docs/roadmap.md).
 * Person deletion as a supported operation (FK/lifecycle implications are
   known but not yet designed — see `docs/schema.md`).
 * MCP write tools (`create_person`, `update_person`, …) — deferred until
-  the Actor/auth model exists.
-* `get_my_profile` / account-level `self_person_id` — deferred; MCP
-  currently operates on canonical people only.
+  the Actor/authorization model exists.
+* How `account.self_person_id` is set, and what `get_my_profile` returns
+  when it is null or over unauthenticated `stdio` (no account). To be
+  specified in [`docs/auth.md`](docs/auth.md).
 * Explicit temporal validity intervals on canonical facts (e.g. employment
   history) — the raw layer already preserves history; canonical validity
   ranges are a later addition.
@@ -408,6 +442,12 @@ Detail and current status: [`docs/roadmap.md`](docs/roadmap.md).
   implemented ([`docs/auth.md`](docs/auth.md)); `account_id` is not yet
   retrofitted onto existing resources, and MCP write tools remain deferred
   until the Actor/authZ model exists.
+* Authorization of object-storage uploads in the import flow (presigned URLs
+  vs. proxied through the API).
+* Binding of the `/auth/google/callback` OAuth flow to the initiating
+  account (a signed `state` is expected; unverified).
+* Production hardening of the Keycloak deployment (the compose setup is
+  dev-mode) — see [`docs/auth.md`](docs/auth.md#production-deployment).
 * Full provenance graph exposed via MCP responses (currently deferred;
   underlying data is already provenance-linked).
 
