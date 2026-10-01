@@ -93,14 +93,20 @@ logged, and are refreshed from the stored refresh token when expired or on a
 | `ROSALIND_KEYCLOAK_CLIENT_ID` | `rosalind-cli` | Public client id (CLI) |
 | `ROSALIND_AUTH_ENABLED` | `true` | Disable bearer checks for local dev/e2e |
 | `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` | `admin` | Bootstrap admin (docker-compose) |
+| `KEYCLOAK_DB_USER` / `KEYCLOAK_DB_PASSWORD` / `KEYCLOAK_DB_NAME` | `keycloak` | Dedicated Postgres database for Keycloak (docker-compose) |
 
 The realm and clients are imported from `keycloak/rosalind-realm.json` on
 container start (`start-dev --import-realm`), so no manual admin-console setup
-is required. The realm file must also define the standard OIDC client scopes
-(`basic`, `profile`, `email`, `roles`, `web-origins`, `acr`): since Keycloak 25,
-the `sub` and `auth_time` claims are emitted by protocol mappers on the `basic`
-scope, so importing a realm with only custom scopes silently strips `sub` from
-access tokens.
+is required. Keycloak persists realms, users, and sessions to a dedicated
+`keycloak` Postgres database (`keycloak-db` service), so registrations survive
+`docker compose down` / `up`. Realm import runs only on first boot (when the
+realm does not yet exist); to force re-import after editing the realm file,
+recreate the volume with `docker compose down -v` (this also drops the Rosalind
+Postgres and SeaweedFS volumes). The realm file must also define the standard
+OIDC client scopes (`basic`, `profile`, `email`, `roles`, `web-origins`, `acr`):
+since Keycloak 25, the `sub` and `auth_time` claims are emitted by protocol
+mappers on the `basic` scope, so importing a realm with only custom scopes
+silently strips `sub` from access tokens.
 
 Registration uses **email as username** (`registrationEmailAsUsername: true`,
 `editUsernameAllowed: false`): the registration form asks for first name, last
