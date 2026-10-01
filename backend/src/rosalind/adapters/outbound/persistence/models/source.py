@@ -24,6 +24,9 @@ class SourceAccount(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("account.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
     account_identifier: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -11,6 +11,10 @@ from typing import Self
 
 from sqlalchemy.orm import Session
 
+from rosalind.adapters.outbound.persistence.repositories.account import (
+    PostgresAccountIdentityRepository,
+    PostgresAccountRepository,
+)
 from rosalind.adapters.outbound.persistence.repositories.imports import (
     PostgresImportRepository,
 )
@@ -28,6 +32,8 @@ from rosalind.adapters.outbound.persistence.repositories.source_record import (
     PostgresSourceRecordRepository,
 )
 from rosalind.application.ports.repositories import (
+    AccountIdentityRepository,
+    AccountRepository,
     ImportRepository,
     OAuthAuthRequestRepository,
     OAuthCredentialRepository,
@@ -40,6 +46,8 @@ from rosalind.application.ports.repositories import (
 class SqlAlchemyUnitOfWork:
     """Session-bound repositories plus explicit transaction control."""
 
+    accounts: AccountRepository
+    account_identities: AccountIdentityRepository
     source_accounts: SourceAccountRepository
     source_records: SourceRecordRepository
     credentials: OAuthCredentialRepository
@@ -49,6 +57,8 @@ class SqlAlchemyUnitOfWork:
 
     def __init__(self, session: Session):
         self._session = session
+        self.accounts = PostgresAccountRepository(session)
+        self.account_identities = PostgresAccountIdentityRepository(session)
         self.source_accounts = PostgresSourceAccountRepository(session)
         self.source_records = PostgresSourceRecordRepository(session)
         self.credentials = PostgresOAuthCredentialRepository(session)

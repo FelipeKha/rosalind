@@ -27,31 +27,41 @@ class PostgresSourceAccountRepository:
         account = self._session.get(SourceAccountModel, source_id)
         return self._to_domain(account) if account is not None else None
 
-    def get_by_name(self, name: str) -> SourceAccount | None:
+    def get_by_name(self, account_id: uuid.UUID, name: str) -> SourceAccount | None:
         account = self._session.scalar(
-            select(SourceAccountModel).where(SourceAccountModel.name == name)
+            select(SourceAccountModel).where(
+                SourceAccountModel.account_id == account_id,
+                SourceAccountModel.name == name,
+            )
         )
         return self._to_domain(account) if account is not None else None
 
     def get_by_identity(
-        self, provider: str, account_identifier: str
+        self, account_id: uuid.UUID, provider: str, account_identifier: str
     ) -> SourceAccount | None:
         account = self._session.scalar(
             select(SourceAccountModel).where(
+                SourceAccountModel.account_id == account_id,
                 SourceAccountModel.provider == provider,
                 SourceAccountModel.account_identifier == account_identifier,
             )
         )
         return self._to_domain(account) if account is not None else None
 
-    def list(self) -> list[SourceAccount]:
+    def list(self, account_id: uuid.UUID) -> list[SourceAccount]:
         accounts = self._session.scalars(
-            select(SourceAccountModel).order_by(SourceAccountModel.created_at)
+            select(SourceAccountModel)
+            .where(SourceAccountModel.account_id == account_id)
+            .order_by(SourceAccountModel.created_at)
         ).all()
         return [self._to_domain(account) for account in accounts]
 
-    def create(self, *, provider: str, name: str | None = None) -> SourceAccount:
-        account = SourceAccountModel(provider=provider, name=name)
+    def create(
+        self, *, account_id: uuid.UUID, provider: str, name: str | None = None
+    ) -> SourceAccount:
+        account = SourceAccountModel(
+            account_id=account_id, provider=provider, name=name
+        )
         self._session.add(account)
         self._session.flush()
         return self._to_domain(account)
@@ -78,6 +88,7 @@ class PostgresSourceAccountRepository:
     def _to_domain(account: SourceAccountModel) -> SourceAccount:
         return SourceAccount(
             id=account.id,
+            account_id=account.account_id,
             provider=account.provider,
             name=account.name,
             account_identifier=account.account_identifier,

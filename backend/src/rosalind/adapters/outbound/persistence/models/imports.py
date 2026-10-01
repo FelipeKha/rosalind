@@ -16,6 +16,9 @@ class Import(Base):
     __tablename__ = "imports"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("account.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     source_account_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("source_account.id", ondelete="SET NULL"),
         nullable=True,

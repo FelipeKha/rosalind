@@ -24,8 +24,11 @@ class PostgresImportRepository:
     def __init__(self, session: Session):
         self._session = session
 
-    def create(self, *, source_account_id: uuid.UUID, type_: str) -> Import:
+    def create(
+        self, *, account_id: uuid.UUID, source_account_id: uuid.UUID, type_: str
+    ) -> Import:
         model = ImportModel(
+            account_id=account_id,
             source_account_id=source_account_id,
             type=type_,
             ingestion_status="uploading",
@@ -46,13 +49,14 @@ class PostgresImportRepository:
         )
         return self._to_domain(model) if model is not None else None
 
-    def list(self) -> list[Import]:
+    def list(self, account_id: uuid.UUID) -> list[Import]:
         models = self._session.scalars(
             select(ImportModel)
             .options(
                 selectinload(ImportModel.files),
                 selectinload(ImportModel.source_account),
             )
+            .where(ImportModel.account_id == account_id)
             .order_by(ImportModel.created_at.desc())
         ).all()
         return [self._to_domain(model) for model in models]
@@ -133,6 +137,7 @@ class PostgresImportRepository:
         source = model.source_account
         return Import(
             id=model.id,
+            account_id=model.account_id,
             source_account_id=model.source_account_id,
             source_name=source.name if source else None,
             type=model.type,

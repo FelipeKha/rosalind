@@ -29,6 +29,7 @@ Emit machine-readable JSON instead of human-readable output.
 ### Commands
 
 - [rosalind status](#rosalind-status)
+- [rosalind auth](#rosalind-auth)
 - [rosalind source](#rosalind-source)
 - [rosalind import](#rosalind-import)
 - [rosalind process](#rosalind-process)
@@ -59,6 +60,100 @@ Backend: healthy
 ### See also
 
 - [rosalind](#rosalind)
+
+## rosalind auth
+
+Authenticate with the Rosalind identity provider (Keycloak).
+
+```
+rosalind auth [command]
+```
+
+### Available commands
+
+- [rosalind auth sign-in](#rosalind-auth-sign-in)
+- [rosalind auth sign-up](#rosalind-auth-sign-up)
+- [rosalind auth sign-out](#rosalind-auth-sign-out)
+- [rosalind auth whoami](#rosalind-auth-whoami)
+
+### See also
+
+- [rosalind](#rosalind)
+
+## rosalind auth sign-in
+
+Sign in to Rosalind using the device authorization flow.
+
+```
+rosalind auth sign-in [flags]
+```
+
+### Options
+
+`--browser` / `--no-browser`
+
+Open the authorization URL in a browser.
+
+### Examples
+
+```bash
+$ rosalind auth sign-in
+Visit this URL to authorize Rosalind:
+https://localhost:8080/realms/rosalind/device?user_code=ABCD-EFGH
+Enter code: ABCD-EFGH
+Signed in.
+```
+
+### See also
+
+- [rosalind auth](#rosalind-auth)
+
+## rosalind auth sign-up
+
+Create a Rosalind account and sign in. Same device flow as `sign-in`; the
+Keycloak page offers registration.
+
+```
+rosalind auth sign-up [flags]
+```
+
+### See also
+
+- [rosalind auth](#rosalind-auth)
+
+## rosalind auth sign-out
+
+Sign out of Rosalind, clearing locally stored tokens and revoking them at the
+identity provider (best effort).
+
+```
+rosalind auth sign-out [flags]
+```
+
+### See also
+
+- [rosalind auth](#rosalind-auth)
+
+## rosalind auth whoami
+
+Show the currently authenticated Rosalind account (id, email, name).
+
+```
+rosalind auth whoami [flags]
+```
+
+### Examples
+
+```bash
+$ rosalind auth whoami
+Account: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+Email:   jane@example.com
+Name:    Jane Doe
+```
+
+### See also
+
+- [rosalind auth](#rosalind-auth)
 
 ## rosalind source
 
@@ -450,6 +545,9 @@ Person id.
 | `ROSALIND_S3_SECRET_KEY`  | `rosalind`               | S3 secret key                   |
 | `ROSALIND_S3_BUCKET`      | `rosalind`               | Fallback bucket (backend is authoritative) |
 | `ROSALIND_S3_REGION`      | `us-east-1`              | S3 region                       |
+| `ROSALIND_KEYCLOAK_URL`   | `http://localhost:8080`  | Keycloak base URL               |
+| `ROSALIND_KEYCLOAK_REALM` | `rosalind`               | Keycloak realm                  |
+| `ROSALIND_KEYCLOAK_CLIENT_ID` | `rosalind-cli`       | Keycloak public client id       |
 
 Example:
 

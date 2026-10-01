@@ -32,6 +32,7 @@ clients include AI agents (via MCP) and web/native apps.
 | `docs/schema.md` | touching `raw.*`, `core.*`, or `agent.*` tables |
 | `docs/mcp.md` | adding/changing an MCP tool |
 | `docs/providers/<name>.md` | touching a provider parser/adapter |
+| `docs/auth.md` | touching authn, tokens, accounts, Keycloak, the CLI login flow, or adding a route/tool |
 | `docs/invariants.md` | anything ingestion- or canonicalization-related |
 
 ---
@@ -39,7 +40,7 @@ clients include AI agents (via MCP) and web/native apps.
 ## Principles
 
 1. **Data integrity** — never compromise the ability to reconstruct or audit canonical data.
-2. **Privacy & security** — treat personal data as sensitive; minimize exposure.
+2. **Privacy & security** — treat personal data as sensitive; minimize exposure. Identity is delegated to Keycloak; Rosalind only validates tokens.
 3. **Simplicity** — keep the system small; introduce infrastructure only when justified.
 4. **Client independence** — the backend depends on no particular client.
 5. **Testability** — every meaningful behavior change has a test.
@@ -71,12 +72,28 @@ REST and MCP are both inbound adapters calling the **same** application
 services. Never put business logic or raw SQL directly in an MCP tool
 handler or a FastAPI route.
 
+Auth boundaries (see `DESIGN.md` §6.4 and `docs/auth.md`):
+
+- `application/ports/identity.py` defines `TokenVerifier`. The concrete
+  `KeycloakJwtVerifier` lives in `adapters/outbound/keycloak/`; the MCP
+  wrapper in `adapters/inbound/mcp/verifier.py`. PyJWT/Keycloak imports
+  never appear in `domain/` or `application/`.
+- REST and MCP use the **same** verifier. Never write token parsing or
+  claim checks in a route or tool handler.
+- Accounts are keyed by `(iss, sub)` only. Never identify, match, or merge
+  accounts by email or other profile claims.
+- `account` (a Rosalind user) is not `source_account` (a provider data
+  account). Don't conflate them.
+- Authentication is not authorization. Authenticated accounts are not yet
+  scoped to their own data, so don't assume per-account isolation, and don't
+  add write tools without an authorization model.
+
 ---
 
 ## Tech Stack
 
 **Backend** (`backend/`, Python 3.14+, `uv`): FastAPI · Pydantic v2 ·
-SQLAlchemy 2 · psycopg 3 · Alembic · httpx · structlog · pytest ·
+SQLAlchemy 2 · psycopg 3 · Alembic · httpx · PyJWT · structlog · pytest ·
 Hypothesis · Testcontainers · Ruff · mypy.
 
 **CLI** — separate client project. Talks to the backend only through the
@@ -86,6 +103,11 @@ dependencies (e.g. Typer) never belong in the backend.
 **Tooling** already in place: `just`, `pre-commit`, Bandit, pip-audit,
 Gitleaks, Hadolint, Trivy, ShellCheck, shfmt. Don't add more without a
 concrete reason.
+
+**Services**: PostgreSQL, SeaweedFS (object storage), and Keycloak
+(identity, with its own `keycloak-db`). Keycloak is the justified exception
+to "minimal infrastructure" (`DESIGN.md` §4); add no other services
+speculatively.
 
 ---
 
@@ -107,6 +129,17 @@ concrete reason.
   canonical facts and never silently overwrites one.
 - The canonical database must remain rebuildable from retained raw data.
 - MCP is read-only in the current scope; no tool executes arbitrary SQL.
+- Never log tokens, `Authorization` headers, refresh tokens, or the contents
+  of the CLI credentials file.
+- Never implement credential issuance, password handling, or session
+  management in Rosalind.
+- Keep `keycloak/rosalind-realm.json` free of secrets. The CLI is a public
+  client and needs none; keep it that way.
+- `ROSALIND_AUTH_ENABLED=false` is for local dev/tests only. Never default it
+  off and never document it as a production option.
+- Never run `docker compose down -v` to re-import the Keycloak realm: it also
+  deletes the Rosalind Postgres and SeaweedFS volumes (raw evidence). Use the
+  procedure in `docs/auth.md`.
 
 When touching ingestion code, explicitly consider:
 
@@ -115,6 +148,14 @@ What happens if this import is run twice?
 What happens if the provider changes its format?
 What happens if an import is incomplete or corrupted?
 Can the resulting canonical data be traced back to its source?
+```
+
+When adding a REST route or MCP tool, explicitly consider:
+
+```text
+What happens with no token, an expired token, or the wrong aud/iss?
+Is authentication declared explicitly (or is public exposure justified)?
+Could it expose data that should belong to a different account?
 ```
 
 ---
@@ -170,6 +211,12 @@ failures, normalization, idempotent re-imports, changed source records,
 provenance, malformed/incomplete imports. For database changes, include
 integration tests against real Postgres, not mocks.
 
+For auth work, cover: missing, expired, not-yet-valid, wrong-`iss`,
+wrong-`aud`, bad-signature, and rotated-`kid` tokens (use locally generated
+keys, not a live Keycloak); idempotent just-in-time provisioning; and that
+every registered route is either protected or on the explicit public
+allowlist.
+
 ---
 
 ## Working on a Task
@@ -194,6 +241,7 @@ surface the decision — don't choose a direction silently.
 - Relevant tests and quality checks pass.
 - Database migrations included where required.
 - No security or privacy regression.
+- New routes/tools are authenticated or explicitly allowlisted as public.
 - No unrelated changes in the diff.
 - `DESIGN.md` / companion docs updated if the architecture changed.
 

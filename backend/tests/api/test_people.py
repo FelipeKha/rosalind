@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from rosalind.adapters import composition
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests._account import ensure_account
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -13,8 +14,9 @@ FIXTURE = (
 
 
 def _ingest(uow: SqlAlchemyUnitOfWork) -> uuid.UUID:
+    account_id = ensure_account(uow).id
     account = composition.source_service.create_source(
-        uow, provider="google", name="test-account"
+        uow, account_id, provider="google", name="test-account"
     )
     result = composition.processing_service.ingest_person(
         uow, account, json.loads(FIXTURE.read_text())

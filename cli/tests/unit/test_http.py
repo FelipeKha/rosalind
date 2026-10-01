@@ -7,7 +7,7 @@ from cli.client import http
 def _fake_request(monkeypatch, status_code=200, response_json=None):
     captured = {}
 
-    def fake(method, url, params=None, json=None, timeout=None):
+    def fake(method, url, params=None, json=None, headers=None, timeout=None):
         captured.update({"method": method, "url": url, "params": params, "json": json})
         payload = response_json if response_json is not None else {}
         return httpx.Response(
@@ -64,7 +64,7 @@ def test_error_status_raises_with_detail(monkeypatch) -> None:
 
 
 def test_connection_error_raises(monkeypatch) -> None:
-    def fake(method, url, params=None, json=None, timeout=None):
+    def fake(method, url, params=None, json=None, headers=None, timeout=None):
         raise httpx.ConnectError("connection refused")
 
     monkeypatch.setattr(http.httpx, "request", fake)

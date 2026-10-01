@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.application.ports.providers import ProviderCredentials, UserIdentity
 from rosalind.domain.source import SourceAccount
+from tests._account import ensure_account
 
 SCOPES = [
     "openid",
@@ -25,10 +27,18 @@ def _credentials(expiry: datetime) -> ProviderCredentials:
     )
 
 
+def _account_id(db: Session) -> uuid.UUID:
+    return ensure_account(SqlAlchemyUnitOfWork(db)).id
+
+
 def _create_account_with_credentials(
     db: Session, expiry: datetime
 ) -> models.SourceAccount:
-    account = models.SourceAccount(provider="google", account_identifier="12345")
+    account = models.SourceAccount(
+        account_id=_account_id(db),
+        provider="google",
+        account_identifier="12345",
+    )
     db.add(account)
     db.flush()
     credentials = _credentials(expiry)
@@ -85,13 +95,14 @@ def test_disconnect_removes_credentials_keeps_account(
 ) -> None:
     future = datetime.now(UTC) + timedelta(hours=1)
     account = _create_account_with_credentials(db_session, future)
+    account_id = _account_id(db_session)
     revoked: list[str] = []
     monkeypatch.setattr(
         composition.google_auth, "revoke", lambda token: revoked.append(token)
     )
 
     result = composition.source_service.disconnect(
-        SqlAlchemyUnitOfWork(db_session), account.id
+        SqlAlchemyUnitOfWork(db_session), account_id, account.id
     )
 
     assert result.status == "disconnected"
@@ -125,14 +136,19 @@ def _stub_oauth(monkeypatch, identifier: str = "12345", name: str = "Jane Doe") 
 
 def _complete(db: Session) -> SourceAccount:
     uow = SqlAlchemyUnitOfWork(db)
-    start = composition.source_service.start_connect(uow, "google")
+    account_id = _account_id(db)
+    start = composition.source_service.start_connect(uow, account_id, "google")
     return composition.source_service.complete_connect(uow, start.state, "auth-code")
 
 
 def test_complete_connect_reuses_existing_account(
     db_session: Session, monkeypatch
 ) -> None:
-    existing = models.SourceAccount(provider="google", account_identifier="12345")
+    existing = models.SourceAccount(
+        account_id=_account_id(db_session),
+        provider="google",
+        account_identifier="12345",
+    )
     db_session.add(existing)
     db_session.commit()
 
@@ -156,7 +172,10 @@ def test_complete_connect_updates_stale_name_on_reconnect(
     db_session: Session, monkeypatch
 ) -> None:
     existing = models.SourceAccount(
-        provider="google", account_identifier="12345", name="google-personal"
+        account_id=_account_id(db_session),
+        provider="google",
+        account_identifier="12345",
+        name="google-personal",
     )
     db_session.add(existing)
     db_session.commit()
@@ -190,9 +209,10 @@ def test_disconnect_then_reconnect_reuses_account(
 
     first = _complete(db_session)
     first_id = first.id
+    account_id = _account_id(db_session)
 
     result = composition.source_service.disconnect(
-        SqlAlchemyUnitOfWork(db_session), first_id
+        SqlAlchemyUnitOfWork(db_session), account_id, first_id
     )
     assert result.status == "disconnected"
     assert db_session.get(models.SourceAccount, first_id) is not None

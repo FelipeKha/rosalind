@@ -47,14 +47,20 @@ class ImportService:
         self._sources = sources
         self._processing = processing
 
-    def create_import(self, uow: UnitOfWork, source_name: str, type_: str) -> Import:
+    def create_import(
+        self, uow: UnitOfWork, account_id: uuid.UUID, source_name: str, type_: str
+    ) -> Import:
         """Create an import, and for API-backed imports ingest it immediately."""
-        source = self._sources.resolve_source(uow, source_name)
+        source = self._sources.resolve_source(uow, account_id, source_name)
 
         if type_ == IMPORT_TYPE_TAKEOUT:
-            import_ = uow.imports.create(source_account_id=source.id, type_=type_)
+            import_ = uow.imports.create(
+                account_id=account_id, source_account_id=source.id, type_=type_
+            )
         elif type_ == IMPORT_TYPE_API:
-            import_ = uow.imports.create(source_account_id=source.id, type_=type_)
+            import_ = uow.imports.create(
+                account_id=account_id, source_account_id=source.id, type_=type_
+            )
             self._processing.import_api_profile(uow, source, import_)
             import_ = uow.imports.mark_completed(
                 import_.id, completed_at=datetime.now(UTC)
@@ -68,10 +74,11 @@ class ImportService:
     def complete_import(
         self,
         uow: UnitOfWork,
+        account_id: uuid.UUID,
         import_id: uuid.UUID,
         files: Sequence[manifest.FileEntry],
     ) -> Import:
-        import_ = self.get_import(uow, import_id)
+        import_ = self.get_import(uow, account_id, import_id)
         if import_.ingestion_status != INGESTION_UPLOADING:
             raise InvalidImportStateError(
                 f"import {import_id} is in state {import_.ingestion_status!r}, "
@@ -105,20 +112,22 @@ class ImportService:
         uow.commit()
         return import_
 
-    def get_import(self, uow: UnitOfWork, import_id: uuid.UUID) -> Import:
+    def get_import(
+        self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
+    ) -> Import:
         import_ = uow.imports.get(import_id)
-        if import_ is None:
+        if import_ is None or import_.account_id != account_id:
             raise ImportNotFoundError(f"import {import_id} not found")
         return import_
 
-    def list_imports(self, uow: UnitOfWork) -> list[Import]:
-        return uow.imports.list()
+    def list_imports(self, uow: UnitOfWork, account_id: uuid.UUID) -> list[Import]:
+        return uow.imports.list(account_id)
 
-    def delete_import(self, uow: UnitOfWork, import_id: uuid.UUID) -> None:
+    def delete_import(
+        self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
+    ) -> None:
         """Delete an import, removing its raw objects before the import row."""
-        import_ = uow.imports.get(import_id)
-        if import_ is None:
-            raise ImportNotFoundError(f"import {import_id} not found")
+        import_ = self.get_import(uow, account_id, import_id)
         self._storage.delete_objects([f.storage_key for f in import_.files])
         uow.imports.delete(import_id)
         uow.commit()

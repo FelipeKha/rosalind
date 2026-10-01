@@ -24,13 +24,15 @@ class PersonService:
     def __init__(self, repo: PersonRepository):
         self._repo = repo
 
-    def search_people(self, query: str) -> list[PersonProfile]:
+    def search_people(self, account_id: uuid.UUID, query: str) -> list[PersonProfile]:
         # Bounded responses by design: this is an AI-facing interface, so the
         # caller can never request an unbounded result set.
-        return self._repo.search(query, limit=MAX_SEARCH_RESULTS)
+        return self._repo.search(account_id, query, limit=MAX_SEARCH_RESULTS)
 
-    def list_people(self) -> list[PersonProfile]:
-        return self._repo.list_all(limit=MAX_LIST_RESULTS)
+    def list_people(self, account_id: uuid.UUID) -> list[PersonProfile]:
+        return self._repo.list_all(account_id, limit=MAX_LIST_RESULTS)
 
-    def get_person(self, person_id: uuid.UUID) -> PersonProfile | None:
-        return self._repo.get(person_id)
+    def get_person(
+        self, account_id: uuid.UUID, person_id: uuid.UUID
+    ) -> PersonProfile | None:
+        return self._repo.get(account_id, person_id)

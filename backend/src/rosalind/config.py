@@ -22,6 +22,12 @@ class Settings(BaseSettings):
 
     token_encryption_key: str | None = None
 
+    keycloak_url: str = "http://localhost:8080"
+    keycloak_realm: str = "rosalind"
+    keycloak_audience: str = "rosalind"
+
+    auth_enabled: bool = True
+
     mcp_transport: str = "stdio"
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8000

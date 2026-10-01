@@ -65,17 +65,18 @@ def test_search_people_clamps_limit() -> None:
         def __init__(self) -> None:
             self.seen_limit: int | None = None
 
-        def search(self, query: str, limit: int) -> list:
+        def search(self, account_id: uuid.UUID, query: str, limit: int) -> list:
             self.seen_limit = limit
             return []
 
-        def list_all(self, limit: int) -> list:
+        def list_all(self, account_id: uuid.UUID, limit: int) -> list:
             return []
 
-        def get(self, person_id: uuid.UUID):
+        def get(self, account_id: uuid.UUID, person_id: uuid.UUID):
             return None
 
     repo = FakeRepo()
-    PersonService(repo).search_people("Alex")
+    account_id = uuid.uuid4()
+    PersonService(repo).search_people(account_id, "Alex")
 
     assert repo.seen_limit == MAX_SEARCH_RESULTS

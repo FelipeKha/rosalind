@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 
 from rosalind.adapters.composition import get_source_service, get_uow
+from rosalind.adapters.inbound.http.dependencies import AccountDep, get_current_account
 from rosalind.adapters.inbound.http.schemas import sources as schemas
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.sources import (
@@ -17,17 +18,22 @@ from rosalind.application.services.sources import (
 )
 from rosalind.domain.source import SourceAccount
 
-router = APIRouter(prefix="/sources", tags=["sources"])
+router = APIRouter(
+    prefix="/sources", tags=["sources"], dependencies=[Depends(get_current_account)]
+)
 
 UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 SourceDep = Annotated[SourceService, Depends(get_source_service)]
 
 
 @router.get("", response_model=schemas.SourceListResponse)
-def list_sources(uow: UowDep, service: SourceDep) -> schemas.SourceListResponse:
+def list_sources(
+    uow: UowDep, service: SourceDep, account: AccountDep
+) -> schemas.SourceListResponse:
     return schemas.SourceListResponse(
         sources=[
-            _to_summary(source, uow, service) for source in service.list_sources(uow)
+            _to_summary(source, uow, service)
+            for source in service.list_sources(uow, account.id)
         ]
     )
 
@@ -41,8 +47,11 @@ def create_source(
     body: schemas.SourceCreateRequest,
     uow: UowDep,
     service: SourceDep,
+    account: AccountDep,
 ) -> schemas.SourceSummaryResponse:
-    source = service.create_source(uow, provider=body.provider, name=body.name)
+    source = service.create_source(
+        uow, account.id, provider=body.provider, name=body.name
+    )
     return _to_summary(source, uow, service)
 
 
@@ -51,8 +60,11 @@ def connect(
     body: schemas.SourceConnectRequest,
     uow: UowDep,
     service: SourceDep,
+    account: AccountDep,
 ) -> schemas.ConnectResponse:
-    result = service.start_connect(uow, provider=body.provider, name=body.name)
+    result = service.start_connect(
+        uow, account.id, provider=body.provider, name=body.name
+    )
     return schemas.ConnectResponse(
         source_id=result.source_id,
         auth_url=result.auth_url,
@@ -74,9 +86,9 @@ def connect_status(
 
 @router.get("/{source_id}", response_model=schemas.SourceDetailResponse)
 def get_source(
-    source_id: uuid.UUID, uow: UowDep, service: SourceDep
+    source_id: uuid.UUID, uow: UowDep, service: SourceDep, account: AccountDep
 ) -> schemas.SourceDetailResponse:
-    source = service.get_source(uow, source_id)
+    source = service.get_source(uow, account.id, source_id)
     return _to_detail(source, uow, service)
 
 
@@ -85,9 +97,9 @@ def get_source(
     response_model=schemas.DisconnectResponse,
 )
 def disconnect(
-    source_id: uuid.UUID, uow: UowDep, service: SourceDep
+    source_id: uuid.UUID, uow: UowDep, service: SourceDep, account: AccountDep
 ) -> schemas.DisconnectResponse:
-    result = service.disconnect(uow, source_id)
+    result = service.disconnect(uow, account.id, source_id)
     return schemas.DisconnectResponse(status=result.status, revoked=result.revoked)
 
 
