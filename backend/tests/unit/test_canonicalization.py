@@ -53,7 +53,7 @@ def test_canonicalize_raises_on_identity_conflict() -> None:
 
     service = CanonicalizationService()
     uow = FakeUow(FakeRepo())
-    account = SourceAccount(_id(), "google", None, None, None, datetime.now(UTC))
+    account = SourceAccount(_id(), _id(), "google", None, None, None, datetime.now(UTC))
     record = SourceRecord(_id(), account.id, "person", "people/x", {}, "sha256")
     observation = PersonObservation(
         source_identities=(SourceRef("PROFILE", "1"),),

@@ -19,7 +19,11 @@ from rosalind.application.canonicalization.person import (
     CanonicalizationResult,
     CanonicalizationService,
 )
-from rosalind.application.errors import InvalidPayloadError, SourceNotFoundError
+from rosalind.application.errors import (
+    ImportNotFoundError,
+    InvalidPayloadError,
+    SourceNotFoundError,
+)
 from rosalind.application.ports.parsers import PersonParser
 from rosalind.application.ports.providers import PeopleGateway
 from rosalind.application.ports.unit_of_work import UnitOfWork
@@ -93,7 +97,9 @@ class ProcessingService:
         payload = self._people.fetch_profile(credentials)
         return self.ingest_person(uow, source_account, payload, import_id=import_.id)
 
-    def process_import(self, uow: UnitOfWork, import_id: uuid.UUID) -> ProcessOutcome:
+    def process_import(
+        self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
+    ) -> ProcessOutcome:
         """Canonicalize the raw source records produced by an import.
 
         Idempotent: canonicalization is guarded by database uniqueness constraints,
@@ -101,8 +107,8 @@ class ProcessingService:
         no parser yet (e.g. Takeout) report ``unsupported`` and are left pending.
         """
         import_ = uow.imports.get(import_id)
-        if import_ is None:
-            raise InvalidPayloadError(f"import {import_id} not found")
+        if import_ is None or import_.account_id != account_id:
+            raise ImportNotFoundError(f"import {import_id} not found")
 
         if import_.source_account_id is None:
             return ProcessOutcome(
@@ -120,7 +126,9 @@ class ProcessingService:
             )
 
         try:
-            source_account = self._sources.get_source(uow, import_.source_account_id)
+            source_account = self._sources.get_source(
+                uow, account_id, import_.source_account_id
+            )
         except SourceNotFoundError:
             return ProcessOutcome(
                 result=RESULT_UNSUPPORTED,

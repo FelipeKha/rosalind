@@ -56,8 +56,13 @@ def search_people(query: str) -> list[PersonProfileResult]:
     name or primary email contains the query. This is a person lookup, not a
     general personal-data search.
     """
+    account_id = _current_account_id()
+    if account_id is None:
+        return []
     with SessionLocal() as session:
-        results = composition.build_person_service(session).search_people(query)
+        results = composition.build_person_service(session).search_people(
+            account_id, query
+        )
     return [_to_result(profile) for profile in results]
 
 
@@ -68,9 +73,32 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
     Use this after identifying a person with search_people. Returns None if no
     such person exists.
     """
+    account_id = _current_account_id()
+    if account_id is None:
+        return None
     with SessionLocal() as session:
-        profile = composition.build_person_service(session).get_person(person_id)
+        profile = composition.build_person_service(session).get_person(
+            account_id, person_id
+        )
     return _to_result(profile) if profile is not None else None
+
+
+def _current_account_id() -> uuid.UUID | None:
+    """Resolve the authenticated account id from the request token, if any.
+
+    Returns None when no token is present (e.g. the local stdio transport),
+    which leaves the read-only person tools with no account to scope to.
+    """
+    token = get_access_token()
+    if token is None or token.subject is None or token.claims is None:
+        return None
+
+    issuer = token.claims.get("iss") or ""
+    with SessionLocal() as session:
+        uow = SqlAlchemyUnitOfWork(session)
+        account = composition.account_service.get_or_create(uow, issuer, token.subject)
+        uow.commit()
+        return account.id
 
 
 @mcp.tool()

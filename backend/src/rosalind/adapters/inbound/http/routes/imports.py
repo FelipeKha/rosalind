@@ -13,7 +13,7 @@ from rosalind.adapters.composition import (
     get_processing_service,
     get_uow,
 )
-from rosalind.adapters.inbound.http.dependencies import get_current_account
+from rosalind.adapters.inbound.http.dependencies import AccountDep, get_current_account
 from rosalind.adapters.inbound.http.schemas import imports as schemas
 from rosalind.application import manifest
 from rosalind.application.ports.object_storage import ObjectStorage
@@ -33,8 +33,10 @@ StorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]
 
 
 @router.get("", response_model=schemas.ImportListResponse)
-def list_imports(uow: UowDep, import_service: ImportDep) -> schemas.ImportListResponse:
-    imports = import_service.list_imports(uow)
+def list_imports(
+    uow: UowDep, import_service: ImportDep, account: AccountDep
+) -> schemas.ImportListResponse:
+    imports = import_service.list_imports(uow, account.id)
     return schemas.ImportListResponse(
         imports=[_to_summary(import_) for import_ in imports]
     )
@@ -50,8 +52,9 @@ def create_import(
     uow: UowDep,
     import_service: ImportDep,
     storage: StorageDep,
+    account: AccountDep,
 ) -> schemas.ImportCreatedResponse:
-    import_ = import_service.create_import(uow, body.source_name, body.type)
+    import_ = import_service.create_import(uow, account.id, body.source_name, body.type)
     return schemas.ImportCreatedResponse(
         import_id=import_.id,
         source_id=import_.source_account_id,
@@ -73,6 +76,7 @@ def complete_import(
     body: schemas.ManifestRequest,
     uow: UowDep,
     import_service: ImportDep,
+    account: AccountDep,
 ) -> schemas.ImportSummaryResponse:
     entries = [
         manifest.FileEntry(
@@ -84,7 +88,7 @@ def complete_import(
         )
         for f in body.files
     ]
-    import_ = import_service.complete_import(uow, import_id, entries)
+    import_ = import_service.complete_import(uow, account.id, import_id, entries)
     return _to_summary(import_)
 
 
@@ -96,8 +100,9 @@ def process_import(
     import_id: uuid.UUID,
     uow: UowDep,
     processing: ProcessingDep,
+    account: AccountDep,
 ) -> schemas.ProcessingResultResponse:
-    outcome = processing.process_import(uow, import_id)
+    outcome = processing.process_import(uow, account.id, import_id)
     return schemas.ProcessingResultResponse(
         import_id=import_id,
         processing_status=outcome.processing_status,
@@ -118,8 +123,9 @@ def get_import(
     import_id: uuid.UUID,
     uow: UowDep,
     import_service: ImportDep,
+    account: AccountDep,
 ) -> schemas.ImportDetailResponse:
-    import_ = import_service.get_import(uow, import_id)
+    import_ = import_service.get_import(uow, account.id, import_id)
     return schemas.ImportDetailResponse(
         **_to_summary(import_).model_dump(),
         files=[_to_file(f) for f in import_.files],
@@ -134,8 +140,9 @@ def delete_import(
     import_id: uuid.UUID,
     uow: UowDep,
     import_service: ImportDep,
+    account: AccountDep,
 ) -> Response:
-    import_service.delete_import(uow, import_id)
+    import_service.delete_import(uow, account.id, import_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

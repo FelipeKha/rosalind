@@ -72,23 +72,33 @@ class SourceService:
     def __init__(self, auth: AuthGateway):
         self._auth = auth
 
-    def resolve_source(self, uow: UnitOfWork, name: str) -> SourceAccount:
-        account = uow.source_accounts.get_by_name(name)
+    def resolve_source(
+        self, uow: UnitOfWork, account_id: uuid.UUID, name: str
+    ) -> SourceAccount:
+        account = uow.source_accounts.get_by_name(account_id, name)
         if account is None:
             raise SourceNotFoundError(f"source {name!r} not found")
         return account
 
-    def get_source(self, uow: UnitOfWork, source_id: uuid.UUID) -> SourceAccount:
+    def get_source(
+        self, uow: UnitOfWork, account_id: uuid.UUID, source_id: uuid.UUID
+    ) -> SourceAccount:
         account = uow.source_accounts.get(source_id)
-        if account is None:
+        if account is None or account.account_id != account_id:
             raise SourceNotFoundError(f"source {source_id} not found")
         return account
 
-    def list_sources(self, uow: UnitOfWork) -> list[SourceAccount]:
-        return uow.source_accounts.list()
+    def list_sources(
+        self, uow: UnitOfWork, account_id: uuid.UUID
+    ) -> list[SourceAccount]:
+        return uow.source_accounts.list(account_id)
 
-    def create_source(self, uow: UnitOfWork, provider: str, name: str) -> SourceAccount:
-        account = uow.source_accounts.create(provider=provider, name=name)
+    def create_source(
+        self, uow: UnitOfWork, account_id: uuid.UUID, provider: str, name: str
+    ) -> SourceAccount:
+        account = uow.source_accounts.create(
+            account_id=account_id, provider=provider, name=name
+        )
         uow.commit()
         return account
 
@@ -96,7 +106,11 @@ class SourceService:
         return uow.credentials.exists(source_id)
 
     def start_connect(
-        self, uow: UnitOfWork, provider: str, name: str | None = None
+        self,
+        uow: UnitOfWork,
+        account_id: uuid.UUID,
+        provider: str,
+        name: str | None = None,
     ) -> ConnectStart:
         """Begin OAuth for a provider, stashing the requested name on the auth request.
 
@@ -104,7 +118,9 @@ class SourceService:
         with the ``uq_source_account_name`` constraint before OAuth resolves the
         account's identity; the name is applied in ``complete_connect``.
         """
-        account = uow.source_accounts.create(provider=provider, name=None)
+        account = uow.source_accounts.create(
+            account_id=account_id, provider=provider, name=None
+        )
 
         state = secrets.token_urlsafe(32)
         auth_url, code_verifier = self._auth.build_authorization_url(state)
@@ -132,6 +148,11 @@ class SourceService:
                 "authorization request references an unknown account"
             )
         provider = pending.provider
+        account_id = pending.account_id
+        if account_id is None:
+            raise InvalidStateError(
+                "authorization request references an account with no owner"
+            )
 
         try:
             credentials = self._auth.exchange_code(state, code, request.code_verifier)
@@ -144,7 +165,7 @@ class SourceService:
             ) from exc
 
         account = uow.source_accounts.get_by_identity(
-            provider, identity.account_identifier
+            account_id, provider, identity.account_identifier
         )
 
         if account is not None:
@@ -200,14 +221,16 @@ class SourceService:
 
         return AuthStatus(status=STATUS_PENDING, source_id=request.source_account_id)
 
-    def disconnect(self, uow: UnitOfWork, source_id: uuid.UUID) -> DisconnectResult:
+    def disconnect(
+        self, uow: UnitOfWork, account_id: uuid.UUID, source_id: uuid.UUID
+    ) -> DisconnectResult:
         """Revoke and remove stored credentials for a source account.
 
         Revocation at the provider is best-effort; local credentials are removed
         regardless so the backend no longer holds a live grant. The source account,
         its imports, and raw/canonical data are intentionally left untouched.
         """
-        source = self.get_source(uow, source_id)
+        source = self.get_source(uow, account_id, source_id)
         stored = uow.credentials.list_all(source.id)
         if not stored:
             return DisconnectResult(status=STATUS_ALREADY_DISCONNECTED, revoked=False)

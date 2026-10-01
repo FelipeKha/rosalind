@@ -1,6 +1,4 @@
 from collections.abc import Iterator
-from datetime import UTC, datetime
-from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
@@ -23,6 +21,7 @@ from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOf
 from rosalind.application.ports.identity import VerifiedToken
 from rosalind.application.services.people import PersonService
 from rosalind.domain.account import Account
+from tests._account import ensure_account
 from tests._db import make_migrated_engine, reset_schemas
 
 
@@ -31,11 +30,6 @@ def _encryption_key(monkeypatch) -> None:
     monkeypatch.setattr(
         config.settings, "token_encryption_key", Fernet.generate_key().decode()
     )
-
-
-def _stub_account() -> Account:
-    now = datetime.now(UTC)
-    return Account(id=uuid4(), self_person_id=None, created_at=now, updated_at=now)
 
 
 @pytest.fixture(scope="session")
@@ -94,9 +88,15 @@ def api_client(postgres_url: str):
         with factory() as session:
             yield build_person_service(session)
 
+    def override_get_current_account() -> Account:
+        with factory() as session:
+            return ensure_account(SqlAlchemyUnitOfWork(session))
+
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_person_service] = override_get_person_service
-    app.dependency_overrides[dependencies.get_current_account] = _stub_account
+    app.dependency_overrides[dependencies.get_current_account] = (
+        override_get_current_account
+    )
     client = TestClient(app)
     try:
         yield client
@@ -154,9 +154,15 @@ def migrated_api_client(migrated_engine: Engine):
         with factory() as session:
             yield build_person_service(session)
 
+    def override_get_current_account() -> Account:
+        with factory() as session:
+            return ensure_account(SqlAlchemyUnitOfWork(session))
+
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_person_service] = override_get_person_service
-    app.dependency_overrides[dependencies.get_current_account] = _stub_account
+    app.dependency_overrides[dependencies.get_current_account] = (
+        override_get_current_account
+    )
     client = TestClient(app)
     try:
         yield client

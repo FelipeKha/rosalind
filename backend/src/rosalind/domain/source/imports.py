@@ -25,6 +25,7 @@ class ImportFile:
 @dataclass(frozen=True)
 class Import:
     id: uuid.UUID
+    account_id: uuid.UUID | None
     source_account_id: uuid.UUID | None
     source_name: str | None
     type: str

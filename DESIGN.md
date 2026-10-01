@@ -284,8 +284,11 @@ Rules:
 * REST routes are protected except `/health` and `/auth/google/callback`.
   MCP `streamable-http`/`sse` require auth; `stdio` is local and trusted.
   The CLI is a public client using the Device Authorization Grant.
-* **Authentication is not authorization.** Authenticated accounts are not yet
-  scoped to their own data (see [§12](#12-open-questions--deliberately-deferred)).
+* **Authentication is not authorization.** Knowing *who* is calling does not by
+  itself authorize writes. `source_account` and `imports` are now scoped to an
+  `account`, and reads filter by the authenticated account, but write
+  authorization and a full Actor/RBAC model remain deferred (see
+  [§12](#12-open-questions--deliberately-deferred)).
 * `ROSALIND_AUTH_ENABLED=false` exists for local dev/e2e only and is never a
   production setting.
 
@@ -438,10 +441,10 @@ Detail and current status: [`docs/roadmap.md`](docs/roadmap.md).
 * Explicit temporal validity intervals on canonical facts (e.g. employment
   history) — the raw layer already preserves history; canonical validity
   ranges are a later addition.
-* Full authorization/RBAC and multi-tenant scoping — authentication is
-  implemented ([`docs/auth.md`](docs/auth.md)); `account_id` is not yet
-  retrofitted onto existing resources, and MCP write tools remain deferred
-  until the Actor/authZ model exists.
+* Full authorization/RBAC and write authorization — authentication is
+  implemented ([`docs/auth.md`](docs/auth.md)); `source_account` and `imports`
+  are account-scoped and reads filter by account, but an explicit Actor model
+  and MCP write tools remain deferred until that exists.
 * Authorization of object-storage uploads in the import flow (presigned URLs
   vs. proxied through the API).
 * Binding of the `/auth/google/callback` OAuth flow to the initiating

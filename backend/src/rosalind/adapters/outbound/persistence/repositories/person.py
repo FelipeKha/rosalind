@@ -17,34 +17,48 @@ from rosalind.application.read_models import PersonProfile
 
 _PROFILE_QUERY = "select * from agent.person_profile"
 
+_ACCOUNT_SCOPE = (
+    "exists ("
+    "select 1 from core.source_identity si "
+    "join source_account sa on sa.id = si.source_account_id "
+    "where si.person_id = person_profile.person_id "
+    "and sa.account_id = :account_id"
+    ")"
+)
+
 
 class PostgresPersonRepository:
     def __init__(self, session: Session):
         self._session = session
 
-    def search(self, query: str, limit: int) -> list[PersonProfile]:
+    def search(
+        self, account_id: uuid.UUID, query: str, limit: int
+    ) -> list[PersonProfile]:
         rows = self._session.execute(
             text(
-                f"{_PROFILE_QUERY} "
-                "where display_name ilike '%' || :q || '%' "
-                "or primary_email ilike '%' || :q || '%' "
+                f"{_PROFILE_QUERY} where {_ACCOUNT_SCOPE} "
+                "and (display_name ilike '%' || :q || '%' "
+                "or primary_email ilike '%' || :q || '%') "
                 "limit :limit"
             ),
-            {"q": query, "limit": limit},
+            {"account_id": account_id, "q": query, "limit": limit},
         ).all()
         return [self._to_profile(row) for row in rows]
 
-    def list_all(self, limit: int) -> list[PersonProfile]:
+    def list_all(self, account_id: uuid.UUID, limit: int) -> list[PersonProfile]:
         rows = self._session.execute(
-            text(f"{_PROFILE_QUERY} order by display_name nulls last limit :limit"),
-            {"limit": limit},
+            text(
+                f"{_PROFILE_QUERY} where {_ACCOUNT_SCOPE} "
+                "order by display_name nulls last limit :limit"
+            ),
+            {"account_id": account_id, "limit": limit},
         ).all()
         return [self._to_profile(row) for row in rows]
 
-    def get(self, person_id: uuid.UUID) -> PersonProfile | None:
+    def get(self, account_id: uuid.UUID, person_id: uuid.UUID) -> PersonProfile | None:
         row = self._session.execute(
-            text(f"{_PROFILE_QUERY} where person_id = :person_id"),
-            {"person_id": person_id},
+            text(f"{_PROFILE_QUERY} where {_ACCOUNT_SCOPE} and person_id = :person_id"),
+            {"account_id": account_id, "person_id": person_id},
         ).first()
         return self._to_profile(row) if row is not None else None
 

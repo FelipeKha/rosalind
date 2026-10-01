@@ -127,6 +127,7 @@ def test_api_import_creates_canonical_data(
         "fetch_profile",
         lambda credentials: {
             "resourceName": "people/12345",
+            "metadata": {"sources": [{"type": "PROFILE", "id": "12345"}]},
             "names": [
                 {
                     "displayName": "Jane Doe",

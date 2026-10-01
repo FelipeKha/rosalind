@@ -74,6 +74,9 @@ def get_current_account(
     return account
 
 
+AccountDep = Annotated[Account, Depends(get_current_account)]
+
+
 def get_current_account_profile(
     account: Annotated[Account, Depends(get_current_account)],
     token: Annotated[VerifiedToken, Depends(get_verified_token)],

@@ -15,6 +15,7 @@ from datetime import datetime
 @dataclass(frozen=True)
 class SourceAccount:
     id: uuid.UUID
+    account_id: uuid.UUID | None
     provider: str
     name: str | None
     account_identifier: str | None

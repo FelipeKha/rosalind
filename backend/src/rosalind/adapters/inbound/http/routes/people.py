@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from rosalind.adapters.composition import get_person_service
-from rosalind.adapters.inbound.http.dependencies import get_current_account
+from rosalind.adapters.inbound.http.dependencies import AccountDep, get_current_account
 from rosalind.adapters.inbound.http.schemas import people as schemas
 from rosalind.application.read_models import PersonProfile
 from rosalind.application.services.people import PersonService
@@ -27,24 +27,27 @@ ServiceDep = Annotated[PersonService, Depends(get_person_service)]
 @router.get("", response_model=list[schemas.PersonProfileResponse])
 def list_people(
     svc: ServiceDep,
+    account: AccountDep,
 ) -> list[schemas.PersonProfileResponse]:
-    return [_to_response(p) for p in svc.list_people()]
+    return [_to_response(p) for p in svc.list_people(account.id)]
 
 
 @router.get("/search", response_model=list[schemas.PersonProfileResponse])
 def search_people(
     q: str,
     svc: ServiceDep,
+    account: AccountDep,
 ) -> list[schemas.PersonProfileResponse]:
-    return [_to_response(p) for p in svc.search_people(q)]
+    return [_to_response(p) for p in svc.search_people(account.id, q)]
 
 
 @router.get("/{person_id}", response_model=schemas.PersonProfileResponse)
 def get_person(
     person_id: uuid.UUID,
     svc: ServiceDep,
+    account: AccountDep,
 ) -> schemas.PersonProfileResponse:
-    profile = svc.get_person(person_id)
+    profile = svc.get_person(account.id, person_id)
     if profile is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -125,11 +125,18 @@ refreshed from the stored refresh token when expired or on a `401`.
 
 ## Authorization status
 
-Authentication is implemented; authorization is not.
+Authentication is implemented; authorization is partially implemented.
 
-- Authenticated accounts are **not** scoped to their own data: `account_id` has
-  not yet been retrofitted onto existing resources (`source_account`, imports,
-  persons, …). Treat Rosalind as single-user until it is.
+- `source_account` and `imports` are now scoped to an `account` via a nullable
+  `account_id` FK. New rows are always created with an owner; reads (sources,
+  imports, people) filter by the authenticated account.
+- `account_id` is **nullable** only to accommodate pre-authn rows. The migration
+  backfills everything to the single account when exactly one exists; otherwise
+  such rows stay unowned (`account_id IS NULL`) and are invisible to every
+  account until explicitly claimed.
+- Person reads are scoped transitively: a person is visible to an account when
+  it has a `core.source_identity` whose `source_account` belongs to that
+  account. `account.self_person_id` alone does not yet grant visibility.
 - MCP is read-only. Write tools stay deferred until an authorization (Actor)
   model exists; authentication alone is not sufficient.
 - Uploads to object storage in the import flow: how they are authorized

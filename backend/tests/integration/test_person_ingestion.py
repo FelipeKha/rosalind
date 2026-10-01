@@ -15,6 +15,7 @@ from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOf
 from rosalind.application.errors import InvalidPayloadError
 from rosalind.application.services.processing import payload_sha256
 from rosalind.domain.source import SourceAccount
+from tests._account import ensure_account
 
 FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "google" / "person_profile.json"
@@ -26,8 +27,9 @@ def _payload() -> dict:
 
 
 def _account(uow: SqlAlchemyUnitOfWork) -> SourceAccount:
+    account_id = ensure_account(uow).id
     return composition.source_service.create_source(
-        uow, provider="google", name="test-account"
+        uow, account_id, provider="google", name="test-account"
     )
 
 
