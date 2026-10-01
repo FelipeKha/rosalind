@@ -96,7 +96,11 @@ logged, and are refreshed from the stored refresh token when expired or on a
 
 The realm and clients are imported from `keycloak/rosalind-realm.json` on
 container start (`start-dev --import-realm`), so no manual admin-console setup
-is required.
+is required. The realm file must also define the standard OIDC client scopes
+(`basic`, `profile`, `email`, `roles`, `web-origins`, `acr`): since Keycloak 25,
+the `sub` and `auth_time` claims are emitted by protocol mappers on the `basic`
+scope, so importing a realm with only custom scopes silently strips `sub` from
+access tokens.
 
 Registration uses **email as username** (`registrationEmailAsUsername: true`,
 `editUsernameAllowed: false`): the registration form asks for first name, last

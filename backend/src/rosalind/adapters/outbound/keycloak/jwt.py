@@ -7,11 +7,15 @@ endpoint, pinning the expected issuer and audience. This is the concrete
 
 from __future__ import annotations
 
+import logging
+
 import jwt
 from jwt import PyJWKClient, PyJWKClientError
 
 from rosalind import config
 from rosalind.application.ports.identity import TokenVerifier, VerifiedToken
+
+logger = logging.getLogger(__name__)
 
 _ALGORITHMS = ["RS256"]
 
@@ -29,7 +33,8 @@ class KeycloakJwtVerifier:
     def verify(self, token: str) -> VerifiedToken | None:
         try:
             key = self._jwks.get_signing_key_from_jwt(token)
-        except PyJWKClientError:
+        except PyJWKClientError as exc:
+            logger.warning("JWKS signing-key lookup failed: %s", exc)
             return None
 
         try:
@@ -41,7 +46,9 @@ class KeycloakJwtVerifier:
                 audience=self._audience,
                 options={"require": ["iss", "sub", "exp", "aud"]},
             )
-        except jwt.PyJWTError:
+        except jwt.PyJWTError as exc:
+            logger.warning("JWT validation failed: %s: %s", type(exc).__name__, exc)
+            self._log_unverified_claims(token)
             return None
 
         subject = claims.get("sub")
@@ -58,6 +65,19 @@ class KeycloakJwtVerifier:
             preferred_username=claims.get("preferred_username"),
             given_name=claims.get("given_name"),
             family_name=claims.get("family_name"),
+        )
+
+    def _log_unverified_claims(self, token: str) -> None:
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+        except jwt.PyJWTError:
+            return
+        logger.warning(
+            "JWT claims (unverified): iss=%s aud=%s exp=%s azp=%s",
+            unverified.get("iss"),
+            unverified.get("aud"),
+            unverified.get("exp"),
+            unverified.get("azp"),
         )
 
 
