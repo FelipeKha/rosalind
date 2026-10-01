@@ -7,8 +7,6 @@ resolution and just-in-time provisioning go through ``AccountService``.
 
 from __future__ import annotations
 
-import uuid
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -34,13 +32,6 @@ VerifierDep = Annotated[TokenVerifier, Depends(get_token_verifier)]
 AccountServiceDep = Annotated[AccountService, Depends(get_account_service)]
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
-_ANONYMOUS_ACCOUNT = Account(
-    id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
-    self_person_id=None,
-    created_at=datetime.now(UTC),
-    updated_at=datetime.now(UTC),
-)
-
 _ANONYMOUS_TOKEN = VerifiedToken(issuer="local", subject="anonymous")
 
 
@@ -63,9 +54,6 @@ def get_current_account(
     uow: UowDep,
     service: AccountServiceDep,
 ) -> Account:
-    if not config.settings.auth_enabled:
-        return _ANONYMOUS_ACCOUNT
-
     try:
         account = service.get_or_create(uow, token.issuer, token.subject)
     except AccountNotFoundError:
