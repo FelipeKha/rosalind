@@ -19,12 +19,16 @@ import uuid
 from dataclasses import dataclass
 
 from rosalind.application.canonicalization.email import normalize_email
+from rosalind.application.canonicalization.name import normalize_name
+from rosalind.application.canonicalization.phone import normalize_phone
 from rosalind.application.errors import EntityResolutionConflictError
 from rosalind.application.ports.repositories import FactUpsertResult
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.domain.person import (
+    AddressObservation,
     DateObservation,
     NameObservation,
+    OrganizationObservation,
     PersonObservation,
 )
 from rosalind.domain.source import SourceAccount, SourceRecord, SourceRef
@@ -132,6 +136,118 @@ class CanonicalizationService:
                 (result.fact_id, locale_obs.source_primary, locale_obs.value)
             )
 
+        phone_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
+        for phone_obs in observation.phones:
+            result = uow.person_canonical.upsert_phone(
+                person_id=person_id,
+                observation=phone_obs,
+                source_record_id=source_record.id,
+                source_identity_id=_source_identity_id(identities, phone_obs.source),
+            )
+            self._count_fact(counters, result)
+            phone_candidates.append(
+                (
+                    result.fact_id,
+                    phone_obs.source_primary,
+                    normalize_phone(phone_obs.value),
+                )
+            )
+
+        address_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
+        for address_obs in observation.addresses:
+            result = uow.person_canonical.upsert_address(
+                person_id=person_id,
+                observation=address_obs,
+                source_record_id=source_record.id,
+                source_identity_id=_source_identity_id(identities, address_obs.source),
+            )
+            self._count_fact(counters, result)
+            address_candidates.append(
+                (
+                    result.fact_id,
+                    address_obs.source_primary,
+                    _address_sort_key(address_obs),
+                )
+            )
+
+        organization_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
+        for org_obs in observation.organizations:
+            result = uow.person_canonical.upsert_organization(
+                person_id=person_id,
+                observation=org_obs,
+                source_record_id=source_record.id,
+                source_identity_id=_source_identity_id(identities, org_obs.source),
+            )
+            self._count_fact(counters, result)
+            organization_candidates.append(
+                (
+                    result.fact_id,
+                    org_obs.source_primary,
+                    _organization_sort_key(org_obs),
+                )
+            )
+
+        url_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
+        for url_obs in observation.urls:
+            result = uow.person_canonical.upsert_url(
+                person_id=person_id,
+                observation=url_obs,
+                source_record_id=source_record.id,
+                source_identity_id=_source_identity_id(identities, url_obs.source),
+            )
+            self._count_fact(counters, result)
+            url_candidates.append(
+                (result.fact_id, url_obs.source_primary, url_obs.value)
+            )
+
+        im_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
+        for im_obs in observation.ims:
+            result = uow.person_canonical.upsert_im(
+                person_id=person_id,
+                observation=im_obs,
+                source_record_id=source_record.id,
+                source_identity_id=_source_identity_id(identities, im_obs.source),
+            )
+            self._count_fact(counters, result)
+            im_candidates.append(
+                (result.fact_id, im_obs.source_primary, im_obs.username)
+            )
+
+        note_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
+        for note_obs in observation.notes:
+            result = uow.person_canonical.upsert_note(
+                person_id=person_id,
+                observation=note_obs,
+                source_record_id=source_record.id,
+                source_identity_id=_source_identity_id(identities, note_obs.source),
+            )
+            self._count_fact(counters, result)
+            note_candidates.append(
+                (result.fact_id, note_obs.source_primary, note_obs.value)
+            )
+
+        for relation_obs in observation.relations:
+            result = uow.person_canonical.upsert_relation(
+                person_id=person_id,
+                observation=relation_obs,
+                source_record_id=source_record.id,
+                source_identity_id=_source_identity_id(identities, relation_obs.source),
+            )
+            self._count_fact(counters, result)
+
+        nickname_candidates: list[tuple[uuid.UUID, bool | None, str]] = []
+        for nickname_obs in observation.nicknames:
+            result = uow.person_canonical.upsert_nickname(
+                person_id=person_id,
+                observation=nickname_obs,
+                source_record_id=source_record.id,
+                source_identity_id=_source_identity_id(identities, nickname_obs.source),
+            )
+            self._count_fact(counters, result)
+            nickname_candidates.append(
+                (result.fact_id, nickname_obs.source_primary, nickname_obs.value)
+            )
+
         uow.person_canonical.set_name_primary(
             person_id=person_id, fact_id=_select_primary(name_candidates)
         )
@@ -147,6 +263,29 @@ class CanonicalizationService:
         uow.person_canonical.set_locale_primary(
             person_id=person_id, fact_id=_select_primary(locale_candidates)
         )
+        uow.person_canonical.set_phone_primary(
+            person_id=person_id, fact_id=_select_primary(phone_candidates)
+        )
+        uow.person_canonical.set_address_primary(
+            person_id=person_id, fact_id=_select_primary(address_candidates)
+        )
+        uow.person_canonical.set_organization_primary(
+            person_id=person_id, fact_id=_select_primary(organization_candidates)
+        )
+        uow.person_canonical.set_url_primary(
+            person_id=person_id, fact_id=_select_primary(url_candidates)
+        )
+        uow.person_canonical.set_im_primary(
+            person_id=person_id, fact_id=_select_primary(im_candidates)
+        )
+        uow.person_canonical.set_note_primary(
+            person_id=person_id, fact_id=_select_primary(note_candidates)
+        )
+        uow.person_canonical.set_nickname_primary(
+            person_id=person_id, fact_id=_select_primary(nickname_candidates)
+        )
+
+        self._resolve_relations(uow, person_id)
 
         uow.flush()
         return CanonicalizationResult(
@@ -156,6 +295,25 @@ class CanonicalizationService:
             facts_reused=counters["facts_reused"],
             assertions_created=counters["assertions_created"],
         )
+
+    def _resolve_relations(self, uow: UnitOfWork, person_id: uuid.UUID) -> None:
+        """Link unresolved relations to canonical persons by unambiguous name.
+
+        Runs after every record so a relation asserted before its target person
+        was imported still resolves once the target exists. Only an exact,
+        case-insensitive full-name match against exactly one other person links;
+        ambiguous or unknown names stay unresolved for later reconciliation.
+        """
+        for unresolved in uow.person_canonical.list_unresolved_relations():
+            candidates = uow.person_canonical.find_person_ids_by_name(
+                normalized_name=normalize_name(unresolved.related_person_name)
+            )
+            candidates.discard(unresolved.person_id)
+            if len(candidates) == 1:
+                uow.person_canonical.link_relation(
+                    relation_id=unresolved.relation_id,
+                    related_person_id=candidates.pop(),
+                )
 
     def _resolve_or_create_person(
         self,
@@ -209,3 +367,11 @@ def _name_sort_key(obs: NameObservation) -> str:
 
 def _date_sort_key(obs: DateObservation) -> str:
     return f"{obs.year or 0:04d}-{obs.month or 0:02d}-{obs.day or 0:02d}"
+
+
+def _address_sort_key(obs: AddressObservation) -> str:
+    return obs.formatted or obs.street or ""
+
+
+def _organization_sort_key(obs: OrganizationObservation) -> str:
+    return f"{0 if obs.current else 1}-{obs.name or ''}"

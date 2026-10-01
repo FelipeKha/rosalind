@@ -144,3 +144,186 @@ def test_ingest_person_changed_payload_resolves_same_person(
 
     names = db_session.scalars(select(models.PersonName)).all()
     assert {n.display_name for n in names} == {"Alex Morgan", "Alex J. Morgan"}
+
+
+def _contact_payload() -> dict:
+    return {
+        "resourceName": "people/contact",
+        "metadata": {
+            "sources": [{"type": "PROFILE", "id": "contact-1"}],
+        },
+        "names": [
+            {
+                "displayName": "Jane Smith",
+                "givenName": "Jane",
+                "familyName": "Smith",
+                "middleName": "Anne",
+                "honorificPrefix": "Dr.",
+                "honorificSuffix": "Jr.",
+                "metadata": {"primary": True},
+            }
+        ],
+        "emailAddresses": [
+            {"value": "jane@example.com", "metadata": {"primary": True}}
+        ],
+        "phoneNumbers": [
+            {
+                "value": "+1 (415) 555-2671",
+                "type": "mobile",
+                "metadata": {"primary": True},
+            }
+        ],
+        "addresses": [
+            {
+                "formattedValue": "1 Infinite Loop",
+                "type": "work",
+                "streetAddress": "1 Infinite Loop",
+                "city": "Cupertino",
+                "region": "CA",
+                "postalCode": "95014",
+                "country": "USA",
+                "countryCode": "US",
+                "metadata": {"primary": True},
+            }
+        ],
+        "organizations": [
+            {
+                "name": "Acme Corp",
+                "department": "Engineering",
+                "title": "Staff Engineer",
+                "type": "work",
+                "current": True,
+                "metadata": {"primary": True},
+            }
+        ],
+        "urls": [{"value": "https://example.com", "metadata": {"primary": True}}],
+        "imClients": [{"username": "jane.smith", "protocol": "googleTalk"}],
+        "biographies": [{"value": "Hello world", "contentType": "TEXT_PLAIN"}],
+        "relations": [{"person": "John Smith", "type": "spouse"}],
+        "nicknames": [{"value": "Janey"}],
+    }
+
+
+def test_ingest_person_writes_contact_facts(
+    db_session: Session, uow: SqlAlchemyUnitOfWork
+) -> None:
+    account = _account(uow)
+    result = composition.processing_service.ingest_person(
+        uow, account, _contact_payload()
+    )
+
+    assert result.created is True
+
+    name = db_session.scalars(select(models.PersonName)).one()
+    assert name.middle_name == "Anne"
+    assert name.name_prefix == "Dr."
+    assert name.name_suffix == "Jr."
+
+    phone = db_session.scalars(select(models.PersonPhone)).one()
+    assert phone.value == "+1 (415) 555-2671"
+    assert phone.value_normalized == "+14155552671"
+    assert phone.type == "mobile"
+    assert phone.is_primary is True
+
+    address = db_session.scalars(select(models.PersonAddress)).one()
+    assert address.street == "1 Infinite Loop"
+    assert address.city == "Cupertino"
+    assert address.country_code == "US"
+    assert address.is_primary is True
+
+    org = db_session.scalars(select(models.PersonOrganization)).one()
+    assert org.name == "Acme Corp"
+    assert org.title == "Staff Engineer"
+    assert org.current is True
+
+    assert (
+        db_session.scalars(select(models.PersonUrl)).one().value
+        == "https://example.com"
+    )
+    assert db_session.scalars(select(models.PersonIm)).one().service == "googleTalk"
+    assert db_session.scalars(select(models.PersonNote)).one().value == "Hello world"
+    assert db_session.scalars(select(models.PersonNickname)).one().value == "Janey"
+
+    relation = db_session.scalars(select(models.PersonRelation)).one()
+    assert relation.type == "spouse"
+    assert relation.related_person_name == "John Smith"
+    assert relation.related_person_id is None
+
+
+def test_relation_resolves_to_person_by_name(
+    db_session: Session, uow: SqlAlchemyUnitOfWork
+) -> None:
+    account = _account(uow)
+    composition.processing_service.ingest_person(uow, account, _contact_payload())
+
+    relation = db_session.scalars(select(models.PersonRelation)).one()
+    assert relation.related_person_id is None
+
+    target = {
+        "resourceName": "people/target",
+        "metadata": {"sources": [{"type": "PROFILE", "id": "target-1"}]},
+        "names": [
+            {"displayName": "John Smith", "givenName": "John", "familyName": "Smith"}
+        ],
+    }
+    composition.processing_service.ingest_person(uow, account, target)
+
+    db_session.expire_all()
+    relation = db_session.scalars(select(models.PersonRelation)).one()
+    assert relation.related_person_id is not None
+
+    target_person = db_session.scalars(
+        select(models.Person).where(models.Person.id == relation.related_person_id)
+    ).one()
+    assert target_person.id != relation.person_id
+
+
+def test_relation_remains_unresolved_when_name_is_ambiguous(
+    db_session: Session, uow: SqlAlchemyUnitOfWork
+) -> None:
+    account = _account(uow)
+
+    for i in range(2):
+        composition.processing_service.ingest_person(
+            uow,
+            account,
+            {
+                "resourceName": f"people/target-{i}",
+                "metadata": {"sources": [{"type": "PROFILE", "id": f"target-{i}"}]},
+                "names": [
+                    {
+                        "displayName": "John Smith",
+                        "givenName": "John",
+                        "familyName": "Smith",
+                    }
+                ],
+            },
+        )
+
+    composition.processing_service.ingest_person(uow, account, _contact_payload())
+
+    relation = db_session.scalars(select(models.PersonRelation)).one()
+    assert relation.related_person_id is None
+
+
+def test_relation_reimport_after_resolution_is_idempotent(
+    db_session: Session, uow: SqlAlchemyUnitOfWork
+) -> None:
+    account = _account(uow)
+    composition.processing_service.ingest_person(uow, account, _contact_payload())
+
+    target = {
+        "resourceName": "people/target",
+        "metadata": {"sources": [{"type": "PROFILE", "id": "target-1"}]},
+        "names": [
+            {"displayName": "John Smith", "givenName": "John", "familyName": "Smith"}
+        ],
+    }
+    composition.processing_service.ingest_person(uow, account, target)
+
+    # Re-import the original contact after its relation has been resolved.
+    composition.processing_service.ingest_person(uow, account, _contact_payload())
+
+    relations = db_session.scalars(select(models.PersonRelation)).all()
+    assert len(relations) == 1
+    assert relations[0].related_person_id is not None

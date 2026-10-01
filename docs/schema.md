@@ -85,8 +85,10 @@ Four kinds of table:
 2. **Identity** — `source_identity` (person ↔ external identity).
 3. **Assertion** — `source_assertion` (a statement observed in one raw
    record).
-4. **Fact** — `person_name`, `person_email`, `person_date`, `person_gender`,
-   `person_locale` (Rosalind's resolved value) plus `person_*_assertion`
+4. **Fact** — `person_name`, `person_email`, `person_phone`, `person_address`,
+   `person_organization`, `person_date`, `person_gender`, `person_locale`,
+   `person_url`, `person_im`, `person_note`, `person_relation`,
+   `person_nickname` (Rosalind's resolved value) plus `person_*_assertion`
    link tables (one fact ↔ many supporting assertions).
 
 ```text
@@ -153,11 +155,21 @@ audit trail is preserved even after a canonical entity is deleted or merged.
 | `display_name` | text | yes | |
 | `given_name` | text | yes | |
 | `family_name` | text | yes | |
+| `middle_name` | text | yes | |
+| `name_prefix` | text | yes | honorific prefix (e.g. `Dr.`) |
+| `name_suffix` | text | yes | honorific suffix (e.g. `Jr.`) |
+| `previous_family_name` | text | yes | |
+| `phonetic_given_name` | text | yes | |
+| `phonetic_middle_name` | text | yes | |
+| `phonetic_family_name` | text | yes | |
+| `phonetic_full_name` | text | yes | |
 | `is_primary` | boolean | no | default `false` |
 
 - `uq_person_name_one_primary` partial unique on `(person_id) WHERE is_primary`.
 - `uq_person_name_value` unique on `(person_id, display_name, given_name,
-  family_name)` `NULLS NOT DISTINCT`.
+  family_name, middle_name, name_prefix, name_suffix)` `NULLS NOT DISTINCT`.
+  `previous_family_name` and the `phonetic_*` columns are auxiliary and not part
+  of value-uniqueness.
 
 ### `core.person_email`
 
@@ -225,11 +237,148 @@ Identical shape to `core.person_gender`:
 - `uq_person_locale_one_primary` partial unique on `(person_id) WHERE is_primary`.
 - `uq_person_locale_value` unique on `(person_id, value)`.
 
+### `core.person_phone`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `person_id` | uuid | no | FK → `core.person.id` `ON DELETE CASCADE`; indexed |
+| `value` | text | no | as observed |
+| `value_normalized` | text | no | digits (+ leading `+`) comparison key |
+| `type` | text | yes | e.g. `home`, `work`, `mobile`, `fax` |
+| `is_primary` | boolean | no | default `false` |
+| `is_verified` | boolean | no | default `false` |
+
+- `uq_person_phone_person_normalized` unique on `(person_id, value_normalized)`.
+- `uq_person_phone_one_primary` partial unique on `(person_id) WHERE is_primary`.
+
+### `core.person_address`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `person_id` | uuid | no | FK → `core.person.id` `ON DELETE CASCADE`; indexed |
+| `type` | text | yes | e.g. `home`, `work`, `other` |
+| `formatted` | text | yes | provider's unstructured rendering |
+| `street` | text | yes | |
+| `city` | text | yes | |
+| `region` | text | yes | state/province |
+| `postal_code` | text | yes | |
+| `country` | text | yes | |
+| `country_code` | text | yes | ISO 3166-1 alpha-2 |
+| `is_primary` | boolean | no | default `false` |
+
+- `uq_person_address_value` unique on `(person_id, type, formatted, street, city,
+  region, postal_code, country, country_code)` `NULLS NOT DISTINCT`.
+- `uq_person_address_one_primary` partial unique on `(person_id) WHERE is_primary`.
+
+### `core.person_organization`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `person_id` | uuid | no | FK → `core.person.id` `ON DELETE CASCADE`; indexed |
+| `name` | text | yes | |
+| `department` | text | yes | |
+| `title` | text | yes | |
+| `type` | text | yes | e.g. `work`, `school` |
+| `current` | boolean | yes | whether this is the current organization |
+| `start_year` / `start_month` / `start_day` | integer | yes | partial date |
+| `end_year` / `end_month` / `end_day` | integer | yes | partial date |
+| `phonetic_name` | text | yes | |
+| `is_primary` | boolean | no | default `false` |
+
+- Check constraints mirror `person_date` (`month` 1–12, `day` requires `month`).
+- `uq_person_organization_value` unique on `(person_id, name, department, title,
+  type, start_year, start_month, start_day)` `NULLS NOT DISTINCT`.
+- `uq_person_organization_one_primary` partial unique on `(person_id) WHERE is_primary`.
+
+### `core.person_url`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `person_id` | uuid | no | FK → `core.person.id` `ON DELETE CASCADE`; indexed |
+| `value` | text | no | |
+| `type` | text | yes | e.g. `home`, `work` |
+| `is_primary` | boolean | no | default `false` |
+
+- `uq_person_url_value` unique on `(person_id, value)`.
+- `uq_person_url_one_primary` partial unique on `(person_id) WHERE is_primary`.
+
+### `core.person_im`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `person_id` | uuid | no | FK → `core.person.id` `ON DELETE CASCADE`; indexed |
+| `service` | text | yes | protocol/service (e.g. `googleTalk`, `skype`) |
+| `username` | text | no | |
+| `type` | text | yes | |
+| `is_primary` | boolean | no | default `false` |
+
+- `uq_person_im_value` unique on `(person_id, service, username, type)`
+  `NULLS NOT DISTINCT`.
+- `uq_person_im_one_primary` partial unique on `(person_id) WHERE is_primary`.
+
+### `core.person_note`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `person_id` | uuid | no | FK → `core.person.id` `ON DELETE CASCADE`; indexed |
+| `value` | text | no | |
+| `content_type` | text | yes | e.g. `text/plain`, `text/html` |
+| `is_primary` | boolean | no | default `false` |
+
+- `uq_person_note_value` unique on `(person_id, value)`.
+- `uq_person_note_one_primary` partial unique on `(person_id) WHERE is_primary`.
+
+### `core.person_relation`
+
+A directed edge from a person to another person. `type` describes what
+`related_person` is to `person_id` (e.g. a `spouse` relation on A pointing at B
+means "B is A's spouse"). The target resolves over time: initially only
+`related_person_name` is set, and `related_person_id` is filled by a later
+resolution pass once an unambiguous person matches. It has **no** `is_primary` —
+relations are a set of edges, not an attribute with a single primary value.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `person_id` | uuid | no | FK → `core.person.id` `ON DELETE CASCADE`; indexed |
+| `related_person_id` | uuid | yes | FK → `core.person.id` `ON DELETE SET NULL`; indexed |
+| `related_person_name` | text | yes | asserted string, kept after resolution |
+| `type` | text | no | e.g. `spouse`, `child`, `mother`, `manager` |
+
+- `ck_person_relation_target` check: `related_person_id` or
+  `related_person_name` present.
+- `uq_person_relation_value` unique on `(person_id, type, related_person_name)`
+  `NULLS NOT DISTINCT`. `related_person_id` is resolution state, not identity:
+  resolving an edge mutates it without changing the fact's uniqueness key, so a
+  re-import of the source record remains idempotent.
+
+### `core.person_nickname`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `person_id` | uuid | no | FK → `core.person.id` `ON DELETE CASCADE`; indexed |
+| `value` | text | no | |
+| `type` | text | yes | |
+| `is_primary` | boolean | no | default `false` |
+
+- `uq_person_nickname_value` unique on `(person_id, value)`.
+- `uq_person_nickname_one_primary` partial unique on `(person_id) WHERE is_primary`.
+
 ### Link tables — `person_*_assertion`
 
-Five link tables (`person_name_assertion`, `person_email_assertion`,
-`person_date_assertion`, `person_gender_assertion`,
-`person_locale_assertion`), each with the same shape:
+Thirteen link tables (`person_name_assertion`, `person_email_assertion`,
+`person_phone_assertion`, `person_address_assertion`,
+`person_organization_assertion`, `person_date_assertion`,
+`person_gender_assertion`, `person_locale_assertion`, `person_url_assertion`,
+`person_im_assertion`, `person_note_assertion`, `person_relation_assertion`,
+`person_nickname_assertion`), each with the same shape:
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|

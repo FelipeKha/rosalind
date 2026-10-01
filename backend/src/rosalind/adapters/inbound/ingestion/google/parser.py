@@ -10,25 +10,48 @@ from typing import Any
 
 from rosalind.adapters.inbound.ingestion.google.models import (
     GOOGLE_PERSON_RESOURCE_TYPE,
+    GoogleAddress,
+    GoogleBiography,
     GoogleBirthday,
+    GoogleDate,
     GoogleEmailAddress,
     GoogleFieldMetadata,
     GoogleGender,
+    GoogleImClient,
     GoogleLocale,
     GoogleName,
+    GoogleNickname,
+    GoogleOrganization,
     GooglePerson,
+    GooglePhoneNumber,
+    GoogleRelation,
     GoogleSource,
+    GoogleUrl,
 )
 from rosalind.application.errors import InvalidPayloadError
 from rosalind.domain.person import (
+    AddressObservation,
     DateObservation,
     EmailObservation,
     GenderObservation,
+    ImObservation,
     LocaleObservation,
     NameObservation,
+    NicknameObservation,
+    NoteObservation,
+    OrganizationObservation,
     PersonObservation,
+    PhoneObservation,
+    RelationObservation,
+    UrlObservation,
 )
 from rosalind.domain.source import SourceRef
+
+
+def _date_parts(date: GoogleDate | None) -> tuple[int | None, int | None, int | None]:
+    if date is None:
+        return None, None, None
+    return date.year or None, date.month or None, date.day or None
 
 
 def map_google_person(person: GooglePerson) -> PersonObservation:
@@ -42,6 +65,28 @@ def map_google_person(person: GooglePerson) -> PersonObservation:
     )
     emails = tuple(
         _map_email(email, index) for index, email in enumerate(person.emailAddresses)
+    )
+    phones = tuple(
+        _map_phone(phone, index) for index, phone in enumerate(person.phoneNumbers)
+    )
+    addresses = tuple(
+        _map_address(address, index) for index, address in enumerate(person.addresses)
+    )
+    organizations = tuple(
+        _map_organization(org, index) for index, org in enumerate(person.organizations)
+    )
+    urls = tuple(_map_url(url, index) for index, url in enumerate(person.urls))
+    ims = tuple(_map_im(client, index) for index, client in enumerate(person.imClients))
+    notes = tuple(_map_note(bio, index) for index, bio in enumerate(person.biographies))
+    relations = tuple(
+        _map_relation(relation, index)
+        for index, relation in enumerate(person.relations)
+        if relation.type and relation.person
+    )
+    nicknames = tuple(
+        _map_nickname(nickname, index)
+        for index, nickname in enumerate(person.nicknames)
+        if nickname.value
     )
     dates = tuple(
         _map_birthday(birthday, index)
@@ -65,6 +110,14 @@ def map_google_person(person: GooglePerson) -> PersonObservation:
         dates=dates,
         genders=genders,
         locales=locales,
+        phones=phones,
+        addresses=addresses,
+        organizations=organizations,
+        urls=urls,
+        ims=ims,
+        notes=notes,
+        relations=relations,
+        nicknames=nicknames,
     )
 
 
@@ -82,6 +135,22 @@ def _collect_source_identities(
         _add_field_source(refs, name.metadata)
     for email in person.emailAddresses:
         _add_field_source(refs, email.metadata)
+    for phone in person.phoneNumbers:
+        _add_field_source(refs, phone.metadata)
+    for address in person.addresses:
+        _add_field_source(refs, address.metadata)
+    for org in person.organizations:
+        _add_field_source(refs, org.metadata)
+    for url in person.urls:
+        _add_field_source(refs, url.metadata)
+    for client in person.imClients:
+        _add_field_source(refs, client.metadata)
+    for bio in person.biographies:
+        _add_field_source(refs, bio.metadata)
+    for relation in person.relations:
+        _add_field_source(refs, relation.metadata)
+    for nickname in person.nicknames:
+        _add_field_source(refs, nickname.metadata)
     for birthday in person.birthdays:
         _add_field_source(refs, birthday.metadata)
     for gender in person.genders:
@@ -131,6 +200,13 @@ def _map_name(name: GoogleName, index: int) -> NameObservation:
         display_name=name.displayName,
         given_name=name.givenName,
         family_name=name.familyName,
+        middle_name=name.middleName,
+        name_prefix=name.honorificPrefix,
+        name_suffix=name.honorificSuffix,
+        phonetic_given_name=name.phoneticGivenName,
+        phonetic_middle_name=name.phoneticMiddleName,
+        phonetic_family_name=name.phoneticFamilyName,
+        phonetic_full_name=name.phoneticFullName,
         source=_field_source(name.metadata),
         source_primary=primary,
         source_verified=verified,
@@ -147,6 +223,121 @@ def _map_email(email: GoogleEmailAddress, index: int) -> EmailObservation:
         source_primary=primary,
         source_verified=verified,
         field_path=f"$.emailAddresses[{index}]",
+    )
+
+
+def _map_phone(phone: GooglePhoneNumber, index: int) -> PhoneObservation:
+    primary, verified = _flags(phone.metadata)
+    return PhoneObservation(
+        value=phone.value,
+        type=phone.type,
+        source=_field_source(phone.metadata),
+        source_primary=primary,
+        source_verified=verified,
+        field_path=f"$.phoneNumbers[{index}]",
+    )
+
+
+def _map_address(address: GoogleAddress, index: int) -> AddressObservation:
+    primary, verified = _flags(address.metadata)
+    return AddressObservation(
+        formatted=address.formattedValue,
+        type=address.type,
+        street=address.streetAddress,
+        city=address.city,
+        region=address.region,
+        postal_code=address.postalCode,
+        country=address.country,
+        country_code=address.countryCode,
+        source=_field_source(address.metadata),
+        source_primary=primary,
+        source_verified=verified,
+        field_path=f"$.addresses[{index}]",
+    )
+
+
+def _map_organization(org: GoogleOrganization, index: int) -> OrganizationObservation:
+    primary, verified = _flags(org.metadata)
+    start_year, start_month, start_day = _date_parts(org.startDate)
+    end_year, end_month, end_day = _date_parts(org.endDate)
+    return OrganizationObservation(
+        name=org.name,
+        department=org.department,
+        title=org.title,
+        type=org.type,
+        current=org.current,
+        start_year=start_year,
+        start_month=start_month,
+        start_day=start_day,
+        end_year=end_year,
+        end_month=end_month,
+        end_day=end_day,
+        phonetic_name=org.phoneticName,
+        source=_field_source(org.metadata),
+        source_primary=primary,
+        source_verified=verified,
+        field_path=f"$.organizations[{index}]",
+    )
+
+
+def _map_url(url: GoogleUrl, index: int) -> UrlObservation:
+    primary, verified = _flags(url.metadata)
+    return UrlObservation(
+        value=url.value,
+        type=url.type,
+        source=_field_source(url.metadata),
+        source_primary=primary,
+        source_verified=verified,
+        field_path=f"$.urls[{index}]",
+    )
+
+
+def _map_im(client: GoogleImClient, index: int) -> ImObservation:
+    primary, verified = _flags(client.metadata)
+    return ImObservation(
+        service=client.protocol,
+        username=client.username,
+        type=client.type,
+        source=_field_source(client.metadata),
+        source_primary=primary,
+        source_verified=verified,
+        field_path=f"$.imClients[{index}]",
+    )
+
+
+def _map_note(bio: GoogleBiography, index: int) -> NoteObservation:
+    primary, verified = _flags(bio.metadata)
+    return NoteObservation(
+        value=bio.value,
+        content_type=bio.contentType,
+        source=_field_source(bio.metadata),
+        source_primary=primary,
+        source_verified=verified,
+        field_path=f"$.biographies[{index}]",
+    )
+
+
+def _map_relation(relation: GoogleRelation, index: int) -> RelationObservation:
+    primary, verified = _flags(relation.metadata)
+    return RelationObservation(
+        related_person_name=relation.person,
+        type=relation.type or "",
+        source=_field_source(relation.metadata),
+        source_primary=primary,
+        source_verified=verified,
+        field_path=f"$.relations[{index}]",
+    )
+
+
+def _map_nickname(nickname: GoogleNickname, index: int) -> NicknameObservation:
+    primary, verified = _flags(nickname.metadata)
+    return NicknameObservation(
+        value=nickname.value,
+        type=nickname.type,
+        source=_field_source(nickname.metadata),
+        source_primary=primary,
+        source_verified=verified,
+        field_path=f"$.nicknames[{index}]",
     )
 
 

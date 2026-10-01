@@ -122,6 +122,9 @@ class PersonName(Base):
             "display_name",
             "given_name",
             "family_name",
+            "middle_name",
+            "name_prefix",
+            "name_suffix",
             name="uq_person_name_value",
             postgresql_nulls_not_distinct=True,
         ),
@@ -135,6 +138,14 @@ class PersonName(Base):
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     given_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     family_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    middle_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name_prefix: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name_suffix: Mapped[str | None] = mapped_column(Text, nullable=True)
+    previous_family_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phonetic_given_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phonetic_middle_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phonetic_family_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phonetic_full_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
@@ -251,6 +262,265 @@ class PersonLocale(Base):
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class PersonPhone(Base):
+    __tablename__ = "person_phone"
+    __table_args__ = (
+        UniqueConstraint(
+            "person_id", "value_normalized", name="uq_person_phone_person_normalized"
+        ),
+        Index(
+            "uq_person_phone_one_primary",
+            "person_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    value_normalized: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PersonAddress(Base):
+    __tablename__ = "person_address"
+    __table_args__ = (
+        UniqueConstraint(
+            "person_id",
+            "type",
+            "formatted",
+            "street",
+            "city",
+            "region",
+            "postal_code",
+            "country",
+            "country_code",
+            name="uq_person_address_value",
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index(
+            "uq_person_address_one_primary",
+            "person_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    formatted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    street: Mapped[str | None] = mapped_column(Text, nullable=True)
+    city: Mapped[str | None] = mapped_column(Text, nullable=True)
+    region: Mapped[str | None] = mapped_column(Text, nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    country: Mapped[str | None] = mapped_column(Text, nullable=True)
+    country_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PersonOrganization(Base):
+    """A past or current organization, with optional partial date ranges."""
+
+    __tablename__ = "person_organization"
+    __table_args__ = (
+        CheckConstraint(
+            "start_month IS NULL OR (start_month BETWEEN 1 AND 12)",
+            name="ck_person_organization_start_month",
+        ),
+        CheckConstraint(
+            "end_month IS NULL OR (end_month BETWEEN 1 AND 12)",
+            name="ck_person_organization_end_month",
+        ),
+        CheckConstraint(
+            "start_day IS NULL OR start_month IS NOT NULL",
+            name="ck_person_organization_start_precision",
+        ),
+        CheckConstraint(
+            "end_day IS NULL OR end_month IS NOT NULL",
+            name="ck_person_organization_end_precision",
+        ),
+        UniqueConstraint(
+            "person_id",
+            "name",
+            "department",
+            "title",
+            "type",
+            "start_year",
+            "start_month",
+            "start_day",
+            name="uq_person_organization_value",
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index(
+            "uq_person_organization_one_primary",
+            "person_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    department: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    start_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    phonetic_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PersonUrl(Base):
+    __tablename__ = "person_url"
+    __table_args__ = (
+        UniqueConstraint("person_id", "value", name="uq_person_url_value"),
+        Index(
+            "uq_person_url_one_primary",
+            "person_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PersonIm(Base):
+    __tablename__ = "person_im"
+    __table_args__ = (
+        UniqueConstraint(
+            "person_id",
+            "service",
+            "username",
+            "type",
+            name="uq_person_im_value",
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index(
+            "uq_person_im_one_primary",
+            "person_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service: Mapped[str | None] = mapped_column(Text, nullable=True)
+    username: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PersonNote(Base):
+    __tablename__ = "person_note"
+    __table_args__ = (
+        UniqueConstraint("person_id", "value", name="uq_person_note_value"),
+        Index(
+            "uq_person_note_one_primary",
+            "person_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PersonRelation(Base):
+    """A directed edge from a person to another person (or an unresolved name).
+
+    ``type`` describes what ``related_person`` is to ``person_id`` (e.g. a
+    ``spouse`` relation on A pointing at B means "B is A's spouse"). The target
+    is resolved by a later pass: initially only ``related_person_name`` is set,
+    and ``related_person_id`` is filled once an unambiguous person is matched.
+    """
+
+    __tablename__ = "person_relation"
+    __table_args__ = (
+        CheckConstraint(
+            "related_person_id IS NOT NULL OR related_person_name IS NOT NULL",
+            name="ck_person_relation_target",
+        ),
+        UniqueConstraint(
+            "person_id",
+            "type",
+            "related_person_name",
+            name="uq_person_relation_value",
+            postgresql_nulls_not_distinct=True,
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    related_person_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("core.person.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    related_person_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class PersonNickname(Base):
+    __tablename__ = "person_nickname"
+    __table_args__ = (
+        UniqueConstraint("person_id", "value", name="uq_person_nickname_value"),
+        Index(
+            "uq_person_nickname_one_primary",
+            "person_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+        {"schema": "core"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    person_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class PersonNameAssertion(Base):
     """Links one canonical name to the assertions that support it."""
 
@@ -318,6 +588,118 @@ class PersonLocaleAssertion(Base):
     )
     person_locale_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("core.person_locale.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class PersonPhoneAssertion(Base):
+    __tablename__ = "person_phone_assertion"
+    __table_args__ = {"schema": "core"}  # noqa: RUF012
+
+    assertion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.source_assertion.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_phone_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person_phone.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class PersonAddressAssertion(Base):
+    __tablename__ = "person_address_assertion"
+    __table_args__ = {"schema": "core"}  # noqa: RUF012
+
+    assertion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.source_assertion.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_address_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person_address.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class PersonOrganizationAssertion(Base):
+    __tablename__ = "person_organization_assertion"
+    __table_args__ = {"schema": "core"}  # noqa: RUF012
+
+    assertion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.source_assertion.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person_organization.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class PersonUrlAssertion(Base):
+    __tablename__ = "person_url_assertion"
+    __table_args__ = {"schema": "core"}  # noqa: RUF012
+
+    assertion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.source_assertion.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_url_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person_url.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class PersonImAssertion(Base):
+    __tablename__ = "person_im_assertion"
+    __table_args__ = {"schema": "core"}  # noqa: RUF012
+
+    assertion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.source_assertion.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_im_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person_im.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class PersonNoteAssertion(Base):
+    __tablename__ = "person_note_assertion"
+    __table_args__ = {"schema": "core"}  # noqa: RUF012
+
+    assertion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.source_assertion.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_note_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person_note.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class PersonRelationAssertion(Base):
+    __tablename__ = "person_relation_assertion"
+    __table_args__ = {"schema": "core"}  # noqa: RUF012
+
+    assertion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.source_assertion.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_relation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person_relation.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class PersonNicknameAssertion(Base):
+    __tablename__ = "person_nickname_assertion"
+    __table_args__ = {"schema": "core"}  # noqa: RUF012
+
+    assertion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.source_assertion.id", ondelete="CASCADE"), primary_key=True
+    )
+    person_nickname_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("core.person_nickname.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
