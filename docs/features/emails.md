@@ -67,3 +67,340 @@ Indexes                   FTS + embeddings, derived and rebuildable
 |  |  |	Apache AGE | PostgreSQL Graph database compatible with PostgreSQL's distributed assets and leverages graph data structures to analyze and use relationships and patterns in data (may be overkill) | [Apache AGE website](https://age.apache.org/) |
 | Large context and iteration | Results shaped so an agent can afford to search repeatedly, especially a local model with a modest context window |	tokenizer of your chosen model (or tiktoken) | Count tokens. If you build your own client later, Pydantic AI, LangGraph or smolagents can handle the loop | [TikToken website](https://tiktoken.net/) |
 | Deep integration with the data | Equivalent of App Intents, meaning typed, discoverable operations that clients can rely on |	MCP SDK, plus FastAPI for REST |  | []() |
+
+
+                         OFFLINE
+Documents ──► parse/chunk ──► embeddings ──► search index
+                                      │
+                                      └──► metadata / features
+
+                         ONLINE
+User query
+   │
+   ▼
+query processing
+   │
+   ├──► lexical search (BM25 / Elasticsearch / Solr)
+   │
+   └──► semantic search (embedding → vector search)
+                 │
+                 ▼
+          candidate set, e.g. 100
+                 │
+                 ▼
+             reranker
+       (ML model / Vertex AI / LLM)
+                 │
+                 ▼
+          top 5–10 results
+                 │
+                 ▼
+               RAG
+                 │
+                 ▼
+                LLM
+                 │
+                 ▼
+             final answer
+
+## Offline pipeline
+
+Stage contract: every derived table is keyed by (input hash or id, stage version), and re-running a stage is a no-op unless the version changed.
+
+Documents ─► parse ─► canonicalize ─► enrich ─► chunk ─┬─► embeddings ─► vector index
+                                                       ├─► BM25 index
+                                                       └─► metadata columns (filters)
+
+Let's use the example of an email to follow the pipeline:
+
+From 1790123456789012345@xxx Tue Mar 17 13:32:08 +0000 2026
+X-GM-THRID: 1790123456789012345
+X-Gmail-Labels: Inbox,Important,Projects
+Message-ID: <CAF7x9=roof-2291@mail.gmail.com>
+In-Reply-To: <orig-001@mail.gmail.com>
+References: <orig-001@mail.gmail.com>
+Date: Tue, 17 Mar 2026 09:32:08 -0400
+From: Mike Turner <mike@turnerroofing.com>
+To: Alex Dupont <alex.dupont@gmail.com>
+Cc: billing@turnerroofing.com
+Subject: Re: Roof quote - 12 Elm Street
+Content-Type: multipart/mixed
+  ├─ multipart/alternative
+  │    ├─ text/plain
+  │    └─ text/html
+  └─ application/pdf; name="quote-2026-0412.pdf"
+
+Hi Alex,
+
+Following our site visit, here is the revised quote: $8,400 including
+materials and labor for the full roof replacement (natural slate). We
+could start on Monday, April 6. I can stop by Thursday at 10am to
+finalize, does that work for you?
+
+Best regards,
+Mike Turner
+Turner Roofing | (415) 555-0142
+
+On Tue, Mar 10, 2026 at 9:15 AM Alex Dupont <alex.dupont@gmail.com> wrote:
+> Can you confirm the price? The first quote was $9,200.
+
+Attachment:
+The PDF text is a quote ("QUOTE #2026-0412") with Materials $4,650.00, Labor $3,750.00 and Total $8,400.00.
+
+### 1. Documents
+#### 1.1. Archive intake
+Ingest the whole archive file, all the emails imported at once, into object storage. The DB only gets one small metadata row. The SHA-256 hash  does two jobs: it detects when you upload the same archive twice, and it proves the evidence hasn't been altered. Attachments are not separate objects yet, they only exist as base64 inside the mbox.
+
+raw.archive
+  provider = google          
+  sha256   = 3b9a…           
+  status   = received → split
+  format = takeout_mbox
+  storage_uri = seaweedfs://rosalind-raw/archives/3b/3b9a…
+
+#### 1.2. Record split
+Cuts the archive into individual messages, attachment included. Still live in the object storage (possible optimization is to save just its offset and length inside the archive instead of storing the exact bytes of each message to save space), and save one row per message in the DB.
+
+raw.source_record
+  resource_type  = gmail.message
+  external_id    = <CAF7x9=roof-2291@mail.gmail.com>
+  payload_sha256 = 91d7a2…
+  payload_uri    = seaweedfs://…/records/91/91d7…
+
+### 2. Parse
+#### 2.1 Parse to observation (pure)
+This stage is a function, it just takes the email from previous step, parse it and return structured data for our canonical objects in the next step. This include attachment's metadata and the decoded bytes, in memory (filename, declared MIME type, size, and SHA-256 of the decoded bytes).
+
+Edge cases to handle in the parser: 
+- A forwarded email attached as message/rfc822 (return it as a nested ParsedEmail, or flag it)
+- A declared type that disagrees with the real file (check magic bytes with python-magic or filetype).
+
+{
+  "message_id": "CAF7x9=roof-2291@mail.gmail.com",
+  "in_reply_to": "orig-001@mail.gmail.com",
+  "references": ["orig-001@mail.gmail.com"],
+  "provider_thread_hint": "1790123456789012345",
+  "date_header": "Tue, 17 Mar 2026 09:32:08 -0400",
+  "date_utc": "2026-03-17T13:32:08Z",
+  "date_offset_minutes": -240,
+  "subject": "Re: Roof quote - 12 Elm Street",
+  "addresses": [
+    {"role":"from","name":"Mike Turner","addr":"mike@turnerroofing.com"},
+    {"role":"to","name":"Alex Dupont","addr":"alex.dupont@gmail.com"},
+    {"role":"cc","name":null,"addr":"billing@turnerroofing.com"}
+  ],
+  "provider_tags": ["Inbox","Important","Projects"],
+  "text_plain": "Hi Alex, Following our...",
+  "text_html": "Hi Alex, Following our...",
+  "attachments": [{"filename":"quote-2026-0412.pdf","mime":"application/pdf",
+                   "size":41877,"sha256":"e5a1…", "disposition": attachment vs inline}],
+  "parse_warnings": [],
+  "parser_version": "gmail-mbox/1.3.0"
+}
+
+### 3. Canonicalize
+#### 3.1. Canonicalize to items
+Takes parsed data from previous step and saves it in DB. It also saves attachments in object storage as blob (binary file stored without interpretation and addressed by its hash (blobs/e5/e5a1…))
+
+item.email
+  id             = uuid5(NS, source_account_id || ':' || CAF7x9=roof-2291@…)   → e_9f2c
+  occurred_at    = 2026-03-17T13:32:08Z
+  utc_offset_min = -240
+  direction      = received       (alex.dupont@gmail.com ∈ account self-handles)
+  subject        = Re: Roof quote - 12 Elm Street
+  "text_plain": "Hi Alex, Following our...",
+  "text_html": "Hi Alex, Following our...",
+  has_attachments = true
+
+item.participant   (entity_id is null at this stage)
+  from  email  mike@turnerroofing.com     "Mike Turner"
+  to    email  alex.dupont@gmail.com      "Alex Dupont"
+  cc    email  billing@turnerroofing.com  null
+
+item.attachment    quote-2026-0412.pdf  application/pdf  blob e5a1…  status=present "disposition": attachment vs inline
+item.tag           gmail:Inbox, gmail:Important, gmail:Projects
+conv.thread        t_41aa  root_message_id=orig-001@mail.gmail.com
+                           provider_hint=1790123456789012345
+
+#### 3.2. Reconcile 
+Builds conv.thread from References, and later computes which quoted segments are covered by an existing item. Both depend on other items in the DB, so they can't happen in the parser. They must be re-runnable when an older message arrives later.
+
+### 4. Enrich
+#### 4.1. Derived text
+Turns a raw message into clean, segmented text that both extraction and chunking consume. We split the email into body, signature, quoted text and attachment text. We also segment's detect language at this stage.
+
+What is does:
+- Get plain text. Use the text/plain part, or convert HTML (selectolax) if there isn't one.
+- Segment the body into new content, quoted history, signature, disclaimer, and forwarded content.
+- Detect language per segment.
+- Extract attachment text. PDF text layer, Office files via docling, OCR for scans. This is the slow, expensive part.
+
+Key attachment_text by blob_sha256, not by attachment ID. The same PDF attached to ten emails then gets OCRed once.
+
+Note: at this stage, we focus on text only, images and other formats to be handled at a later stage
+
+derived.item_text        (item_id, version) → clean_text, method ('plain'|'html')
+
+derived.item_segment     (item_id, version, seq)
+  kind                   new | quoted | signature | disclaimer | forwarded
+  text, language, language_confidence
+  quoted_author, quoted_at         -- from the attribution line
+  covered_by_item_id               -- null = orphan quote, treated as content
+
+derived.attachment_text  (blob_sha256, version) → text, method, page_count, language
+
+
+Example:
+derived.item_text   "Hi Alex, Following our site visit, here is the revised quote:
+                    $8,400 including materials and labor for the full roof
+                    replacement (natural slate). We could start on Monday,
+                    April 6. I can stop by Thursday at 10am to finalize,
+                    does that work for you?"
+
+derived.item_segment     (item_id, version, seq)
+  kind                   new
+  text                   "Hi Alex, Following our site visit, here is the revised quote:
+                         $8,400 including materials and labor for the full roof
+                         replacement (natural slate). We could start on Monday,
+                         April 6. I can stop by Thursday at 10am to finalize,
+                         does that work for you?"
+  language                  en
+  language_confidence       98%
+  quoted_author, quoted_at  mike@turnerroofing.com
+  covered_by_item_id               -- null = orphan quote, treated as content
+
+derived.attachment_text  (blob_sha256, version) → text, method, page_count, language
+    "QUOTE #2026-0412 … Materials $4,650.00 … Labor $3,750.00 … Total $8,400.00"
+
+
+#### 4.2. Extraction
+This is where we analyze the email and extract useful data for future search.
+Example and schemas for data to be extracted can be found at:
+https://schema.org/FlightReservation
+https://developers.google.com/workspace/gmail/markup/overview#google-calendar
+Generic types (Duckling/OntoNotes)
+
+
+Tier list:
+- Mentions: dates, amounts, phones, addresses
+- Structured documents: reservations, orders, invoices, events
+- Message type: receipt, quote, appointment
+
+Extractors read from two places:
+- Generic mentions come from segments (new content, plus orphan quotes)
+- Schema.org and ICS come from the original text_html and attachment bytes, because the clean-text conversion strips the markup.
+
+The schema example should show the columns that make it auditable: source segment or blob, span offsets, extractor, extractor_version, confidence, source_hash
+
+derived.extraction
+  amount           {value: 8400.00, currency: USD}                        segment_reference   price-parser
+  amount           {value: 8400.00, currency: USD, label: "Total"}        pdf        ← corroborates
+  amount           {value: 4650.00, currency: USD, label: "Materials"}    pdf
+  amount           {value: 3750.00, currency: USD, label: "Labor"}        pdf
+  datetime_mention {text: "Monday, April 6", resolved: "2026-04-06",
+                    precision: "day"}                                      dateparser
+  datetime_mention {text: "Thursday at 10am", resolved: "2026-03-19T10:00-04:00",
+                    anchor: "occurred_at", precision: "minute"}            dateparser
+  phone            {e164: "+14155550142"}                                  phonenumbers
+
+### 5. Chunk
+#### 5.1. Chunking
+A chunk is a passage of text that is the unit of retrieval. For email, a short message is one chunk. A long message or attachment is split at paragraph boundaries into roughly 300–500 token pieces, with a small overlap. Every chunk gets a contextual prefix (subject, sender, date), so it still makes sense when seen alone.
+
+
+chunk A  (email_body)
+  text_for_index:
+    "Email · Re: Roof quote - 12 Elm Street · From Mike Turner (turnerroofing.com)
+     to Alex Dupont · March 17, 2026
+     Hi Alex, Following our site visit, here is the revised quote: $8,400
+     including materials and labor for the full roof replacement …"
+  language            = en            (tsvector built with the 'english' config)
+  time
+  kind
+  participant_handles = {mike@turnerroofing.com, alex.dupont@gmail.com, billing@turnerroofing.com}
+  tags                = {gmail:Inbox, gmail:Projects}
+
+chunk B  (attachment)
+  text_for_index:
+    "Attachment quote-2026-0412.pdf from Mike Turner, March 17, 2026
+     QUOTE #2026-0412 … Full roof replacement … Total $8,400.00"
+
+### 6. Embedding
+#### 6.1. Embedding
+Each chunk's text_for_index (prefix included) goes to the embedding model, and the resulting vector is stored next to the chunk.
+
+search.chunk_embedding
+  (chunk A, bge-m3, v1) → vector(1024)
+  (chunk B, bge-m3, v1) → vector(1024)
+
+### Indexing stategy
+#### Indexes
+##### 1. Lexical: BM25 on the chunk text (ParadeDB pg_search)
+CREATE INDEX chunk_bm25_idx ON search.chunk
+USING bm25 (id, text_for_index, language)
+WITH (key_field = 'id');
+
+##### 2. Semantic: HNSW on the embeddings (pgvector)
+--    chunk_embedding.embedding is declared as plain `vector`, so one table
+--    can hold several models. Each model gets its own partial index.
+CREATE INDEX chunk_emb_bge_m3_v1_idx ON search.chunk_embedding
+USING hnsw ((embedding::vector(1024)) vector_cosine_ops)
+WHERE model = 'bge-m3' AND model_version = 'v1';
+
+##### 3. Filters: the columns nearly every query narrows on
+CREATE INDEX chunk_time_idx         ON search.chunk (occurred_from, occurred_to);
+CREATE INDEX chunk_conversation_idx ON search.chunk (conversation_id);
+CREATE INDEX chunk_kind_lang_idx    ON search.chunk (chunk_kind, language);
+CREATE INDEX chunk_participants_idx ON search.chunk USING gin (participant_handles);
+CREATE INDEX chunk_tags_idx         ON search.chunk USING gin (tags);
+CREATE INDEX chunk_items_idx        ON search.chunk USING gin (item_ids);
+
+##### 4. Joins used by structured lookups
+CREATE INDEX extraction_item_type_idx ON derived.extraction (item_id, type);
+CREATE INDEX participant_handle_idx   ON item.participant (handle_type, handle_value);
+
+#### What each one is for
+| Index |	Query it serves |
+| :--- | :--- |
+| BM25 on text_for_index |	Keyword matching and ranking: "roof quote" |
+| HNSW on embedding	| Nearest-neighbor search: "how much did the roofer charge" matches a chunk that says "$8,400 for the slate replacement" |
+| btree on time / conversation |	"last month", and get_context / get_thread expansion |
+| GIN on participant_handles, tags, item_ids |	Array containment: "involving mike@turnerroofing.com", "tagged gmail:Projects" |
+| extraction (item_id, type) |	The EXISTS join for "has an amount" without denormalizing it onto the chunk |
+| participant (handle_type, handle_value) |	Joining handles to entities at query time |
+
+#### How the indexes get used
+
+WITH lexical AS (
+  SELECT id, row_number() OVER (ORDER BY paradedb.score(id) DESC) AS rank
+  FROM search.chunk
+  WHERE text_for_index @@@ 'roof quote'              -- BM25 index
+    AND participant_handles @> ARRAY['mike@turnerroofing.com']  -- GIN
+    AND occurred_from >= '2026-01-01'                -- btree
+  LIMIT 50
+),
+semantic AS (
+  SELECT c.id, row_number() OVER (ORDER BY e.embedding <=> :query_vec) AS rank
+  FROM search.chunk_embedding e
+  JOIN search.chunk c ON c.id = e.chunk_id
+  WHERE e.model = 'bge-m3' AND e.model_version = 'v1'   -- matches the partial index
+    AND c.participant_handles @> ARRAY['mike@turnerroofing.com']
+    AND c.occurred_from >= '2026-01-01'
+  ORDER BY e.embedding <=> :query_vec
+  LIMIT 50
+)
+SELECT id, sum(1.0 / (60 + rank)) AS rrf_score      -- reciprocal rank fusion
+FROM (SELECT * FROM lexical UNION ALL SELECT * FROM semantic) t
+GROUP BY id
+ORDER BY rrf_score DESC
+LIMIT 20;
+
+### TBD: Entity resolution
+core.entity
+  Alex Dupont        person   handle: alex.dupont@gmail.com        (self, from account config)
+  Mike Turner        person   handle: mike@turnerroofing.com       (new, deterministic)
+  Turner Roofing billing  org?  handle: billing@turnerroofing.com  (role mailbox, new)
+
+core.merge_suggestion
+  Mike Turner ↔ billing@turnerroofing.com   reason: same domain   status: pending
+  → suggested org entity "Turner Roofing"                          status: pending
