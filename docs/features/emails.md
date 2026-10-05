@@ -147,6 +147,12 @@ On Tue, Mar 10, 2026 at 9:15 AM Alex Dupont <alex.dupont@gmail.com> wrote:
 Attachment:
 The PDF text is a quote ("QUOTE #2026-0412") with Materials $4,650.00, Labor $3,750.00 and Total $8,400.00.
 
+Notes from building online plan:
+- Trash/spam needs a canonical flag. Tags are provider-namespaced (gmail:Trash), but the default exclusion must work for Apple Mail folders too. Canonicalization should compute an is_trash_or_spam boolean on the item, and denormalize it onto the chunk or filter through the item.
+- Index every chunk twice: language-specific and simple. - Language detection will be wrong sometimes, on short replies, mixed-language messages, or languages you don't support. A wrongly tagged chunk gets stemmed badly and may be unfindable by keyword. A second, unstemmed index over all chunks fixes that. It also gives exact matching for names, invoice numbers, amounts and tokens like 2026-0412, which stemming can mangle. The cost is roughly double the lexical index size, which is small at mailbox scale. I'd treat the simple branch as mandatory, not optional. --> Let's ignore internationalization for now
+- Use chunks schema in chunk_schemas.sql
+
+
 ### 1. Documents
 #### 1.1. Archive intake
 Ingest the whole archive file, all the emails imported at once, into object storage. The DB only gets one small metadata row. The SHA-256 hash  does two jobs: it detects when you upload the same archive twice, and it proves the evidence hasn't been altered. Attachments are not separate objects yet, they only exist as base64 inside the mbox.
@@ -404,3 +410,255 @@ core.entity
 core.merge_suggestion
   Mike Turner ↔ billing@turnerroofing.com   reason: same domain   status: pending
   → suggested org entity "Turner Roofing"                          status: pending
+
+
+## Online search
+External agent, Rosalind exposed via MCP.
+MCP tools:
+describe_capabilities   filters, kinds, sources, date coverage
+find_entity             name → handles / entity
+search                  see below
+get_context             neighbors of a hit  
+get_thread              ordered email thread
+get_item                full item + extractions
+list_extractions        structured queries  
+
+filters (SQL WHERE) ──┬─► lexical (BM25)  │
+                │                           └─► semantic (vector)
+                │                                   ▼           │
+                │                              fusion (RRF)     │
+                │                                   ▼           │
+                │                        reranker (top ~30–50)  │
+                │                                   ▼           │
+                │                        context assembly       │
+                │                   (dedupe, budget, citations)
+
+
+
+### 0. Request            query text + SearchFilters (from the agent)
+from datetime import date
+from typing import Literal
+from uuid import UUID
+from pydantic import BaseModel, ConfigDict, Field
+
+class SearchFilters(BaseModel):
+    """Lists are OR within a field; different fields are AND."""
+    model_config = ConfigDict(extra="forbid")   # a typo'd field errors instead of being ignored
+
+    sender: list[str] | None = Field(None, description="Email addresses or entity IDs (from find_entity).")
+    recipient: list[str] | None = Field(None, description="To/Cc/Bcc.")
+    participant: list[str] | None = Field(None, description="Any role.")
+    direction: Literal["received", "sent"] | None = None
+    date_from: date | None = Field(None, description="Inclusive. ISO date.")
+    date_before: date | None = Field(None, description="Exclusive. ISO date.")
+    tags: list[str] | None = Field(None, description="Any of. Namespaced, e.g. 'gmail:Projects'.")
+    exclude_tags: list[str] | None = None
+    has_attachment: bool | None = None
+    thread_id: UUID | None = None
+    language: list[str] | None = Field(None, description="ISO 639-1, e.g. ['fr','en'].")
+    source_accounts: list[UUID] | None = None
+    include_trash_spam: bool = False
+
+class SearchEmailsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str | None = Field(None, description="What you're looking for, in natural language. "
+        "Used for semantic search, and for keyword search unless `keywords` is set.")
+    keywords: str | None = Field(None, description="Optional exact-match terms for keyword search "
+        "(names, IDs, amounts). Supports \"quoted phrases\".")
+    filters: SearchFilters = SearchFilters()
+    sort: Literal["relevance", "date_desc", "date_asc"] | None = None  # default: relevance if query, else date_desc
+    group_by: Literal["message", "thread"] = "message"
+    view: Literal["metadata", "snippet"] = "snippet"
+    limit: int = Field(10, ge=1, le=25)
+    cursor: str | None = None
+    mode: Literal["hybrid", "lexical", "semantic"] = "hybrid"   # mainly for evaluation
+    # validator: at least one of query / keywords / any filter must be set
+
+
+### 1. Prepare            validate filters, resolve handles, embed query
+What is done here:
+auth context → scope → cursor decode → validate → normalize
+   → [entity/tag lookups ‖ query embedding] → build plan → short-circuit checks → audit start
+
+Prepare receives from the adapter (iss, sub) mapped to an account, and never reads it from tool arguments.
+
+#### 1.1. Validate
+Pydantic covers types. Prepare covers meaning:
+- at least one of query, keywords or a filter
+- date_from < date_before
+- mode is consistent with the inputs (semantic mode with only keywords makes no sense)
+- the cursor decodes, matches this account, and matches the current index version, otherwise it fails with a clear message
+- lengths are within bounds (query length, list sizes, so a filter with 5,000 addresses can't be sent)
+
+Three outcomes:
+| Situation |	Behavior |
+| :--- | :--- |
+| Malformed (bad date range, unknown field)	| Hard error that says how to fix it |
+| Valid but suspicious (tag nobody has, sender never seen) |	Proceed, with a warning and a suggestion. For example: A warning like "no tag gmail:Project; did you mean gmail:Projects?" fixes it. A fuzzy match with rapidfuzz against the account's tags is enough. |
+| Valid but impossible (empty range, entity with no handles) |	Short-circuit with an explanation, with no retrieval |
+
+#### 1.2. Normalize
+- Addresses: use the same normalization function as canonicalization. If the two diverge (case, plus-tags), filters silently miss. A shared function, tested for idempotency, is the safeguard.
+- Entity IDs: expand each to all its known handles, restricted to what this account can see.
+"me" alias: let the agent write me in sender, recipient and participant, expanding to the account's self-handles. Agents reach for this constantly and it removes a lookup call.
+- Dates: convert to UTC bounds using a timezone. Rosalind doesn't persist profile data (§6.4), but Keycloak's standard zoneinfo claim, if populated, arrives with the token at request time. Fall back to a server setting. The resolved timezone goes into the echoed filters so the agent sees what "March 1" meant.
+- Tags and languages: canonicalize case and validate against known values.
+- Relative dates: don't parse "last week" here. The agent resolves it using the date from describe_capabilities, and Prepare only accepts ISO. Parsing it here would be guessing intent.
+
+#### 1.3. Prepare the query text
+- Clean: Unicode normalization, whitespace trimming, a length cap tied to what the embedding model sensibly accepts.
+- Sanitize keywords for the BM25 query syntax. Characters like quotes, colons and parentheses can mean operators in the search engine. Parse the quoted phrases yourself and escape or strip the rest, or a keyword like C++ or 12 Elm St. throws a syntax error. This is a correctness issue as much as a security one.
+****** 
+Parked for now, ignore 
+- Language handling is the hard part. Each chunk's lexical index uses its own language config, so the query must be analyzed with the same config to match stems. In a mixed mailbox, one detected query language isn't enough: a French question may target an English chunk. Options:
+  - compile the lexical query once per language present in the corpus and match each against chunks of that language
+  - detect the query language and also include simple
+  - rely on filters.language when the agent sets it
+Short queries are poorly detected anyway, so I lean toward the first.
+******
+
+
+#### 1.4. Embed the query
+- Skip it when mode="lexical".
+- Run it in parallel with the database lookups. They are independent, and the embedding is the slowest part of Prepare.
+- The embedding model's own conventions (query prefixes, normalization) live in the Embedder adapter, so the application layer doesn't know them.
+- Cache by (model, version, text). Agents repeat queries often.
+- If the embedding service is down, you can either fail or fall back to lexical and say so in the response. I'd degrade and warn, with the actual mode reported back, since a partial answer helps an agent more than an error. This should be an explicit choice.
+
+#### 1.5. Build the plan
+The plan is one frozen object holding:
+- the mandatory scope predicate and the resolved filters
+- compiled lexical queries and the query vector
+- effective mode, sort and group-by
+- candidate sizes for each later stage, from configuration
+- version stamps: index version, embedding model and version, and a reranker version (for later)
+
+It has three uses:
+- It is what applied_filters echoes back
+- It is what the cursor encodes, so paging is reproducible
+- It is what evaluation logs, so a run can be replayed.
+
+#### 1.6. Optional: choose a strategy from filter selectivity
+A cheap count of how many chunks the filters leave tells you whether to use the vector index or scan exactly. Filtered HNSW search degrades when filters are very selective. If a filter leaves 300 chunks, an exact scan is faster and more accurate. It's an optimization, so I'd note it as a hook and measure first.
+
+#### 1.7. Output
+SearchPlan
+├── identity
+│     request_id, audit_id, account_id, client_id, plan_fingerprint
+├── scope                        non-removable, separate from filters
+│     source_account_ids: set    (later: grant reference)
+├── filters                      resolved
+│     senders / recipients / participants:  sets of normalized handles
+│     direction, tags_any, tags_exclude, has_attachment, thread_id, language
+│     date_from_utc, date_before_utc, timezone_used
+│     include_trash_spam
+├── query
+│     semantic_text: str | None
+│     lexical: { terms: [...], phrases: [...] } | None     structured, not engine syntax
+│     query_vector: vector | None
+├── behavior
+│     strategy: ranked | list
+│     mode_requested, mode_effective
+│     sort, group_by, view, limit
+│     cursor: { window_offset, last_sort_key } | None
+├── budgets                      from config, never from the agent
+│     lexical_k, semantic_k, fused_k, rerank_k, return_k
+├── versions
+│     index_version, embedding_model, embedding_version, reranker_version
+├── applied                      what the response echoes as `applied_filters`
+├── warnings                     [{code, field, message, suggestion}]
+├── hints
+│     estimated_matching_chunks: int | None     (the 1.6 selectivity hook)
+└── timings_ms                   {validate, resolve, embed, total}
+
+### 2. Retrieve
+Lives in backend/src/rosalind/application/search/
+
+#### 2.1 lexical (filtered) (BM25)
+Takes the plan's scope, filters, query.lexical and budgets.lexical_k. It returns an ordered list of chunk IDs with ranks.
+
+Output:
+LexicalResult
+  hits: [(chunk_id, rank, score)]       up to lexical_k
+  exhausted: bool                        fewer than lexical_k matched in total
+  filter_path: "pushdown" | "overfetch"  how the filters were applied
+  warnings, elapsed_ms
+
+#### 2.2 semantic (filtered) (vector)
+same contract as 2.1. It takes the plan's scope, filters, query.vector and budgets.semantic_k, and returns ranked chunk IDs.
+
+Output:
+SemanticResult
+  hits: [(chunk_id, rank, distance)]       up to semantic_k
+  complete: bool        every matching chunk was considered (exact path, or fewer matches than k)
+  filter_path: "exact" | "ann_iterative"
+  scan_limit_hit: bool  the ANN scan stopped early and may have missed matches
+  warnings, elapsed_ms
+
+### 3. Fuse
+Reciprocal rank fusion (RRF)
+It merges the two ranked chunk lists into one candidate list for the reranker. It's a pure function with no database access, so it lives in application/services.
+Each candidate keeps its per-branch rank and score. Step 5 can then tell the agent whether a result matched by keyword, by meaning or both, and your eval harness can see which branch found the answer. If a branch is missing (lexical-only mode, or a degraded call), fusion passes the other list through unchanged.
+
+
+fuse(plan, lexical: LexicalResult | None, semantic: SemanticResult | None) -> FusedCandidates
+
+FusedCandidates
+  candidates: [(chunk_id, fused_score, lexical: (rank, score) | None, semantic: (rank, distance) | None)]
+  branches_used: {lexical: bool, semantic: bool}
+  dropped_by_item_cap: int
+
+
+Considerations:
+A correction first. I told you RRF needs no tuning. The literature says that's too strong. Reciprocal rank fusion scores each chunk as the sum of 1 / (k + rank) over the lists it appears in, with the usual constant k = 60 from the original paper. Bruch, Gai and Ingber's analysis of hybrid fusion found RRF sensitive to its parameters. They also found that a convex combination of normalized lexical and semantic scores beat RRF both in-domain and out-of-domain, and that it needs only a small labelled set to tune its single weight. Cormack's original claim, which they cite, was that RRF is non-parametric and works zero-shot. So the evidence is mixed in a way that matters for you: RRF is the safe start when you have no labels, and CC can win once you have some.
+
+My recommendation:
+- v1: RRF with k = 60 and equal weights. It needs no normalization and you have no training data yet.
+- Put it behind a FusionStrategy interface. Parameters live in configuration and in the plan, so the fingerprint changes when they do.
+- Compare against convex combination on your eval set. Your 30 to 50 questions are enough to tune a single weight, which is what the paper says CC needs. For CC, min-max normalize the BM25 scores per query, use cosine similarity as is, and score a chunk missing from one list as 0 on that side.
+- Judge the methods by recall@fused_k, not by top-of-list quality. The reranker reorders the top candidates anyway, so fusion's real job is to get the answer chunk into the window. Order quality matters only if you run without the reranker.
+
+After scoring, three rules apply in order:
+- Sort deterministically: fused score descending, then number of branches containing the chunk, then best rank, then chunk ID. The same inputs must always give the same output.
+- Cap chunks per message (config, default 2 or 3, best by fused score). A long PDF attachment can contribute twenty chunks to one candidate list, and that wastes reranker slots and crowds out other emails. This is a change from my earlier plan, where I said to leave all grouping to assembly. Assembly still groups results for display, but crowding has to be prevented before reranking, because the reranker has a fixed budget.
+- Truncate to fused_k.
+
+
+### 4. Rerank
+It reorders the top fused candidates with a cross-encoder. A cross-encoder reads the query and one chunk together and outputs a relevance score. It's more accurate than comparing separately computed embeddings, but it costs one model pass per candidate.
+
+It sits behind a Reranker port in application/ports, with a TEI adapter in adapters/outbound. It runs only for the ranked strategy, and only when versions.reranker is set.
+
+Model choice: bge-reranker-v2-m3
+
+Considerations:
+The reranker is optional and switchable by configuration, and your eval set decides:
+- Compare with and without it on nDCG@10 or MRR of the final order, and on recall within window_k.
+- Compare rerank_k of 20, 40 and 60. Larger is rarely better.
+- Compare chunk text with and without the prefix.
+- Include the cross-lingual cases (the Spanish, French and English example) specifically, because that's where score behavior is least predictable.
+- Record p50 and p95 latency for each setting.
+
+
+rerank(plan, fused) -> RerankResult
+
+RerankResult
+  ranked: [(chunk_id, rerank_rank, rerank_score, fused_rank)]
+  applied: bool            False if disabled, skipped or failed
+  model: str | None
+  warnings, elapsed_ms
+
+
+
+
+### 5. Assemble (Context assembly (dedupe, budget, citations))
+Output:
+{
+  "results": [{"item_id":"…","thread_id":"…","chunk_id":"…","subject":"…","from":"…",
+               "date":"…","snippet":"…","matched_in":"body|attachment","score":0.0}],
+  "applied_filters": { "...resolved, normalized echo of what was actually used..." },
+  "total_estimate": 134,
+  "next_cursor": null,
+  "warnings": ["no results matched filters; 0 emails from sender X before 2026-01-01"]
+}
