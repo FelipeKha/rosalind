@@ -8,7 +8,7 @@ persisted directly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from rosalind.domain.email.message_id import normalize_message_id, parse_message_ids
@@ -41,6 +41,11 @@ class EmailAttachment:
     warning, not a silent override. ``effective_mime`` is deliberately *not*
     stored: it is derived later (detected when reliable, else declared) by
     whoever consumes the attachment.
+
+    ``data`` holds the decoded bytes so the canonicalization stage can store the
+    blob; it is excluded from ``repr`` and equality to keep logs and comparisons
+    small. ``part_index`` is the attachment's position in the MIME walk, used as
+    a stable per-message uniqueness key.
     """
 
     filename: str | None
@@ -49,7 +54,9 @@ class EmailAttachment:
     size: int
     sha256: str
     disposition: str
+    part_index: int = 0
     nested: ParsedEmail | None = None
+    data: bytes = field(default=b"", repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,7 @@ class ParsedEmail:
     subject: str | None
     addresses: tuple[EmailAddress, ...]
     provider_tags: tuple[str, ...]
+    delivered_to: str | None
     text_plain: str | None
     text_html: str | None
     attachments: tuple[EmailAttachment, ...]

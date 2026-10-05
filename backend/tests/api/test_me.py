@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi.testclient import TestClient
 
 
@@ -21,3 +23,14 @@ def test_me_returns_profile(auth_api_client: TestClient) -> None:
     assert body["given_name"] == "Jane"
     assert body["family_name"] == "Doe"
     assert body["account_id"]
+
+
+def test_set_self_person_requires_email(auth_api_client: TestClient) -> None:
+    response = auth_api_client.put(
+        "/me/self-person",
+        json={"person_id": str(uuid.uuid4())},
+        headers={"Authorization": "Bearer good"},
+    )
+
+    assert response.status_code == 422
+    assert "no email" in response.json()["detail"]

@@ -15,6 +15,9 @@ from rosalind.adapters.outbound.persistence.repositories.account import (
     PostgresAccountIdentityRepository,
     PostgresAccountRepository,
 )
+from rosalind.adapters.outbound.persistence.repositories.email_canonical import (
+    PostgresEmailCanonicalRepository,
+)
 from rosalind.adapters.outbound.persistence.repositories.imports import (
     PostgresImportRepository,
 )
@@ -34,6 +37,7 @@ from rosalind.adapters.outbound.persistence.repositories.source_record import (
 from rosalind.application.ports.repositories import (
     AccountIdentityRepository,
     AccountRepository,
+    EmailCanonicalRepository,
     ImportRepository,
     OAuthAuthRequestRepository,
     OAuthCredentialRepository,
@@ -54,6 +58,7 @@ class SqlAlchemyUnitOfWork:
     auth_requests: OAuthAuthRequestRepository
     imports: ImportRepository
     person_canonical: PersonCanonicalRepository
+    email_canonical: EmailCanonicalRepository
 
     def __init__(self, session: Session):
         self._session = session
@@ -65,6 +70,7 @@ class SqlAlchemyUnitOfWork:
         self.auth_requests = PostgresOAuthAuthRequestRepository(session)
         self.imports = PostgresImportRepository(session)
         self.person_canonical = PostgresPersonCanonicalRepository(session)
+        self.email_canonical = PostgresEmailCanonicalRepository(session)
 
     def commit(self) -> None:
         self._session.commit()

@@ -408,6 +408,84 @@ Re-importing the same payload is a no-op because
 `uq_source_record_snapshot` and the fact value-uniqueness constraints absorb
 duplicates.
 
+### Email (Gmail) — messages, participants, attachments, threads
+
+Email is a different domain from Contacts: events and relationships, not
+attributes. It lives in the `core` schema but is record-level, not
+field-level — provenance is a direct link to the raw record (`email_message_observation`), not `source_assertion`.
+
+| Table | Role |
+|---|---|
+| `core.email_message` | one canonical message; identity `uuid5(source_account_id, message_id)` |
+| `core.email_message_observation` | provenance — one row per raw record that produced/re-produced a message |
+| `core.email_participant` | from/to/cc/bcc, email + optional name (no entity link yet) |
+| `core.email_attachment` | attachment metadata + content-addressed blob key |
+| `core.email_tag` | provider-namespaced labels (`gmail:Projects`) |
+| `core.email_thread` | simple store keyed on `(source_account_id, root_message_id)` |
+
+#### `core.email_message`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK, `uuid5` over `(source_account_id, message_id)` |
+| `source_account_id` | uuid | no | FK → `source_account.id` `RESTRICT`; indexed |
+| `message_id` | text | no | normalized (brackets+whitespace only, no case folding) |
+| `message_id_synthetic` | boolean | no | true when the message had no `Message-ID` |
+| `in_reply_to` | text | yes | |
+| `references` | text[] | yes | |
+| `occurred_at` | timestamptz | no | parsed `Date` header, else observation time |
+| `utc_offset_minutes` | int | yes | |
+| `direction` | text | no | `received` / `sent` / `self` / `unknown` |
+| `subject` / `text_plain` / `text_html` | text | yes | body as parsed |
+| `has_attachments` | boolean | no | at least one non-inline attachment |
+| `is_trash_or_spam` | boolean | no | derived from `Spam`/`Trash` labels |
+| `thread_id` | uuid | yes | FK → `core.email_thread.id` `SET NULL`; indexed |
+| `parser_version` / `canonicalizer_version` | text | no | stage versions for idempotency |
+| `metadata` | jsonb | no | holds `parse_warnings` |
+
+- `uq_email_message_source_message` unique on `(source_account_id, message_id)`.
+- `ck_email_message_direction` on `direction`.
+
+#### `core.email_message_observation`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `message_id` | uuid | no | FK → `core.email_message.id` `CASCADE`; indexed |
+| `source_record_id` | uuid | no | FK → `raw.source_record.id` `RESTRICT`; **unique** |
+| `observed_at` | timestamptz | no | |
+
+`uq_email_message_observation_record` unique on `source_record_id`. The
+observation with the greatest `observed_at` drives tags: a later archive that
+re-imports the same `Message-ID` with changed labels creates a new observation
+and replaces the tag set.
+
+#### `core.email_participant`
+
+`id`, `message_id` (FK CASCADE, indexed), `role` (`from|to|cc|bcc`), `name`,
+`addr` (as observed), `addr_normalized` (lowercased), `seq`. Unique on
+`(message_id, role, addr_normalized)`. No `entity_id` link to `core.person` yet —
+entity resolution is deferred.
+
+#### `core.email_attachment`
+
+`id`, `message_id` (FK CASCADE, indexed), `filename`, `declared_mime`,
+`detected_mime`, `size`, `sha256`, `disposition`, `storage_key` (blob key),
+`part_index`, `status` (default `'present'`). Unique on `(message_id,
+part_index)`.
+
+#### `core.email_tag`
+
+`id`, `message_id` (FK CASCADE, indexed), `tag` (namespaced). Unique on
+`(message_id, tag)`.
+
+#### `core.email_thread`
+
+`id`, `source_account_id` (FK RESTRICT, indexed), `root_message_id` (not null),
+`provider_hint` (plain attribute, not part of the key). Unique on
+`(source_account_id, root_message_id)`. Full thread reconciliation (quoted
+coverage, late-arriving roots) is deferred.
+
 ---
 
 ## `agent` — derived read models

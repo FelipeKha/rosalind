@@ -9,6 +9,7 @@ format; the resulting ``ParsedEmail`` keeps them as opaque provider data.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 from datetime import UTC, datetime, timedelta
 from email import policy
@@ -61,6 +62,7 @@ def parse_email(raw: bytes, _depth: int = 0) -> ParsedEmail:
         subject=subject,
         addresses=addresses,
         provider_tags=_parse_tags(message["X-Gmail-Labels"]),
+        delivered_to=_first_delivered_to(message),
         text_plain=text_plain,
         text_html=text_html,
         attachments=attachments,
@@ -85,7 +87,26 @@ def _first_reference(value: str | None) -> str | None:
 def _parse_tags(value: str | None) -> tuple[str, ...]:
     if value is None:
         return ()
-    return tuple(tag.strip() for tag in value.split(",") if tag.strip())
+    return tuple(tag.strip() for tag in _split_labels(value))
+
+
+def _split_labels(value: str) -> list[str]:
+    """Split a comma-separated label list, honoring quoted labels.
+
+    Gmail label names may themselves contain commas; such labels are quoted in
+    ``X-Gmail-Labels``. ``csv`` parses that correctly, so we reuse it.
+    """
+    return next(csv.reader([value]))
+
+
+def _first_delivered_to(message) -> str | None:
+    value = message["Delivered-To"]
+    if value is None:
+        return None
+    for _name, addr in getaddresses([value]):
+        if addr:
+            return addr
+    return None
 
 
 def _parse_date(
@@ -130,12 +151,14 @@ def _walk(
     text_plain: str | None = None
     text_html: str | None = None
     attachments: list[EmailAttachment] = []
+    part_index = 0
 
     def visit(part) -> None:
-        nonlocal text_plain, text_html
+        nonlocal text_plain, text_html, part_index
         content_type = part.get_content_type()
         if content_type == "message/rfc822":
-            attachments.append(_build_attachment(part, warnings, depth))
+            attachments.append(_build_attachment(part, warnings, depth, part_index))
+            part_index += 1
             return
         if part.get_content_maintype() == "multipart":
             for sub in part.iter_parts():
@@ -150,7 +173,8 @@ def _walk(
                 text_html = _decode_text(part, warnings)
             return
         if _is_attachment(part):
-            attachments.append(_build_attachment(part, warnings, depth))
+            attachments.append(_build_attachment(part, warnings, depth, part_index))
+            part_index += 1
 
     visit(message)
     return text_plain, text_html, tuple(attachments)
@@ -194,7 +218,7 @@ def _is_attachment(part) -> bool:
 
 
 def _build_attachment(
-    part, warnings: list[ParseWarning], depth: int
+    part, warnings: list[ParseWarning], depth: int, part_index: int
 ) -> EmailAttachment:
     content_type = part.get_content_type()
     filename = part.get_filename()
@@ -243,7 +267,9 @@ def _build_attachment(
         size=len(decoded),
         sha256=hashlib.sha256(decoded).hexdigest(),
         disposition=disposition,
+        part_index=part_index,
         nested=nested,
+        data=decoded,
     )
 
 

@@ -80,11 +80,13 @@ def test_pipeline_splits_mbox(api_client: TestClient, monkeypatch) -> None:
     events = _run(api_client, import_id)
 
     assert events[0]["stage"] == "starting"
-    assert events[-1]["stage"] == "done"
-    assert events[-1]["processed"] == 2
-    assert events[-1]["created"] == 2
-    assert events[-1]["failed"] == 0
+    done = next(event for event in events if event["stage"] == "done")
+    assert done["processed"] == 2
+    assert done["created"] == 2
+    assert done["failed"] == 0
     assert len(puts) == 2
+    # Canonicalize runs after split; without a self person it reports an error.
+    assert events[-1]["stage"] == "error"
 
 
 def test_pipeline_is_idempotent(api_client: TestClient, monkeypatch) -> None:
@@ -92,7 +94,8 @@ def test_pipeline_is_idempotent(api_client: TestClient, monkeypatch) -> None:
     _fake_storage(monkeypatch)
 
     first = _run(api_client, import_id)
-    assert first[-1]["created"] == 2
+    first_done = next(event for event in first if event["stage"] == "done")
+    assert first_done["created"] == 2
 
     monkeypatch.setattr(
         composition.object_storage,
@@ -102,8 +105,9 @@ def test_pipeline_is_idempotent(api_client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(composition.object_storage, "exists", lambda key: True)
 
     second = _run(api_client, import_id)
-    assert second[-1]["created"] == 0
-    assert second[-1]["reused"] == 2
+    second_done = next(event for event in second if event["stage"] == "done")
+    assert second_done["created"] == 0
+    assert second_done["reused"] == 2
 
 
 def test_pipeline_unknown_import_404(api_client: TestClient) -> None:

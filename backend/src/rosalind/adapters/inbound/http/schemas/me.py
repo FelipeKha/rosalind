@@ -1,4 +1,4 @@
-"""Response schema for the current-account profile endpoint."""
+"""Schemas for the current-account profile endpoint."""
 
 from __future__ import annotations
 
@@ -17,3 +17,11 @@ class AccountProfileResponse(BaseModel):
     preferred_username: str | None = None
     given_name: str | None = None
     family_name: str | None = None
+
+
+class SetSelfPersonRequest(BaseModel):
+    person_id: uuid.UUID
+
+
+class SetSelfPersonResponse(BaseModel):
+    self_person_id: uuid.UUID

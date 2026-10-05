@@ -53,5 +53,9 @@ class AccountNotFoundError(AuthError):
     """Raised when a Rosalind account does not exist for a resolved identity."""
 
 
+class SelfPersonError(AuthError):
+    """Raised when ``account.self_person_id`` cannot be set (e.g. no email)."""
+
+
 class ProviderError(AuthError):
     """Raised when the provider rejects a token exchange or API request."""

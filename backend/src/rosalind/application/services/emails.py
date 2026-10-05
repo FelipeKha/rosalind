@@ -19,8 +19,15 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
+from rosalind.adapters.inbound.ingestion.email import parse_email
 from rosalind.adapters.inbound.ingestion.mbox import iter_messages
+from rosalind.application.canonicalization.email_message import (
+    EmailCanonicalizationService,
+    blob_key,
+    build_canonical_email,
+)
 from rosalind.application.errors import ImportNotFoundError, InvalidImportStateError
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
@@ -52,6 +59,7 @@ class PipelineEvent:
     reused: int = 0
     failed: int = 0
     processed_bytes: int = 0
+    message: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -64,6 +72,7 @@ class PipelineEvent:
             "reused": self.reused,
             "failed": self.failed,
             "processed_bytes": self.processed_bytes,
+            "message": self.message,
         }
 
 
@@ -72,6 +81,7 @@ class PreparedSplit:
     """Validated context for one split run."""
 
     import_id: uuid.UUID
+    account_id: uuid.UUID
     source_account: SourceAccount
     files: tuple[ImportFile, ...]
     total_bytes: int
@@ -100,11 +110,21 @@ def _is_mbox(file: ImportFile) -> bool:
     return file.format == "mbox" or (file.path or "").lower().endswith(".mbox")
 
 
-class EmailProcessingService:
-    """Runs the offline email pipeline (currently only the record split stage)."""
+def _read_bytes(path: str) -> bytes:
+    with open(path, "rb") as handle:
+        return handle.read()
 
-    def __init__(self, storage: ObjectStorage):
+
+class EmailProcessingService:
+    """Runs the offline email pipeline (record split + canonicalize stages)."""
+
+    def __init__(
+        self,
+        storage: ObjectStorage,
+        canonicalizer: EmailCanonicalizationService,
+    ):
         self._storage = storage
+        self._canonicalizer = canonicalizer
 
     def prepare(
         self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
@@ -134,16 +154,17 @@ class EmailProcessingService:
         total_bytes = sum(file.size for file in files)
         return PreparedSplit(
             import_id=import_id,
+            account_id=account_id,
             source_account=source_account,
             files=files,
             total_bytes=total_bytes,
         )
 
     def run(self, uow: UnitOfWork, prepared: PreparedSplit) -> Iterator[PipelineEvent]:
-        """Split the prepared mbox files into raw source records.
+        """Split the prepared mbox files, then canonicalize the resulting records.
 
-        Yields progress events as it goes. Each message is committed in batches
-        so a crash leaves only already-committed (deduplicated) work behind.
+        Yields progress events as it goes. Each stage is committed in batches so
+        a crash leaves only already-committed (deduplicated) work behind.
         """
         counters = _Counters()
         yield PipelineEvent(
@@ -164,6 +185,86 @@ class EmailProcessingService:
             reused=counters.reused,
             failed=counters.failed,
             processed_bytes=counters.processed_bytes,
+        )
+
+        yield from self._canonicalize(uow, prepared)
+
+    def _canonicalize(
+        self, uow: UnitOfWork, prepared: PreparedSplit
+    ) -> Iterator[PipelineEvent]:
+        """Parse and canonicalize each split record into ``core.email_*``.
+
+        Self-handles are resolved *after* the split so raw persistence never
+        depends on a self person existing. Missing self-handles emit a clear
+        error event rather than discarding any raw evidence.
+        """
+        self_handles = self._canonicalizer.self_handles(uow, prepared.account_id)
+        if not self_handles:
+            yield PipelineEvent(
+                stage="error",
+                message=(
+                    "cannot compute message direction: the account has no self "
+                    "person with an email address; set it via the self-person "
+                    "endpoint and re-run the pipeline"
+                ),
+            )
+            return
+
+        counters = _Counters()
+        observed_at = datetime.now(UTC)
+        since_commit = 0
+        records = uow.source_records.list_for_import(prepared.import_id)
+
+        for record in records:
+            counters.processed += 1
+            payload_uri = record.payload_uri
+            if payload_uri is None:
+                counters.failed += 1
+                continue
+            try:
+                with self._download(payload_uri) as path:
+                    parsed = parse_email(_read_bytes(path))
+                for attachment in parsed.attachments:
+                    key = blob_key(attachment.sha256)
+                    if not self._storage.exists(key):
+                        self._storage.put(key, attachment.data)
+                canonical = build_canonical_email(
+                    parsed=parsed,
+                    source_account=prepared.source_account,
+                    source_record=record,
+                    self_handles=self_handles,
+                    observed_at=observed_at,
+                    resource_type=record.resource_type,
+                )
+                result = self._canonicalizer.canonicalize(uow, canonical)
+                if result.status == "skipped":
+                    counters.reused += 1
+                else:
+                    counters.created += 1
+                since_commit += 1
+                if since_commit >= COMMIT_EVERY:
+                    uow.commit()
+                    since_commit = 0
+            except Exception:  # noqa: BLE001 - per-record quarantine
+                uow.rollback()
+                since_commit = 0
+                counters.failed += 1
+
+            if counters.processed % PROGRESS_EVERY == 0:
+                yield self._canonical_event(counters)
+
+        uow.commit()
+        yield self._canonical_event(counters, final=True)
+
+    def _canonical_event(
+        self, counters: _Counters, *, final: bool = False
+    ) -> PipelineEvent:
+        return PipelineEvent(
+            stage="canonicalized" if final else "canonicalizing",
+            processed=counters.processed,
+            created=counters.created,
+            reused=counters.reused,
+            failed=counters.failed,
         )
 
     def _split_file(

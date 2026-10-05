@@ -9,6 +9,14 @@ from rosalind.adapters.outbound.persistence.models.account import (
     AccountIdentity,
 )
 from rosalind.adapters.outbound.persistence.models.base import Base, utcnow
+from rosalind.adapters.outbound.persistence.models.email import (
+    EmailAttachment,
+    EmailMessage,
+    EmailMessageObservation,
+    EmailParticipant,
+    EmailTag,
+    EmailThread,
+)
 from rosalind.adapters.outbound.persistence.models.imports import Import, ImportFile
 from rosalind.adapters.outbound.persistence.models.person import (
     Person,
@@ -52,6 +60,12 @@ __all__ = [
     "Account",
     "AccountIdentity",
     "Base",
+    "EmailAttachment",
+    "EmailMessage",
+    "EmailMessageObservation",
+    "EmailParticipant",
+    "EmailTag",
+    "EmailThread",
     "Import",
     "ImportFile",
     "OAuthAuthRequest",

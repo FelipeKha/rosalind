@@ -54,6 +54,12 @@ def test_alembic_upgrade_head_creates_tables(postgres_url: str) -> None:
         "person_note_assertion",
         "person_relation_assertion",
         "person_nickname_assertion",
+        "email_message",
+        "email_message_observation",
+        "email_thread",
+        "email_participant",
+        "email_attachment",
+        "email_tag",
     } <= set(inspector.get_table_names(schema="core"))
     assert {"person_profile"} <= set(inspector.get_view_names(schema="agent"))
 

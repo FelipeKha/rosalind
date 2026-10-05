@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 from rosalind.application.read_models import PersonProfile
 from rosalind.domain.account import Account, AccountIdentity
+from rosalind.domain.email import CanonicalEmail
 from rosalind.domain.person import (
     AddressObservation,
     DateObservation,
@@ -52,6 +53,14 @@ class FactUpsertResult:
     fact_id: uuid.UUID
     fact_created: bool
     assertion_created: bool
+
+
+@dataclass(frozen=True)
+class EmailSaveResult:
+    """Outcome of persisting one canonical email aggregate."""
+
+    message_id: uuid.UUID
+    status: str  # "created" | "updated" | "skipped"
 
 
 @dataclass(frozen=True)
@@ -114,6 +123,10 @@ class AccountIdentityRepository(Protocol):
 
 class AccountRepository(Protocol):
     def get(self, account_id: uuid.UUID) -> Account | None: ...
+
+    def set_self_person_id(
+        self, account_id: uuid.UUID, person_id: uuid.UUID
+    ) -> None: ...
 
 
 class SourceRecordRepository(Protocol):
@@ -437,6 +450,22 @@ class PersonCanonicalRepository(Protocol):
 
     def find_person_ids_by_name(self, *, normalized_name: str) -> set[uuid.UUID]: ...
 
+    def has_email(self, person_id: uuid.UUID) -> bool: ...
+
     def link_relation(
         self, *, relation_id: uuid.UUID, related_person_id: uuid.UUID
     ) -> None: ...
+
+
+class EmailCanonicalRepository(Protocol):
+    """Write port for canonicalizing email messages.
+
+    Persists a whole ``CanonicalEmail`` aggregate atomically (message, its
+    observation, participants, attachments, tags, and thread). The adapter owns
+    the SQL and the version/observation idempotency checks; the application
+    layer builds the aggregate and reports the outcome.
+    """
+
+    def self_handles(self, account_id: uuid.UUID) -> set[str]: ...
+
+    def save(self, canonical: CanonicalEmail) -> EmailSaveResult: ...

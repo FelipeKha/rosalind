@@ -41,6 +41,10 @@ def run(import_id: str) -> None:
     if output.json_mode:
         return
 
+    if last.get("stage") == "error":
+        typer.echo(f"Pipeline error: {last.get('message')}", err=True)
+        raise typer.Exit(code=1)
+
     typer.echo("")
     typer.echo("Pipeline complete")
     typer.echo(f"  Processed: {last.get('processed', 0)} messages")
@@ -76,3 +80,17 @@ def _render_event(event: dict[str, Any]) -> None:
             f"· {event.get('created', 0)} new · {event.get('reused', 0)} reused "
             f"· {event.get('failed', 0)} failed"
         )
+    elif stage == "canonicalizing":
+        typer.echo(
+            f"  canonicalizing: {event.get('processed', 0)} records "
+            f"· {event.get('created', 0)} new · {event.get('reused', 0)} reused "
+            f"· {event.get('failed', 0)} failed"
+        )
+    elif stage == "canonicalized":
+        typer.echo(
+            f"Canonicalized: {event.get('processed', 0)} messages "
+            f"· {event.get('created', 0)} new · {event.get('reused', 0)} reused "
+            f"· {event.get('failed', 0)} failed"
+        )
+    elif stage == "error":
+        typer.echo(f"Error: {event.get('message')}", err=True)

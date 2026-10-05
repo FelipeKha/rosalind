@@ -243,3 +243,50 @@ def test_empty_message_parses_without_error() -> None:
     assert parsed.subject is None
     assert parsed.attachments == ()
     assert any(w.code == "missing_message_id" for w in parsed.parse_warnings)
+
+
+def test_parses_quoted_comma_labels() -> None:
+    message = _build(
+        {
+            "Message-ID": "<a@example.com>",
+            "Subject": "labels",
+            "X-Gmail-Labels": 'Inbox,"Project, Alpha",Important',
+        }
+    )
+    message.set_content("body\n")
+
+    parsed = parse_email(_raw(message))
+
+    assert parsed.provider_tags == ("Inbox", "Project, Alpha", "Important")
+
+
+def test_extracts_delivered_to() -> None:
+    message = _build(
+        {
+            "Message-ID": "<a@example.com>",
+            "Subject": "delivered",
+            "Delivered-To": "Alex <alex@example.com>",
+        }
+    )
+    message.set_content("body\n")
+
+    parsed = parse_email(_raw(message))
+
+    assert parsed.delivered_to == "alex@example.com"
+
+
+def test_attachment_carries_bytes_and_part_index() -> None:
+    message = _build({"Message-ID": "<a@example.com>", "Subject": "two parts"})
+    message.set_content("see attached\n")
+    message.add_attachment(
+        PDF_BYTES, maintype="application", subtype="pdf", filename="one.pdf"
+    )
+    message.add_attachment(
+        PDF_BYTES, maintype="application", subtype="pdf", filename="two.pdf"
+    )
+
+    parsed = parse_email(_raw(message))
+
+    assert [a.part_index for a in parsed.attachments] == [0, 1]
+    assert all(a.data == PDF_BYTES for a in parsed.attachments)
+    assert "PDF" not in repr(parsed.attachments[0])

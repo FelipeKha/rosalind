@@ -21,6 +21,9 @@ from rosalind.adapters.outbound.persistence.repositories.person import (
 )
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.application.canonicalization.email_message import (
+    EmailCanonicalizationService,
+)
 from rosalind.application.canonicalization.person import CanonicalizationService
 from rosalind.application.ports.identity import TokenVerifier
 from rosalind.application.ports.object_storage import ObjectStorage
@@ -59,7 +62,10 @@ import_service = ImportService(
     processing=processing_service,
 )
 
-email_processing_service = EmailProcessingService(storage=object_storage)
+email_processing_service = EmailProcessingService(
+    storage=object_storage,
+    canonicalizer=EmailCanonicalizationService(),
+)
 
 
 def build_person_service(session: Session) -> PersonService:

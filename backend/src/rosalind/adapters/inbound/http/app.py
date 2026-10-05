@@ -15,6 +15,7 @@ from rosalind.application.errors import (
     InvalidManifestError,
     InvalidStateError,
     ProviderError,
+    SelfPersonError,
     SourceNotFoundError,
     TokenNotFoundError,
     UnsupportedImportTypeError,
@@ -78,3 +79,8 @@ async def _provider_error(_: Request, exc: ProviderError) -> JSONResponse:
 @app.exception_handler(SecurityError)
 async def _security_error(_: Request, exc: SecurityError) -> JSONResponse:
     return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
+@app.exception_handler(SelfPersonError)
+async def _self_person_error(_: Request, exc: SelfPersonError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
