@@ -7,15 +7,23 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from rosalind.adapters.composition import get_source_service, get_uow
+from rosalind.adapters.composition import (
+    get_attachment_extraction_service,
+    get_source_service,
+    get_uow,
+)
 from rosalind.adapters.inbound.http.dependencies import AccountDep, get_current_account
 from rosalind.adapters.inbound.http.schemas import sources as schemas
 from rosalind.application.ports.unit_of_work import UnitOfWork
+from rosalind.application.services.attachment_extraction import (
+    AttachmentExtractionService,
+)
 from rosalind.application.services.sources import (
     SOURCE_CONNECTED,
     SOURCE_DISCONNECTED,
     SourceService,
 )
+from rosalind.config import settings
 from rosalind.domain.source import SourceAccount
 
 router = APIRouter(
@@ -24,6 +32,9 @@ router = APIRouter(
 
 UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 SourceDep = Annotated[SourceService, Depends(get_source_service)]
+AttachmentDep = Annotated[
+    AttachmentExtractionService, Depends(get_attachment_extraction_service)
+]
 
 
 @router.get("", response_model=schemas.SourceListResponse)
@@ -101,6 +112,38 @@ def disconnect(
 ) -> schemas.DisconnectResponse:
     result = service.disconnect(uow, account.id, source_id)
     return schemas.DisconnectResponse(status=result.status, revoked=result.revoked)
+
+
+@router.post(
+    "/{source_id}/extract-attachments",
+    response_model=schemas.AttachmentExtractionResponse,
+)
+def extract_attachments(
+    source_id: uuid.UUID,
+    uow: UowDep,
+    service: SourceDep,
+    attachments: AttachmentDep,
+    account: AccountDep,
+) -> schemas.AttachmentExtractionResponse:
+    """Run attachment text extraction for a source account (idempotent, bounded)."""
+    service.get_source(uow, account.id, source_id)
+    outcome = attachments.extract(
+        uow,
+        source_id,
+        budget_seconds=settings.attachment_budget_seconds,
+    )
+    return schemas.AttachmentExtractionResponse(
+        source_id=source_id,
+        processed=outcome.processed,
+        done=outcome.done,
+        empty=outcome.empty,
+        needs_ocr=outcome.needs_ocr,
+        unsupported=outcome.unsupported,
+        too_large=outcome.too_large,
+        encrypted=outcome.encrypted,
+        failed=outcome.failed,
+        budget_exhausted=outcome.budget_exhausted,
+    )
 
 
 def _to_summary(

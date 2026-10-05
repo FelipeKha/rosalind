@@ -18,7 +18,9 @@ from typing import Protocol, Self
 from rosalind.application.ports.repositories import (
     AccountIdentityRepository,
     AccountRepository,
+    AttachmentTextRepository,
     EmailCanonicalRepository,
+    EmailEnrichmentRepository,
     ImportRepository,
     OAuthAuthRequestRepository,
     OAuthCredentialRepository,
@@ -40,6 +42,8 @@ class UnitOfWork(Protocol):
     imports: ImportRepository
     person_canonical: PersonCanonicalRepository
     email_canonical: EmailCanonicalRepository
+    email_enrichment: EmailEnrichmentRepository
+    attachment_text: AttachmentTextRepository
 
     def commit(self) -> None: ...
 

@@ -60,6 +60,7 @@ class EmailMessage(Base):
     subject: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_plain: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     has_attachments: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )

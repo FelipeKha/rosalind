@@ -32,5 +32,29 @@ class Settings(BaseSettings):
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8000
 
+    enrich_min_language_length: int = 15
+    enrich_batch_size: int = 500
+    enrich_budget_seconds: float | None = None
+    enrich_language_min_confidence: float = 0.0
+    enrich_languages: list[str] = [
+        "en",
+        "fr",
+        "es",
+        "de",
+        "pt",
+        "it",
+        "nl",
+        "zh",
+        "ja",
+        "ko",
+        "ru",
+        "ar",
+    ]
+
+    attachment_budget_seconds: float | None = None
+    attachment_max_bytes: int = 50 * 1024 * 1024
+    attachment_max_output_chars: int = 1_000_000
+    attachment_timeout_seconds: float = 120.0
+
 
 settings = Settings()

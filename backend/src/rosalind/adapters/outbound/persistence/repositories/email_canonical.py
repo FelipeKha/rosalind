@@ -114,6 +114,7 @@ class PostgresEmailCanonicalRepository:
             subject=canonical.subject,
             text_plain=canonical.text_plain,
             text_html=canonical.text_html,
+            content_sha256=canonical.content_sha256,
             has_attachments=canonical.has_attachments,
             is_trash_or_spam=canonical.is_trash_or_spam,
             thread_id=thread_id,
@@ -142,6 +143,7 @@ class PostgresEmailCanonicalRepository:
         message.subject = canonical.subject
         message.text_plain = canonical.text_plain
         message.text_html = canonical.text_html
+        message.content_sha256 = canonical.content_sha256
         message.has_attachments = canonical.has_attachments
         message.is_trash_or_spam = canonical.is_trash_or_spam
         message.thread_id = thread_id

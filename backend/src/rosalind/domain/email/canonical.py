@@ -80,6 +80,7 @@ class CanonicalEmail:
     subject: str | None
     text_plain: str | None
     text_html: str | None
+    content_sha256: str
     has_attachments: bool
     is_trash_or_spam: bool
     thread: CanonicalThread

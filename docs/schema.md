@@ -13,6 +13,7 @@ Data is split into four schemas by role:
 |---|---|---|
 | `raw` | Immutable provider evidence | Never deleted by canonical operations |
 | `core` | Canonical model + provenance | Cascades to dependent facts, never to `raw` |
+| `derived` | Enrich-stage read models (rebuildable) | Replaced in place; cascades from `core` |
 | `agent` | Derived read models (views) | None — read-only projection |
 | `public` (default) | Operational: imports, source accounts, OAuth, accounts | Domain-specific (below) |
 
@@ -496,6 +497,83 @@ most messages (ties: oldest); reassigned messages get `thread_changed_at`
 bumped. Thread IDs are unstable (`uuid4`) — citations/eval use message IDs.
 `provider_hint` is informational only and not used for merging. Quoted-segment
 coverage is deferred.
+
+---
+
+## `derived` — enrich-stage read models
+
+Derived rows are **rebuildable by definition**: they are keyed by an input hash
+and a stage version, replaced in place, and carry no provenance of their own —
+the evidence lives in `core` and `raw`. A stage re-runs its work finder to select
+rows that are missing, have a different `stage_version`, or whose `input_sha256`
+differs from the source (`IS DISTINCT FROM`, so a NULL hash counts as stale).
+
+`stage_version` composes the pipeline's own version plus the major.minor of each
+pinned library (e.g. `enrich/1+selectolax/1+lingua/2`), so a patch release of a
+library does not invalidate the whole mailbox.
+
+### `derived.email_text`
+
+One row per canonical message (keyed by `email_id`), holding the clean text the
+chunker and extractors consume.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `email_id` | uuid | no | PK; FK → `core.email_message.id` `ON DELETE CASCADE` |
+| `clean_text` | text | no | normalized (NFC, control chars stripped, whitespace collapsed within lines) |
+| `clean_method` | text | no | `plain` or `html` — which body representation it was derived from |
+| `status` | text | no | `done` / `empty` / `failed` |
+| `error` | text | yes | set when `status = 'failed'` |
+| `stage_version` | text | no | |
+| `input_sha256` | text | yes | equals `core.email_message.content_sha256`; the comparison key |
+| `created_at` / `updated_at` | timestamptz | no | |
+
+### `derived.email_segment`
+
+The lossless tiling of `clean_text` into `new` / `quoted` / `forwarded` /
+`signature` / `disclaimer` spans. Segments tile `clean_text` exactly (no gaps or
+overlaps) via code-point offsets; the segment text is always
+`clean_text[start_offset:end_offset]` and is deliberately not stored (it
+duplicates `clean_text`).
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `email_id` | uuid | no | FK → `core.email_message.id` `ON DELETE CASCADE`; indexed |
+| `seq` | int | no | position within the message; unique with `email_id` |
+| `kind` | text | no | `new` / `quoted` / `forwarded` / `signature` / `disclaimer` |
+| `start_offset` / `end_offset` | int | no | code-point offsets into `clean_text` |
+| `language` | text | yes | ISO 639-1; null below a length/confidence threshold, and for signatures |
+| `language_confidence` | float | yes | |
+| `quote_depth` | int | no | nesting depth of a quoted/forwarded segment |
+| `attribution_raw` | text | yes | raw attribution line, kept unparsed |
+| `quoted_author` / `quoted_at` | text | yes | parsed only when confident (4C) |
+| `covered_by_email_id` | uuid | yes | FK → `core.email_message.id` `SET NULL`; set by 4C coverage |
+| `coverage_checked_at` | timestamptz | yes | set by 4C; nulled when segments are replaced |
+
+### `derived.attachment_text`
+
+One row per content-addressed blob (keyed by `blob_sha256`), so a PDF attached to
+ten emails is extracted once. There is **no foreign key** to
+`core.email_attachment` — `sha256` is not unique there. Orphan cleanup is a later
+concern.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `blob_sha256` | text | no | PK |
+| `status` | text | no | `done` / `empty` / `needs_ocr` / `unsupported` / `too_large` / `encrypted` / `failed` |
+| `text` | text | yes | extracted text |
+| `method` | text | yes | extractor key (`pdf`, `docx`, `xlsx`, `pptx`, `text`) |
+| `page_count` | int | yes | |
+| `language` | text | yes | |
+| `error` | text | yes | |
+| `truncated` | boolean | no | true when the output was cut at the character cap |
+| `stage_version` | text | no | |
+| `created_at` / `updated_at` | timestamptz | no | |
+
+Terminal statuses (`failed`, `unsupported`, `too_large`) are only retried when
+`stage_version` changes or on an explicit `--retry-failed`; otherwise every run
+would re-attempt each corrupt PDF.
 
 ---
 

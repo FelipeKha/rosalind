@@ -12,6 +12,8 @@ from collections.abc import Iterator
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.inbound.ingestion.google.parser import GooglePersonParser
+from rosalind.adapters.outbound.enrichment.html import SelectolaxHtmlParser
+from rosalind.adapters.outbound.enrichment.language import LinguaLanguageDetector
 from rosalind.adapters.outbound.google.auth import GoogleAuthGateway
 from rosalind.adapters.outbound.google.people import GooglePeopleGateway
 from rosalind.adapters.outbound.keycloak.jwt import KeycloakJwtVerifier
@@ -29,14 +31,19 @@ from rosalind.application.ports.identity import TokenVerifier
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.accounts import AccountService
+from rosalind.application.services.attachment_extraction import (
+    AttachmentExtractionService,
+)
 from rosalind.application.services.email_reconciliation import (
     EmailReconciliationService,
 )
 from rosalind.application.services.emails import EmailProcessingService
+from rosalind.application.services.enrichment import EmailEnrichmentService
 from rosalind.application.services.imports import ImportService
 from rosalind.application.services.people import PersonService
 from rosalind.application.services.processing import ProcessingService
 from rosalind.application.services.sources import SourceService
+from rosalind.config import settings
 
 google_auth = GoogleAuthGateway()
 google_people = GooglePeopleGateway()
@@ -69,6 +76,23 @@ email_processing_service = EmailProcessingService(
     storage=object_storage,
     canonicalizer=EmailCanonicalizationService(),
     reconciler=EmailReconciliationService(),
+    enrich_budget_seconds=settings.enrich_budget_seconds,
+    enrich_batch_size=settings.enrich_batch_size,
+    enricher=EmailEnrichmentService(
+        html_parser=SelectolaxHtmlParser(),
+        detector=LinguaLanguageDetector(
+            languages=tuple(settings.enrich_languages),
+            min_confidence=settings.enrich_language_min_confidence,
+        ),
+        min_language_length=settings.enrich_min_language_length,
+    ),
+)
+
+attachment_extraction_service = AttachmentExtractionService(
+    storage=object_storage,
+    max_bytes=settings.attachment_max_bytes,
+    max_output_chars=settings.attachment_max_output_chars,
+    timeout_seconds=settings.attachment_timeout_seconds,
 )
 
 
@@ -120,6 +144,10 @@ def get_import_service() -> ImportService:
 
 def get_email_processing_service() -> EmailProcessingService:
     return email_processing_service
+
+
+def get_attachment_extraction_service() -> AttachmentExtractionService:
+    return attachment_extraction_service
 
 
 def get_object_storage() -> ObjectStorage:

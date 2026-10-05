@@ -34,6 +34,7 @@ from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.email_reconciliation import (
     EmailReconciliationService,
 )
+from rosalind.application.services.enrichment import EmailEnrichmentService
 from rosalind.domain.source import ImportFile, SourceAccount
 
 # emails.md §1.2: resource_type for an individual Gmail message. The mbox
@@ -121,17 +122,23 @@ def _read_bytes(path: str) -> bytes:
 
 
 class EmailProcessingService:
-    """Runs the offline email pipeline (record split + canonicalize stages)."""
+    """Runs the offline email pipeline (record split + canonicalize + enrich)."""
 
     def __init__(
         self,
         storage: ObjectStorage,
         canonicalizer: EmailCanonicalizationService,
         reconciler: EmailReconciliationService,
+        enricher: EmailEnrichmentService | None = None,
+        enrich_budget_seconds: float | None = None,
+        enrich_batch_size: int = 500,
     ):
         self._storage = storage
         self._canonicalizer = canonicalizer
         self._reconciler = reconciler
+        self._enricher = enricher
+        self._enrich_budget_seconds = enrich_budget_seconds
+        self._enrich_batch_size = enrich_batch_size
 
     def prepare(
         self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
@@ -202,6 +209,33 @@ class EmailProcessingService:
 
         if canonicalize_ok:
             yield from self._reconcile(uow, prepared)
+            if self._enricher is not None:
+                yield from self._enrich(uow, prepared)
+
+    def _enrich(
+        self, uow: UnitOfWork, prepared: PreparedSplit
+    ) -> Iterator[PipelineEvent]:
+        """Enrich clean text/segments/language for the whole source account."""
+        enricher = self._enricher
+        if enricher is None:
+            return
+        yield PipelineEvent(stage="enriching")
+        outcome = enricher.enrich(
+            uow,
+            prepared.source_account.id,
+            budget_seconds=self._enrich_budget_seconds,
+            limit=self._enrich_batch_size,
+        )
+        yield PipelineEvent(
+            stage="enriched",
+            processed=outcome.processed,
+            details={
+                "done": outcome.done,
+                "empty": outcome.empty,
+                "failed": outcome.failed,
+                "budget_exhausted": outcome.budget_exhausted,
+            },
+        )
 
     def _reconcile(
         self, uow: UnitOfWork, prepared: PreparedSplit

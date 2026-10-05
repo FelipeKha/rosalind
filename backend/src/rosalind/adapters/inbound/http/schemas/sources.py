@@ -50,3 +50,16 @@ class SourceDetailResponse(SourceSummaryResponse):
 
 class SourceListResponse(BaseModel):
     sources: list[SourceSummaryResponse]
+
+
+class AttachmentExtractionResponse(BaseModel):
+    source_id: uuid.UUID
+    processed: int
+    done: int
+    empty: int
+    needs_ocr: int
+    unsupported: int
+    too_large: int
+    encrypted: int
+    failed: int
+    budget_exhausted: bool

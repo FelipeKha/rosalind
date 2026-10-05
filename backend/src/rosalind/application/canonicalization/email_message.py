@@ -25,6 +25,7 @@ from rosalind.domain.email import (
     CanonicalParticipant,
     CanonicalThread,
     ParsedEmail,
+    content_sha256,
     message_uuid,
 )
 from rosalind.domain.source import SourceAccount, SourceRecord
@@ -71,6 +72,7 @@ def build_canonical_email(
         subject=parsed.subject,
         text_plain=parsed.text_plain,
         text_html=parsed.text_html,
+        content_sha256=content_sha256(parsed.text_plain, parsed.text_html),
         has_attachments=_has_attachments(parsed),
         is_trash_or_spam=_is_trash_or_spam(parsed),
         thread=CanonicalThread(

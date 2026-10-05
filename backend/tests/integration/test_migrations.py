@@ -62,6 +62,11 @@ def test_alembic_upgrade_head_creates_tables(postgres_url: str) -> None:
         "email_tag",
     } <= set(inspector.get_table_names(schema="core"))
     assert {"person_profile"} <= set(inspector.get_view_names(schema="agent"))
+    assert {
+        "email_text",
+        "email_segment",
+        "attachment_text",
+    } <= set(inspector.get_table_names(schema="derived"))
 
     # Leave the shared container clean for subsequent tests (the migration
     # creates the agent.person_profile view, which otherwise blocks drop_all).

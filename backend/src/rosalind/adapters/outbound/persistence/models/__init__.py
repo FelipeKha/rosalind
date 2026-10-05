@@ -9,6 +9,11 @@ from rosalind.adapters.outbound.persistence.models.account import (
     AccountIdentity,
 )
 from rosalind.adapters.outbound.persistence.models.base import Base, utcnow
+from rosalind.adapters.outbound.persistence.models.derived import (
+    AttachmentText,
+    EmailSegment,
+    EmailText,
+)
 from rosalind.adapters.outbound.persistence.models.email import (
     EmailAttachment,
     EmailMessage,
@@ -59,12 +64,15 @@ from rosalind.adapters.outbound.persistence.models.source import (
 __all__ = [
     "Account",
     "AccountIdentity",
+    "AttachmentText",
     "Base",
     "EmailAttachment",
     "EmailMessage",
     "EmailMessageObservation",
     "EmailParticipant",
+    "EmailSegment",
     "EmailTag",
+    "EmailText",
     "EmailThread",
     "Import",
     "ImportFile",

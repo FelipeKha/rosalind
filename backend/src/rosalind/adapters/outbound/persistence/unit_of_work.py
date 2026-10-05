@@ -18,6 +18,10 @@ from rosalind.adapters.outbound.persistence.repositories.account import (
 from rosalind.adapters.outbound.persistence.repositories.email_canonical import (
     PostgresEmailCanonicalRepository,
 )
+from rosalind.adapters.outbound.persistence.repositories.enrichment import (
+    PostgresAttachmentTextRepository,
+    PostgresEmailEnrichmentRepository,
+)
 from rosalind.adapters.outbound.persistence.repositories.imports import (
     PostgresImportRepository,
 )
@@ -37,7 +41,9 @@ from rosalind.adapters.outbound.persistence.repositories.source_record import (
 from rosalind.application.ports.repositories import (
     AccountIdentityRepository,
     AccountRepository,
+    AttachmentTextRepository,
     EmailCanonicalRepository,
+    EmailEnrichmentRepository,
     ImportRepository,
     OAuthAuthRequestRepository,
     OAuthCredentialRepository,
@@ -59,6 +65,8 @@ class SqlAlchemyUnitOfWork:
     imports: ImportRepository
     person_canonical: PersonCanonicalRepository
     email_canonical: EmailCanonicalRepository
+    email_enrichment: EmailEnrichmentRepository
+    attachment_text: AttachmentTextRepository
 
     def __init__(self, session: Session):
         self._session = session
@@ -71,6 +79,8 @@ class SqlAlchemyUnitOfWork:
         self.imports = PostgresImportRepository(session)
         self.person_canonical = PostgresPersonCanonicalRepository(session)
         self.email_canonical = PostgresEmailCanonicalRepository(session)
+        self.email_enrichment = PostgresEmailEnrichmentRepository(session)
+        self.attachment_text = PostgresAttachmentTextRepository(session)
 
     def commit(self) -> None:
         self._session.commit()
