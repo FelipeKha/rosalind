@@ -61,7 +61,7 @@ class ImportService:
             import_ = uow.imports.create(
                 account_id=account_id, source_account_id=source.id, type_=type_
             )
-            self._processing.import_api_profile(uow, source, import_)
+            self._processing.import_api_contacts(uow, source, import_)
             import_ = uow.imports.mark_completed(
                 import_.id, completed_at=datetime.now(UTC)
             )

@@ -339,8 +339,8 @@ Source name (slug).
 
 `--type <string>` (required)
 
-Import type: `takeout` (a local provider export) or `api` (fetch directly from
-a connected provider).
+Import type: `takeout` (a local provider export) or `api` (import all contacts
+directly from a connected provider).
 
 ### Arguments
 
@@ -354,7 +354,7 @@ Path to a provider export. Required for `--type takeout`.
 # Import a local Google Takeout export
 $ rosalind import create --source google --type takeout ~/Downloads/Takeout
 
-# Import directly from the Google People API
+# Import all contacts directly from the Google People API
 $ rosalind import create --source google --type api
 ```
 

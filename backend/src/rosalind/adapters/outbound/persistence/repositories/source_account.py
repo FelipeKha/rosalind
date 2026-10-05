@@ -84,6 +84,18 @@ class PostgresSourceAccountRepository:
         self._session.delete(model)
         self._session.flush()
 
+    def store_sync_state(
+        self, *, source_id: uuid.UUID, provider: str, sync_state: dict
+    ) -> None:
+        """Merge a provider's incremental-sync cursor into the metadata blob."""
+        model = self._session.get(SourceAccountModel, source_id)
+        if model is None:
+            raise ValueError(f"source account {source_id} not found")
+        metadata = dict(model.metadata_ or {})
+        metadata[provider] = sync_state
+        model.metadata_ = metadata
+        self._session.flush()
+
     @staticmethod
     def _to_domain(account: SourceAccountModel) -> SourceAccount:
         return SourceAccount(

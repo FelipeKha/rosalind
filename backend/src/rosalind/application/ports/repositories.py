@@ -17,11 +17,19 @@ from typing import Any, Protocol
 from rosalind.application.read_models import PersonProfile
 from rosalind.domain.account import Account, AccountIdentity
 from rosalind.domain.person import (
+    AddressObservation,
     DateObservation,
     EmailObservation,
     GenderObservation,
+    ImObservation,
     LocaleObservation,
     NameObservation,
+    NicknameObservation,
+    NoteObservation,
+    OrganizationObservation,
+    PhoneObservation,
+    RelationObservation,
+    UrlObservation,
 )
 from rosalind.domain.source import (
     Import,
@@ -44,6 +52,15 @@ class FactUpsertResult:
     fact_id: uuid.UUID
     fact_created: bool
     assertion_created: bool
+
+
+@dataclass(frozen=True)
+class UnresolvedRelation:
+    """A relation edge whose target person has not been resolved yet."""
+
+    relation_id: uuid.UUID
+    person_id: uuid.UUID
+    related_person_name: str
 
 
 @dataclass(frozen=True)
@@ -134,6 +151,10 @@ class SourceAccountRepository(Protocol):
     def update(self, account: SourceAccount) -> SourceAccount: ...
 
     def delete(self, source_id: uuid.UUID) -> None: ...
+
+    def store_sync_state(
+        self, *, source_id: uuid.UUID, provider: str, sync_state: dict
+    ) -> None: ...
 
 
 class OAuthCredentialRepository(Protocol):
@@ -280,6 +301,78 @@ class PersonCanonicalRepository(Protocol):
         source_identity_id: uuid.UUID | None,
     ) -> FactUpsertResult: ...
 
+    def upsert_phone(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: PhoneObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_address(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: AddressObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_organization(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: OrganizationObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_url(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: UrlObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_im(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: ImObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_note(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: NoteObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_relation(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: RelationObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
+    def upsert_nickname(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: NicknameObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult: ...
+
     def set_name_primary(
         self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None: ...
@@ -298,4 +391,40 @@ class PersonCanonicalRepository(Protocol):
 
     def set_locale_primary(
         self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_phone_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_address_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_organization_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_url_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_im_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_note_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def set_nickname_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None: ...
+
+    def list_unresolved_relations(self) -> list[UnresolvedRelation]: ...
+
+    def find_person_ids_by_name(self, *, normalized_name: str) -> set[uuid.UUID]: ...
+
+    def link_relation(
+        self, *, relation_id: uuid.UUID, related_person_id: uuid.UUID
     ) -> None: ...

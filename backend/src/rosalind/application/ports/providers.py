@@ -34,6 +34,21 @@ class UserIdentity:
     display_name: str | None = None
 
 
+@dataclass(frozen=True)
+class ContactsFetch:
+    """A full set of provider contacts plus the incremental sync cursor.
+
+    ``contacts`` holds the raw provider payloads (each ready to be persisted as
+    evidence and canonicalized). ``next_sync_token`` and ``sync_parameters``
+    establish the baseline for a later incremental sync: the token is only
+    reusable with the exact request parameters captured in ``sync_parameters``.
+    """
+
+    contacts: tuple[dict[str, Any], ...]
+    next_sync_token: str | None
+    sync_parameters: dict[str, Any] | None
+
+
 class AuthGateway(Protocol):
     def build_authorization_url(self, state: str) -> tuple[str, str]: ...
 
@@ -50,3 +65,5 @@ class AuthGateway(Protocol):
 
 class PeopleGateway(Protocol):
     def fetch_profile(self, credentials: ProviderCredentials) -> dict[str, Any]: ...
+
+    def fetch_contacts(self, credentials: ProviderCredentials) -> ContactsFetch: ...

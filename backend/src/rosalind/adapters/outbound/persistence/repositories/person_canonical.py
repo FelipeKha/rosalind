@@ -10,19 +10,28 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.outbound.persistence import models
 from rosalind.application.canonicalization.email import normalize_email
-from rosalind.application.ports.repositories import FactUpsertResult
+from rosalind.application.canonicalization.phone import normalize_phone
+from rosalind.application.ports.repositories import FactUpsertResult, UnresolvedRelation
 from rosalind.domain.person import (
+    AddressObservation,
     DateObservation,
     EmailObservation,
     GenderObservation,
+    ImObservation,
     LocaleObservation,
     NameObservation,
+    NicknameObservation,
+    NoteObservation,
+    OrganizationObservation,
+    PhoneObservation,
+    RelationObservation,
+    UrlObservation,
 )
 from rosalind.domain.source import SourceRef
 
@@ -100,6 +109,14 @@ class PostgresPersonCanonicalRepository:
                 "display_name": observation.display_name,
                 "given_name": observation.given_name,
                 "family_name": observation.family_name,
+                "middle_name": observation.middle_name,
+                "name_prefix": observation.name_prefix,
+                "name_suffix": observation.name_suffix,
+                "previous_family_name": observation.previous_family_name,
+                "phonetic_given_name": observation.phonetic_given_name,
+                "phonetic_middle_name": observation.phonetic_middle_name,
+                "phonetic_family_name": observation.phonetic_family_name,
+                "phonetic_full_name": observation.phonetic_full_name,
                 "is_primary": False,
             },
             "uq_person_name_value",
@@ -108,6 +125,9 @@ class PostgresPersonCanonicalRepository:
                 models.PersonName.display_name == observation.display_name,
                 models.PersonName.given_name == observation.given_name,
                 models.PersonName.family_name == observation.family_name,
+                models.PersonName.middle_name == observation.middle_name,
+                models.PersonName.name_prefix == observation.name_prefix,
+                models.PersonName.name_suffix == observation.name_suffix,
             ),
         )
         return self._finish(
@@ -256,6 +276,315 @@ class PostgresPersonCanonicalRepository:
             observation.source_verified,
         )
 
+    def upsert_phone(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: PhoneObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult:
+        normalized = normalize_phone(observation.value)
+        fact_id, fact_created = self._upsert_returning(
+            models.PersonPhone,
+            {
+                "person_id": person_id,
+                "value": observation.value,
+                "value_normalized": normalized,
+                "type": observation.type,
+                "is_primary": False,
+                "is_verified": observation.source_verified is True,
+            },
+            "uq_person_phone_person_normalized",
+            select(models.PersonPhone.id).where(
+                models.PersonPhone.person_id == person_id,
+                models.PersonPhone.value_normalized == normalized,
+            ),
+        )
+        return self._finish(
+            models.PersonPhoneAssertion,
+            "person_phone_id",
+            fact_id,
+            fact_created,
+            source_record_id,
+            source_identity_id,
+            observation.field_path,
+            observation.source_primary,
+            observation.source_verified,
+        )
+
+    def upsert_address(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: AddressObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult:
+        fact_id, fact_created = self._upsert_returning(
+            models.PersonAddress,
+            {
+                "person_id": person_id,
+                "type": observation.type,
+                "formatted": observation.formatted,
+                "street": observation.street,
+                "city": observation.city,
+                "region": observation.region,
+                "postal_code": observation.postal_code,
+                "country": observation.country,
+                "country_code": observation.country_code,
+                "is_primary": False,
+            },
+            "uq_person_address_value",
+            select(models.PersonAddress.id).where(
+                models.PersonAddress.person_id == person_id,
+                models.PersonAddress.type == observation.type,
+                models.PersonAddress.formatted == observation.formatted,
+                models.PersonAddress.street == observation.street,
+                models.PersonAddress.city == observation.city,
+                models.PersonAddress.region == observation.region,
+                models.PersonAddress.postal_code == observation.postal_code,
+                models.PersonAddress.country == observation.country,
+                models.PersonAddress.country_code == observation.country_code,
+            ),
+        )
+        return self._finish(
+            models.PersonAddressAssertion,
+            "person_address_id",
+            fact_id,
+            fact_created,
+            source_record_id,
+            source_identity_id,
+            observation.field_path,
+            observation.source_primary,
+            observation.source_verified,
+        )
+
+    def upsert_organization(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: OrganizationObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult:
+        fact_id, fact_created = self._upsert_returning(
+            models.PersonOrganization,
+            {
+                "person_id": person_id,
+                "name": observation.name,
+                "department": observation.department,
+                "title": observation.title,
+                "type": observation.type,
+                "current": observation.current,
+                "start_year": observation.start_year,
+                "start_month": observation.start_month,
+                "start_day": observation.start_day,
+                "end_year": observation.end_year,
+                "end_month": observation.end_month,
+                "end_day": observation.end_day,
+                "phonetic_name": observation.phonetic_name,
+                "is_primary": False,
+            },
+            "uq_person_organization_value",
+            select(models.PersonOrganization.id).where(
+                models.PersonOrganization.person_id == person_id,
+                models.PersonOrganization.name == observation.name,
+                models.PersonOrganization.department == observation.department,
+                models.PersonOrganization.title == observation.title,
+                models.PersonOrganization.type == observation.type,
+                models.PersonOrganization.start_year == observation.start_year,
+                models.PersonOrganization.start_month == observation.start_month,
+                models.PersonOrganization.start_day == observation.start_day,
+            ),
+        )
+        return self._finish(
+            models.PersonOrganizationAssertion,
+            "person_organization_id",
+            fact_id,
+            fact_created,
+            source_record_id,
+            source_identity_id,
+            observation.field_path,
+            observation.source_primary,
+            observation.source_verified,
+        )
+
+    def upsert_url(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: UrlObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult:
+        fact_id, fact_created = self._upsert_returning(
+            models.PersonUrl,
+            {
+                "person_id": person_id,
+                "value": observation.value,
+                "type": observation.type,
+                "is_primary": False,
+            },
+            "uq_person_url_value",
+            select(models.PersonUrl.id).where(
+                models.PersonUrl.person_id == person_id,
+                models.PersonUrl.value == observation.value,
+            ),
+        )
+        return self._finish(
+            models.PersonUrlAssertion,
+            "person_url_id",
+            fact_id,
+            fact_created,
+            source_record_id,
+            source_identity_id,
+            observation.field_path,
+            observation.source_primary,
+            observation.source_verified,
+        )
+
+    def upsert_im(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: ImObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult:
+        fact_id, fact_created = self._upsert_returning(
+            models.PersonIm,
+            {
+                "person_id": person_id,
+                "service": observation.service,
+                "username": observation.username,
+                "type": observation.type,
+                "is_primary": False,
+            },
+            "uq_person_im_value",
+            select(models.PersonIm.id).where(
+                models.PersonIm.person_id == person_id,
+                models.PersonIm.service == observation.service,
+                models.PersonIm.username == observation.username,
+                models.PersonIm.type == observation.type,
+            ),
+        )
+        return self._finish(
+            models.PersonImAssertion,
+            "person_im_id",
+            fact_id,
+            fact_created,
+            source_record_id,
+            source_identity_id,
+            observation.field_path,
+            observation.source_primary,
+            observation.source_verified,
+        )
+
+    def upsert_note(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: NoteObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult:
+        fact_id, fact_created = self._upsert_returning(
+            models.PersonNote,
+            {
+                "person_id": person_id,
+                "value": observation.value,
+                "content_type": observation.content_type,
+                "is_primary": False,
+            },
+            "uq_person_note_value",
+            select(models.PersonNote.id).where(
+                models.PersonNote.person_id == person_id,
+                models.PersonNote.value == observation.value,
+            ),
+        )
+        return self._finish(
+            models.PersonNoteAssertion,
+            "person_note_id",
+            fact_id,
+            fact_created,
+            source_record_id,
+            source_identity_id,
+            observation.field_path,
+            observation.source_primary,
+            observation.source_verified,
+        )
+
+    def upsert_relation(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: RelationObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult:
+        fact_id, fact_created = self._upsert_returning(
+            models.PersonRelation,
+            {
+                "person_id": person_id,
+                "type": observation.type,
+                "related_person_name": observation.related_person_name,
+                "related_person_id": None,
+            },
+            "uq_person_relation_value",
+            select(models.PersonRelation.id).where(
+                models.PersonRelation.person_id == person_id,
+                models.PersonRelation.type == observation.type,
+                models.PersonRelation.related_person_name
+                == observation.related_person_name,
+            ),
+        )
+        return self._finish(
+            models.PersonRelationAssertion,
+            "person_relation_id",
+            fact_id,
+            fact_created,
+            source_record_id,
+            source_identity_id,
+            observation.field_path,
+            observation.source_primary,
+            observation.source_verified,
+        )
+
+    def upsert_nickname(
+        self,
+        *,
+        person_id: uuid.UUID,
+        observation: NicknameObservation,
+        source_record_id: uuid.UUID,
+        source_identity_id: uuid.UUID | None,
+    ) -> FactUpsertResult:
+        fact_id, fact_created = self._upsert_returning(
+            models.PersonNickname,
+            {
+                "person_id": person_id,
+                "value": observation.value,
+                "type": observation.type,
+                "is_primary": False,
+            },
+            "uq_person_nickname_value",
+            select(models.PersonNickname.id).where(
+                models.PersonNickname.person_id == person_id,
+                models.PersonNickname.value == observation.value,
+            ),
+        )
+        return self._finish(
+            models.PersonNicknameAssertion,
+            "person_nickname_id",
+            fact_id,
+            fact_created,
+            source_record_id,
+            source_identity_id,
+            observation.field_path,
+            observation.source_primary,
+            observation.source_verified,
+        )
+
     def set_name_primary(
         self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None:
@@ -280,6 +609,84 @@ class PostgresPersonCanonicalRepository:
         self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
     ) -> None:
         self._set_primary(models.PersonLocale, person_id, fact_id)
+
+    def set_phone_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None:
+        self._set_primary(models.PersonPhone, person_id, fact_id)
+
+    def set_address_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None:
+        self._set_primary(models.PersonAddress, person_id, fact_id)
+
+    def set_organization_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None:
+        self._set_primary(models.PersonOrganization, person_id, fact_id)
+
+    def set_url_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None:
+        self._set_primary(models.PersonUrl, person_id, fact_id)
+
+    def set_im_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None:
+        self._set_primary(models.PersonIm, person_id, fact_id)
+
+    def set_note_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None:
+        self._set_primary(models.PersonNote, person_id, fact_id)
+
+    def set_nickname_primary(
+        self, *, person_id: uuid.UUID, fact_id: uuid.UUID | None
+    ) -> None:
+        self._set_primary(models.PersonNickname, person_id, fact_id)
+
+    def list_unresolved_relations(self) -> list[UnresolvedRelation]:
+        rows = self._session.execute(
+            select(
+                models.PersonRelation.id,
+                models.PersonRelation.person_id,
+                models.PersonRelation.related_person_name,
+            ).where(models.PersonRelation.related_person_id.is_(None))
+        ).all()
+        return [
+            UnresolvedRelation(
+                relation_id=relation_id,
+                person_id=person_id,
+                related_person_name=related_person_name,
+            )
+            for relation_id, person_id, related_person_name in rows
+            if related_person_name is not None
+        ]
+
+    def find_person_ids_by_name(self, *, normalized_name: str) -> set[uuid.UUID]:
+        display_match = func.lower(func.btrim(models.PersonName.display_name))
+        composed_match = func.lower(
+            func.btrim(
+                func.concat_ws(
+                    " ", models.PersonName.given_name, models.PersonName.family_name
+                )
+            )
+        )
+        person_ids = self._session.scalars(
+            select(models.PersonName.person_id).where(
+                (display_match == normalized_name) | (composed_match == normalized_name)
+            )
+        ).all()
+        return set(person_ids)
+
+    def link_relation(
+        self, *, relation_id: uuid.UUID, related_person_id: uuid.UUID
+    ) -> None:
+        self._session.execute(
+            update(models.PersonRelation)
+            .where(models.PersonRelation.id == relation_id)
+            .values(related_person_id=related_person_id)
+        )
 
     def _finish(
         self,

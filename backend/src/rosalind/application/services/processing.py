@@ -97,6 +97,70 @@ class ProcessingService:
         payload = self._people.fetch_profile(credentials)
         return self.ingest_person(uow, source_account, payload, import_id=import_.id)
 
+    def import_api_contacts(
+        self,
+        uow: UnitOfWork,
+        source_account: SourceAccount,
+        import_: Import,
+    ) -> ProcessOutcome:
+        """Fetch all provider contacts and ingest them into the given import.
+
+        A contact whose parsing/canonicalization fails is already persisted as raw
+        evidence (the raw record is committed before parsing), so the failure is
+        quarantined per-record and the rest of the import continues. On success
+        the provider's incremental-sync cursor is stored so a later delta sync
+        reuses the same baseline instead of a fresh full import.
+        """
+        _, credentials = self._sources.load_credentials(uow, source_account.id)
+        fetch = self._people.fetch_contacts(credentials)
+
+        counters = {
+            "people_created": 0,
+            "facts_created": 0,
+            "facts_reused": 0,
+            "assertions_created": 0,
+            "failed": 0,
+        }
+        for payload in fetch.contacts:
+            try:
+                result = self.ingest_person(
+                    uow, source_account, payload, import_id=import_.id
+                )
+            except Exception:  # noqa: BLE001 - per-record quarantine
+                uow.rollback()
+                counters["failed"] += 1
+                continue
+            if result.created:
+                counters["people_created"] += 1
+            counters["facts_created"] += result.facts_created
+            counters["facts_reused"] += result.facts_reused
+            counters["assertions_created"] += result.assertions_created
+
+        if fetch.next_sync_token is not None:
+            uow.source_accounts.store_sync_state(
+                source_id=source_account.id,
+                provider=source_account.provider,
+                sync_state={
+                    "sync_token": fetch.next_sync_token,
+                    "sync_parameters": fetch.sync_parameters,
+                },
+            )
+
+        message = None
+        if counters["failed"]:
+            message = (
+                f"{counters['failed']} contact(s) failed to parse and were quarantined"
+            )
+        return ProcessOutcome(
+            result=RESULT_OK,
+            processing_status=PROCESSING_COMPLETED,
+            message=message,
+            people_created=counters["people_created"],
+            facts_created=counters["facts_created"],
+            facts_reused=counters["facts_reused"],
+            assertions_created=counters["assertions_created"],
+        )
+
     def process_import(
         self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
     ) -> ProcessOutcome:
