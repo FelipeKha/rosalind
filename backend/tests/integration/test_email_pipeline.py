@@ -87,7 +87,7 @@ def test_split_creates_records(uow: SqlAlchemyUnitOfWork) -> None:
 
     records = uow.source_records.list_for_import(import_id)
     assert len(records) == 2
-    assert {r.external_id for r in records} == {"<a@example.com>", "<b@example.com>"}
+    assert {r.external_id for r in records} == {"a@example.com", "b@example.com"}
     assert all(r.resource_type == "gmail.message" for r in records)
     assert all(r.payload_uri is not None for r in records)
     assert all(r.payload is None for r in records)

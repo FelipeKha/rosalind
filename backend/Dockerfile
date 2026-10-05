@@ -7,6 +7,7 @@ WORKDIR /app
 # Update OS packages to the latest security patches
 RUN apt-get update \
     && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the project into the image

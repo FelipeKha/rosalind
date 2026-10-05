@@ -31,9 +31,9 @@ def test_iter_messages_splits_into_messages(tmp_path) -> None:
     messages = list(iter_messages(path))
 
     assert len(messages) == 2
-    assert messages[0].message_id == "<a@example.com>"
+    assert messages[0].message_id == "a@example.com"
     assert b"Body of the first message." in messages[0].raw
-    assert messages[1].message_id == "<b@example.com>"
+    assert messages[1].message_id == "b@example.com"
     assert b"Body of the second message." in messages[1].raw
 
 
