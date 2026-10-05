@@ -152,6 +152,10 @@ class SourceAccountRepository(Protocol):
 
     def delete(self, source_id: uuid.UUID) -> None: ...
 
+    def store_sync_state(
+        self, *, source_id: uuid.UUID, provider: str, sync_state: dict
+    ) -> None: ...
+
 
 class OAuthCredentialRepository(Protocol):
     def exists(self, source_account_id: uuid.UUID) -> bool: ...

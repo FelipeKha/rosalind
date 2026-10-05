@@ -4,7 +4,11 @@ from fastapi.testclient import TestClient
 
 from rosalind.adapters import composition
 from rosalind.application.errors import ProviderError
-from rosalind.application.ports.providers import ProviderCredentials, UserIdentity
+from rosalind.application.ports.providers import (
+    ContactsFetch,
+    ProviderCredentials,
+    UserIdentity,
+)
 
 FAKE_AUTH_URL = "https://accounts.google.com/o/oauth2/auth?foo=bar"
 
@@ -122,23 +126,31 @@ def test_api_import_creates_canonical_data(
     migrated_api_client: TestClient, monkeypatch
 ) -> None:
     _stub_google(monkeypatch)
+    payload = {
+        "resourceName": "people/12345",
+        "metadata": {"sources": [{"type": "PROFILE", "id": "12345"}]},
+        "names": [
+            {
+                "displayName": "Jane Doe",
+                "givenName": "Jane",
+                "familyName": "Doe",
+            }
+        ],
+        "emailAddresses": [
+            {"value": "jane@example.com", "metadata": {"primary": True}}
+        ],
+    }
     monkeypatch.setattr(
         composition.google_people,
-        "fetch_profile",
-        lambda credentials: {
-            "resourceName": "people/12345",
-            "metadata": {"sources": [{"type": "PROFILE", "id": "12345"}]},
-            "names": [
-                {
-                    "displayName": "Jane Doe",
-                    "givenName": "Jane",
-                    "familyName": "Doe",
-                }
-            ],
-            "emailAddresses": [
-                {"value": "jane@example.com", "metadata": {"primary": True}}
-            ],
-        },
+        "fetch_contacts",
+        lambda credentials: ContactsFetch(
+            contacts=(payload,),
+            next_sync_token="sync-token-1",
+            sync_parameters={
+                "sort_order": "LAST_MODIFIED_ASCENDING",
+                "person_fields": ["names", "emailAddresses"],
+            },
+        ),
     )
 
     state = _connect(migrated_api_client)["state"]

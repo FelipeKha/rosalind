@@ -23,7 +23,13 @@ import_app = typer.Typer(help="Bring source data into Rosalind.")
 @import_app.command("create")
 def create(
     source: Annotated[str, typer.Option("--source", help="Source name (slug).")],
-    type_: Annotated[str, typer.Option("--type", help="Import type: takeout or api.")],
+    type_: Annotated[
+        str,
+        typer.Option(
+            "--type",
+            help="Import type: takeout (upload files) or api (import all contacts).",
+        ),
+    ],
     path: Annotated[
         Path | None, typer.Argument(help="Path to a provider export (takeout).")
     ] = None,
