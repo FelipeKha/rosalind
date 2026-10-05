@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 from email import policy
 from email.parser import BytesParser
@@ -53,7 +54,7 @@ def parse_email(raw: bytes, _depth: int = 0) -> ParsedEmail:
 
     return ParsedEmail(
         message_id=message_id,
-        in_reply_to=_first_reference(message["In-Reply-To"]),
+        in_reply_to=_last_reference(message["In-Reply-To"]),
         references=parse_message_ids(message["References"] or ""),
         provider_thread_hint=message["X-GM-THRID"],
         date_header=message["Date"],
@@ -77,11 +78,26 @@ def _header_id(value: str | None) -> str | None:
     return normalize_message_id(value)
 
 
-def _first_reference(value: str | None) -> str | None:
+_MSG_ID_RE = re.compile(r"<([^<>]*)>")
+
+
+def _last_reference(value: str | None) -> str | None:
+    """Return the last valid Message-ID in an ``In-Reply-To`` header.
+
+    The header may hold several IDs, or free text some clients insert. Only the
+    last bracketed id (or, failing that, the last ``@``-bearing token) is kept;
+    an unparseable value is treated as absent.
+    """
     if value is None:
         return None
-    refs = parse_message_ids(value)
-    return refs[0] if refs else None
+    bracketed = _MSG_ID_RE.findall(value)
+    if bracketed:
+        return normalize_message_id(bracketed[-1])
+    for token in reversed(value.split()):
+        token = token.strip()
+        if "@" in token:
+            return normalize_message_id(token)
+    return None
 
 
 def _parse_tags(value: str | None) -> tuple[str, ...]:

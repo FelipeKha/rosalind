@@ -440,6 +440,7 @@ field-level — provenance is a direct link to the raw record (`email_message_ob
 | `has_attachments` | boolean | no | at least one non-inline attachment |
 | `is_trash_or_spam` | boolean | no | derived from `Spam`/`Trash` labels |
 | `thread_id` | uuid | yes | FK → `core.email_thread.id` `SET NULL`; indexed |
+| `thread_changed_at` | timestamptz | yes | set when reconcile reassigns the message's thread (chunk-refresh signal) |
 | `parser_version` / `canonicalizer_version` | text | no | stage versions for idempotency |
 | `metadata` | jsonb | no | holds `parse_warnings` |
 
@@ -482,9 +483,19 @@ part_index)`.
 #### `core.email_thread`
 
 `id`, `source_account_id` (FK RESTRICT, indexed), `root_message_id` (not null),
-`provider_hint` (plain attribute, not part of the key). Unique on
-`(source_account_id, root_message_id)`. Full thread reconciliation (quoted
-coverage, late-arriving roots) is deferred.
+`provider_hint` (plain attribute, not part of the key), `created_at`. Unique on
+`(source_account_id, root_message_id)`.
+
+Threads are **reconciled** (JWZ-style threading, run idempotently after every
+canonicalize): the root is the transitive reply-chain root
+(`In-Reply-To ?? References[-1]`, walked to the top), with placeholder nodes for
+referenced-but-absent messages so a reply whose ancestors are missing still
+joins the same thread as its siblings. `root_message_id` may therefore be a
+missing ancestor. On a merge the surviving thread is the existing one with the
+most messages (ties: oldest); reassigned messages get `thread_changed_at`
+bumped. Thread IDs are unstable (`uuid4`) — citations/eval use message IDs.
+`provider_hint` is informational only and not used for merging. Quoted-segment
+coverage is deferred.
 
 ---
 

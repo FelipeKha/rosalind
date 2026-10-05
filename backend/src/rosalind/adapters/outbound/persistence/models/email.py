@@ -71,6 +71,9 @@ class EmailMessage(Base):
         nullable=True,
         index=True,
     )
+    thread_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     parser_version: Mapped[str] = mapped_column(Text, nullable=False)
     canonicalizer_version: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[dict] = mapped_column(
@@ -126,6 +129,9 @@ class EmailThread(Base):
     )
     root_message_id: Mapped[str] = mapped_column(Text, nullable=False)
     provider_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
 
 
 class EmailParticipant(Base):

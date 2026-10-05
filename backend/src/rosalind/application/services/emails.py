@@ -31,6 +31,9 @@ from rosalind.application.canonicalization.email_message import (
 from rosalind.application.errors import ImportNotFoundError, InvalidImportStateError
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
+from rosalind.application.services.email_reconciliation import (
+    EmailReconciliationService,
+)
 from rosalind.domain.source import ImportFile, SourceAccount
 
 # emails.md §1.2: resource_type for an individual Gmail message. The mbox
@@ -60,6 +63,7 @@ class PipelineEvent:
     failed: int = 0
     processed_bytes: int = 0
     message: str | None = None
+    details: dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -73,6 +77,7 @@ class PipelineEvent:
             "failed": self.failed,
             "processed_bytes": self.processed_bytes,
             "message": self.message,
+            "details": self.details,
         }
 
 
@@ -122,9 +127,11 @@ class EmailProcessingService:
         self,
         storage: ObjectStorage,
         canonicalizer: EmailCanonicalizationService,
+        reconciler: EmailReconciliationService,
     ):
         self._storage = storage
         self._canonicalizer = canonicalizer
+        self._reconciler = reconciler
 
     def prepare(
         self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
@@ -187,7 +194,29 @@ class EmailProcessingService:
             processed_bytes=counters.processed_bytes,
         )
 
-        yield from self._canonicalize(uow, prepared)
+        canonicalize_ok = True
+        for event in self._canonicalize(uow, prepared):
+            if event.stage == "error":
+                canonicalize_ok = False
+            yield event
+
+        if canonicalize_ok:
+            yield from self._reconcile(uow, prepared)
+
+    def _reconcile(
+        self, uow: UnitOfWork, prepared: PreparedSplit
+    ) -> Iterator[PipelineEvent]:
+        """Reconcile thread membership across the whole source account."""
+        yield PipelineEvent(stage="reconciling")
+        result = self._reconciler.reconcile(uow, prepared.source_account.id)
+        yield PipelineEvent(
+            stage="reconciled",
+            details={
+                "threads_created": result.threads_created,
+                "threads_removed": result.threads_removed,
+                "messages_reassigned": result.messages_reassigned,
+            },
+        )
 
     def _canonicalize(
         self, uow: UnitOfWork, prepared: PreparedSplit

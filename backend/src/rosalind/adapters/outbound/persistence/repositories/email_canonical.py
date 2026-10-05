@@ -11,15 +11,20 @@ place.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.outbound.persistence import models
-from rosalind.application.ports.repositories import EmailSaveResult
-from rosalind.domain.email import CanonicalEmail
+from rosalind.adapters.outbound.persistence.models.base import utcnow
+from rosalind.application.ports.repositories import (
+    EmailSaveResult,
+    ThreadReconcileResult,
+)
+from rosalind.domain.email import CanonicalEmail, ThreadEdge
 
 _STATUS_CREATED = "created"
 _STATUS_UPDATED = "updated"
@@ -209,6 +214,172 @@ class PostgresEmailCanonicalRepository:
         )
         self._insert_children(message_id, canonical)
 
+    def list_thread_edges(self, source_account_id: uuid.UUID) -> list[ThreadEdge]:
+        rows = self._session.execute(
+            select(
+                models.EmailMessage.message_id,
+                models.EmailMessage.in_reply_to,
+                models.EmailMessage.references,
+                models.EmailMessage.occurred_at,
+            ).where(models.EmailMessage.source_account_id == source_account_id)
+        ).all()
+        return [
+            ThreadEdge(
+                message_id=message_id,
+                in_reply_to=in_reply_to,
+                references=tuple(references) if references else (),
+                occurred_at=occurred_at,
+            )
+            for message_id, in_reply_to, references, occurred_at in rows
+        ]
+
+    def reconcile_threads(
+        self, source_account_id: uuid.UUID, roots: dict[str, str]
+    ) -> ThreadReconcileResult:
+        """Apply computed thread roots, merging/splitting threads in place."""
+        self._advisory_lock(source_account_id)
+
+        message_rows = self._session.execute(
+            select(
+                models.EmailMessage.message_id,
+                models.EmailMessage.thread_id,
+            ).where(models.EmailMessage.source_account_id == source_account_id)
+        ).all()
+        current_thread = {
+            message_id: thread_id for message_id, thread_id in message_rows
+        }
+
+        thread_rows = self._session.execute(
+            select(
+                models.EmailThread.id,
+                models.EmailThread.root_message_id,
+                models.EmailThread.created_at,
+                func.count(models.EmailMessage.id),
+            )
+            .outerjoin(
+                models.EmailMessage,
+                models.EmailMessage.thread_id == models.EmailThread.id,
+            )
+            .where(models.EmailThread.source_account_id == source_account_id)
+            .group_by(models.EmailThread.id)
+        ).all()
+
+        thread_root: dict[uuid.UUID, str] = {}
+        thread_created: dict[uuid.UUID, datetime] = {}
+        thread_count: dict[uuid.UUID, int] = {}
+        for thread_id, root_message_id, created_at, count in thread_rows:
+            thread_root[thread_id] = root_message_id
+            thread_created[thread_id] = created_at
+            thread_count[thread_id] = count
+
+        groups: dict[str, list[str]] = {}
+        for message_id in current_thread:
+            root = roots.get(message_id)
+            if root is None:
+                continue
+            groups.setdefault(root, []).append(message_id)
+
+        thread_by_root = {root: tid for tid, root in thread_root.items()}
+        group_roots = set(groups)
+        preserved = {thread_by_root[r] for r in group_roots if r in thread_by_root}
+        claimed = set(preserved)
+
+        targets: dict[str, uuid.UUID] = {}
+        renames: dict[uuid.UUID, str] = {}
+        threads_created = 0
+
+        for root in sorted(groups):
+            members = groups[root]
+            existing = thread_by_root.get(root)
+            if existing is not None:
+                targets[root] = existing
+                continue
+            candidates: set[uuid.UUID] = set()
+            for message_id in members:
+                member_thread = current_thread.get(message_id)
+                if member_thread is not None:
+                    candidates.add(member_thread)
+            candidates -= claimed
+            if candidates:
+                best = max(
+                    candidates,
+                    key=lambda tid: (
+                        thread_count.get(tid, 0),
+                        -_epoch(thread_created.get(tid)),
+                        -tid.int,
+                    ),
+                )
+                targets[root] = best
+                renames[best] = root
+                claimed.add(best)
+            else:
+                targets[root] = self._create_thread(source_account_id, root)
+                threads_created += 1
+
+        messages_reassigned = 0
+        changed_at = utcnow()
+        for root, members in groups.items():
+            target = targets[root]
+            moved = [mid for mid in members if current_thread.get(mid) != target]
+            if not moved:
+                continue
+            self._session.execute(
+                update(models.EmailMessage)
+                .where(
+                    models.EmailMessage.source_account_id == source_account_id,
+                    models.EmailMessage.message_id.in_(moved),
+                )
+                .values(thread_id=target, thread_changed_at=changed_at)
+            )
+            messages_reassigned += len(moved)
+
+        # Delete now-empty threads first, so a later rename can't violate the
+        # (source_account_id, root_message_id) unique constraint.
+        empty_threads = self._session.scalars(
+            select(models.EmailThread.id).where(
+                models.EmailThread.source_account_id == source_account_id,
+                ~exists(
+                    select(models.EmailMessage.id).where(
+                        models.EmailMessage.thread_id == models.EmailThread.id
+                    )
+                ),
+            )
+        ).all()
+        for thread_id in empty_threads:
+            self._session.execute(
+                delete(models.EmailThread).where(models.EmailThread.id == thread_id)
+            )
+        threads_removed = len(empty_threads)
+
+        for thread_id, root in renames.items():
+            self._session.execute(
+                update(models.EmailThread)
+                .where(models.EmailThread.id == thread_id)
+                .values(root_message_id=root)
+            )
+
+        return ThreadReconcileResult(
+            threads_created=threads_created,
+            threads_removed=threads_removed,
+            messages_reassigned=messages_reassigned,
+        )
+
+    def _create_thread(self, source_account_id: uuid.UUID, root: str) -> uuid.UUID:
+        thread = models.EmailThread(
+            source_account_id=source_account_id,
+            root_message_id=root,
+            provider_hint=None,
+        )
+        self._session.add(thread)
+        self._session.flush()
+        return thread.id
+
+    def _advisory_lock(self, source_account_id: uuid.UUID) -> None:
+        self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": str(source_account_id)},
+        )
+
 
 def _metadata(canonical: CanonicalEmail) -> dict[str, Any]:
     warnings = [
@@ -216,3 +387,9 @@ def _metadata(canonical: CanonicalEmail) -> dict[str, Any]:
         for warning in canonical.parse_warnings
     ]
     return {"parse_warnings": warnings} if warnings else {}
+
+
+def _epoch(value: datetime | None) -> int:
+    if value is None:
+        return 0
+    return int(value.timestamp())

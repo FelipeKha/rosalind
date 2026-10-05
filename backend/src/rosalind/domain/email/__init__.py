@@ -15,6 +15,7 @@ from rosalind.domain.email.observations import (
     ParsedEmail,
     ParseWarning,
 )
+from rosalind.domain.email.threading import ThreadEdge, compute_thread_roots
 
 __all__ = [
     "CanonicalAttachment",
@@ -26,6 +27,8 @@ __all__ = [
     "EmailAttachment",
     "ParseWarning",
     "ParsedEmail",
+    "ThreadEdge",
+    "compute_thread_roots",
     "message_uuid",
     "normalize_message_id",
     "parse_message_ids",

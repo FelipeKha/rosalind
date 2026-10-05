@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 from rosalind.application.read_models import PersonProfile
 from rosalind.domain.account import Account, AccountIdentity
-from rosalind.domain.email import CanonicalEmail
+from rosalind.domain.email import CanonicalEmail, ThreadEdge
 from rosalind.domain.person import (
     AddressObservation,
     DateObservation,
@@ -61,6 +61,15 @@ class EmailSaveResult:
 
     message_id: uuid.UUID
     status: str  # "created" | "updated" | "skipped"
+
+
+@dataclass(frozen=True)
+class ThreadReconcileResult:
+    """Outcome of one thread reconciliation pass over a source account."""
+
+    threads_created: int
+    threads_removed: int
+    messages_reassigned: int
 
 
 @dataclass(frozen=True)
@@ -469,3 +478,9 @@ class EmailCanonicalRepository(Protocol):
     def self_handles(self, account_id: uuid.UUID) -> set[str]: ...
 
     def save(self, canonical: CanonicalEmail) -> EmailSaveResult: ...
+
+    def list_thread_edges(self, source_account_id: uuid.UUID) -> list[ThreadEdge]: ...
+
+    def reconcile_threads(
+        self, source_account_id: uuid.UUID, roots: dict[str, str]
+    ) -> ThreadReconcileResult: ...

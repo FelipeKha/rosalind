@@ -29,6 +29,9 @@ from rosalind.application.ports.identity import TokenVerifier
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.accounts import AccountService
+from rosalind.application.services.email_reconciliation import (
+    EmailReconciliationService,
+)
 from rosalind.application.services.emails import EmailProcessingService
 from rosalind.application.services.imports import ImportService
 from rosalind.application.services.people import PersonService
@@ -65,6 +68,7 @@ import_service = ImportService(
 email_processing_service = EmailProcessingService(
     storage=object_storage,
     canonicalizer=EmailCanonicalizationService(),
+    reconciler=EmailReconciliationService(),
 )
 
 

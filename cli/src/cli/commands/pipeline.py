@@ -92,5 +92,15 @@ def _render_event(event: dict[str, Any]) -> None:
             f"· {event.get('created', 0)} new · {event.get('reused', 0)} reused "
             f"· {event.get('failed', 0)} failed"
         )
+    elif stage == "reconciling":
+        typer.echo("Reconciling threads...")
+    elif stage == "reconciled":
+        details = event.get("details") or {}
+        typer.echo(
+            "Reconciled threads: "
+            f"{details.get('messages_reassigned', 0)} reassigned · "
+            f"{details.get('threads_created', 0)} created · "
+            f"{details.get('threads_removed', 0)} removed"
+        )
     elif stage == "error":
         typer.echo(f"Error: {event.get('message')}", err=True)

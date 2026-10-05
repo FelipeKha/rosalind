@@ -290,3 +290,33 @@ def test_attachment_carries_bytes_and_part_index() -> None:
     assert [a.part_index for a in parsed.attachments] == [0, 1]
     assert all(a.data == PDF_BYTES for a in parsed.attachments)
     assert "PDF" not in repr(parsed.attachments[0])
+
+
+def test_in_reply_to_takes_last_valid_id() -> None:
+    message = _build(
+        {
+            "Message-ID": "<reply@example.com>",
+            "Subject": "multi",
+            "In-Reply-To": "<a@example.com> <b@example.com>",
+        }
+    )
+    message.set_content("body\n")
+
+    parsed = parse_email(_raw(message))
+
+    assert parsed.in_reply_to == "b@example.com"
+
+
+def test_in_reply_to_garbage_is_absent() -> None:
+    message = _build(
+        {
+            "Message-ID": "<reply@example.com>",
+            "Subject": "garbage",
+            "In-Reply-To": "some client wrote this",
+        }
+    )
+    message.set_content("body\n")
+
+    parsed = parse_email(_raw(message))
+
+    assert parsed.in_reply_to is None
