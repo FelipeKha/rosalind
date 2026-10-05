@@ -34,44 +34,52 @@ class PostgresSourceRecordRepository:
         source_account: SourceAccount,
         resource_type: str,
         external_id: str,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | None,
         payload_sha256: str,
         source_etag: str | None = None,
         source_updated_at: datetime | None = None,
         import_id: uuid.UUID | None = None,
+        payload_uri: str | None = None,
     ) -> SourceRecord:
-        values = {
-            "source_account_id": source_account.id,
-            "import_id": import_id,
-            "resource_type": resource_type,
-            "external_id": external_id,
-            "source_etag": source_etag,
-            "source_updated_at": source_updated_at,
-            "observed_at": utcnow(),
-            "payload": payload,
-            "payload_sha256": payload_sha256,
-        }
-        record_id = self._session.scalar(
-            pg_insert(SourceRecordModel)
-            .values(**values)
-            .on_conflict_do_nothing(constraint="uq_source_record_snapshot")
-            .returning(SourceRecordModel.id)
+        record_id, _ = self._upsert(
+            source_account=source_account,
+            resource_type=resource_type,
+            external_id=external_id,
+            payload=payload,
+            payload_sha256=payload_sha256,
+            source_etag=source_etag,
+            source_updated_at=source_updated_at,
+            import_id=import_id,
+            payload_uri=payload_uri,
         )
-        if record_id is None:
-            record_id = self._session.scalar(
-                select(SourceRecordModel.id).where(
-                    SourceRecordModel.source_account_id == source_account.id,
-                    SourceRecordModel.resource_type == resource_type,
-                    SourceRecordModel.external_id == external_id,
-                    SourceRecordModel.payload_sha256 == payload_sha256,
-                )
-            )
 
         self._session.flush()
         record = self._session.get(SourceRecordModel, record_id)
         if record is None:
             raise RuntimeError("source record not found after upsert")
         return self._to_domain(record)
+
+    def persist_split(
+        self,
+        *,
+        source_account: SourceAccount,
+        resource_type: str,
+        external_id: str,
+        payload_sha256: str,
+        import_id: uuid.UUID,
+        payload_uri: str,
+    ) -> bool:
+        """Upsert a byte-backed record and report whether it was newly created."""
+        _, created = self._upsert(
+            source_account=source_account,
+            resource_type=resource_type,
+            external_id=external_id,
+            payload=None,
+            payload_sha256=payload_sha256,
+            import_id=import_id,
+            payload_uri=payload_uri,
+        )
+        return created
 
     def list_for_import(self, import_id: uuid.UUID) -> list[SourceRecord]:
         return [
@@ -83,6 +91,52 @@ class PostgresSourceRecordRepository:
             ).all()
         ]
 
+    def _upsert(
+        self,
+        *,
+        source_account: SourceAccount,
+        resource_type: str,
+        external_id: str,
+        payload: dict[str, Any] | None,
+        payload_sha256: str,
+        source_etag: str | None = None,
+        source_updated_at: datetime | None = None,
+        import_id: uuid.UUID | None = None,
+        payload_uri: str | None = None,
+    ) -> tuple[uuid.UUID, bool]:
+        values = {
+            "source_account_id": source_account.id,
+            "import_id": import_id,
+            "resource_type": resource_type,
+            "external_id": external_id,
+            "source_etag": source_etag,
+            "source_updated_at": source_updated_at,
+            "observed_at": utcnow(),
+            "payload": payload,
+            "payload_sha256": payload_sha256,
+            "payload_uri": payload_uri,
+        }
+        inserted = self._session.execute(
+            pg_insert(SourceRecordModel)
+            .values(**values)
+            .on_conflict_do_nothing(constraint="uq_source_record_snapshot")
+            .returning(SourceRecordModel.id)
+        ).first()
+        if inserted is not None:
+            return inserted[0], True
+
+        record_id = self._session.scalar(
+            select(SourceRecordModel.id).where(
+                SourceRecordModel.source_account_id == source_account.id,
+                SourceRecordModel.resource_type == resource_type,
+                SourceRecordModel.external_id == external_id,
+                SourceRecordModel.payload_sha256 == payload_sha256,
+            )
+        )
+        if record_id is None:
+            raise RuntimeError("source record not found after upsert")
+        return record_id, False
+
     @staticmethod
     def _to_domain(record: SourceRecordModel) -> SourceRecord:
         return SourceRecord(
@@ -92,4 +146,5 @@ class PostgresSourceRecordRepository:
             external_id=record.external_id,
             payload=record.payload,
             payload_sha256=record.payload_sha256,
+            payload_uri=record.payload_uri,
         )

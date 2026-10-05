@@ -23,5 +23,6 @@ class SourceRecord:
     source_account_id: uuid.UUID
     resource_type: str
     external_id: str
-    payload: dict
+    payload: dict | None
     payload_sha256: str
+    payload_uri: str | None = None

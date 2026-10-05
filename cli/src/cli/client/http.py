@@ -6,6 +6,7 @@ in this package, which build on ``ApiClient``.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -36,6 +37,46 @@ class ApiClient:
 
     def delete(self, path: str) -> Any:
         return self._request("DELETE", path)
+
+    def stream_post(self, path: str, *, json: Any = None) -> Iterator[str]:
+        """POST and stream newline-delimited lines (used by the offline pipeline).
+
+        The access token is fetched up front and refreshed once if the server
+        answers 401 before any body is streamed.
+        """
+        from cli.client import auth
+
+        for attempt in range(2):
+            token = auth.get_access_token(force_refresh=attempt == 1)
+            headers: dict[str, str] = {}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+            try:
+                with httpx.stream(
+                    "POST",
+                    f"{self._base_url}{path}",
+                    json=json,
+                    headers=headers,
+                    timeout=None,  # nosec B113 - pipeline may stream for a very long time
+                ) as response:
+                    if (
+                        response.status_code == 401
+                        and token is not None
+                        and attempt == 0
+                    ):
+                        continue
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if line:
+                            yield line
+                    return
+            except httpx.HTTPStatusError as exc:
+                raise ApiClientError(_error_detail(exc.response)) from exc
+            except httpx.HTTPError as exc:
+                raise ApiClientError(
+                    f"unable to reach the Rosalind backend: {exc}"
+                ) from exc
 
     def _request(
         self,

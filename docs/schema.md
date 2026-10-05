@@ -62,8 +62,9 @@ discards the original.
 | `source_etag` | text | yes | provider etag, if any |
 | `source_updated_at` | timestamptz | yes | provider's own modification time |
 | `observed_at` | timestamptz | no | when Rosalind recorded it |
-| `payload` | jsonb | no | canonical JSON of the full provider payload |
+| `payload` | jsonb | yes | canonical JSON of the full provider payload (JSON providers) |
 | `payload_sha256` | text | no | SHA-256 of the payload |
+| `payload_uri` | text | yes | object-storage key holding the payload bytes (byte providers, e.g. email messages) |
 
 Constraints / indexes:
 

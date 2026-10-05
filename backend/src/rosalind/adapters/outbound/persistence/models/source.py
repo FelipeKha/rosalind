@@ -132,5 +132,6 @@ class SourceRecord(Base):
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     payload_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_uri: Mapped[str | None] = mapped_column(Text, nullable=True)

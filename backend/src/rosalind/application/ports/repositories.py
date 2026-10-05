@@ -123,14 +123,26 @@ class SourceRecordRepository(Protocol):
         source_account: SourceAccount,
         resource_type: str,
         external_id: str,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | None,
         payload_sha256: str,
         source_etag: str | None = None,
         source_updated_at: datetime | None = None,
         import_id: uuid.UUID | None = None,
+        payload_uri: str | None = None,
     ) -> SourceRecord: ...
 
     def list_for_import(self, import_id: uuid.UUID) -> list[SourceRecord]: ...
+
+    def persist_split(
+        self,
+        *,
+        source_account: SourceAccount,
+        resource_type: str,
+        external_id: str,
+        payload_sha256: str,
+        import_id: uuid.UUID,
+        payload_uri: str,
+    ) -> bool: ...
 
 
 class SourceAccountRepository(Protocol):

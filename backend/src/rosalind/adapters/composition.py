@@ -26,6 +26,7 @@ from rosalind.application.ports.identity import TokenVerifier
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.accounts import AccountService
+from rosalind.application.services.emails import EmailProcessingService
 from rosalind.application.services.imports import ImportService
 from rosalind.application.services.people import PersonService
 from rosalind.application.services.processing import ProcessingService
@@ -57,6 +58,8 @@ import_service = ImportService(
     sources=source_service,
     processing=processing_service,
 )
+
+email_processing_service = EmailProcessingService(storage=object_storage)
 
 
 def build_person_service(session: Session) -> PersonService:
@@ -103,6 +106,10 @@ def get_processing_service() -> ProcessingService:
 
 def get_import_service() -> ImportService:
     return import_service
+
+
+def get_email_processing_service() -> EmailProcessingService:
+    return email_processing_service
 
 
 def get_object_storage() -> ObjectStorage:
