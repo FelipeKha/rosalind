@@ -54,7 +54,12 @@ from rosalind.adapters.outbound.persistence.models.person import (
     SourceAssertion,
     SourceIdentity,
 )
-from rosalind.adapters.outbound.persistence.models.search import Chunk, ChunkBuild
+from rosalind.adapters.outbound.persistence.models.search import (
+    Chunk,
+    ChunkBuild,
+    EmbeddingFailure,
+    EmbeddingRun,
+)
 from rosalind.adapters.outbound.persistence.models.source import (
     OAuthAuthRequest,
     OAuthCredential,
@@ -77,6 +82,8 @@ __all__ = [
     "EmailTag",
     "EmailText",
     "EmailThread",
+    "EmbeddingFailure",
+    "EmbeddingRun",
     "Import",
     "ImportFile",
     "OAuthAuthRequest",

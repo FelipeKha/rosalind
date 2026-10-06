@@ -15,6 +15,7 @@ from __future__ import annotations
 from types import TracebackType
 from typing import Protocol, Self
 
+from rosalind.application.ports.embedding import EmbeddingRepository
 from rosalind.application.ports.repositories import (
     AccountIdentityRepository,
     AccountRepository,
@@ -46,6 +47,7 @@ class UnitOfWork(Protocol):
     email_enrichment: EmailEnrichmentRepository
     attachment_text: AttachmentTextRepository
     chunks: ChunkRepository
+    embeddings: EmbeddingRepository
 
     def commit(self) -> None: ...
 

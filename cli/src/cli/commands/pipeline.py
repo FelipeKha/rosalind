@@ -26,7 +26,7 @@ def run(
     stage: str | None = typer.Option(
         None,
         "--stage",
-        help="Run a single pipeline stage (split, canonicalize, reconcile, enrich, attachments, chunk).",
+        help="Run a single pipeline stage (split, canonicalize, reconcile, enrich, attachments, chunk, embed).",
     ),
 ) -> None:
     """Run the offline pipeline for an import."""
@@ -129,5 +129,18 @@ def _render_event(event: dict[str, Any]) -> None:
             f"{details.get('chunks_unchanged', 0)} unchanged · "
             f"{details.get('skipped_not_ready', 0)} skipped"
         )
+    elif stage == "embedding":
+        typer.echo("Embedding chunks...")
+    elif stage == "embedded":
+        details = event.get("details") or {}
+        typer.echo(
+            "Embedded: "
+            f"{details.get('embedded', 0)} new · "
+            f"{details.get('reused', 0)} reused · "
+            f"{details.get('skipped_not_embeddable', 0)} skipped · "
+            f"{details.get('failed', 0)} failed"
+        )
+    elif stage == "embed_blocked":
+        typer.echo(f"Embedding blocked: {event.get('message')}")
     elif stage == "error":
         typer.echo(f"Error: {event.get('message')}", err=True)

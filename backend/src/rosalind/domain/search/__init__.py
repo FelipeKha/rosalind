@@ -12,6 +12,12 @@ from rosalind.domain.search.chunks import (
     index_version,
     params_digest,
 )
+from rosalind.domain.search.embedding import (
+    EmbeddingSpace,
+    Vector,
+    embeddable,
+    validate_vector,
+)
 from rosalind.domain.search.prefix import PrefixContext, build_prefix
 from rosalind.domain.search.tokens import TokenCounter
 
@@ -22,12 +28,16 @@ __all__ = [
     "ChunkKind",
     "ChunkSpan",
     "ChunkingParams",
+    "EmbeddingSpace",
     "PrefixContext",
     "TokenCounter",
+    "Vector",
     "build_prefix",
     "chunk_id",
     "chunk_text",
+    "embeddable",
     "index_version",
     "params_digest",
     "truncate_to_tokens",
+    "validate_vector",
 ]

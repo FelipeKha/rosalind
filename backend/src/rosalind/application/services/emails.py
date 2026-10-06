@@ -38,6 +38,7 @@ from rosalind.application.services.chunking import EmailChunkingService
 from rosalind.application.services.email_reconciliation import (
     EmailReconciliationService,
 )
+from rosalind.application.services.embedding import EmailEmbeddingService
 from rosalind.application.services.enrichment import EmailEnrichmentService
 from rosalind.domain.source import ImportFile, SourceAccount
 
@@ -59,6 +60,7 @@ STAGE_RECONCILE = "reconcile"
 STAGE_ENRICH = "enrich"
 STAGE_ATTACHMENTS = "attachments"
 STAGE_CHUNK = "chunk"
+STAGE_EMBED = "embed"
 
 ALL_STAGES = frozenset(
     {
@@ -68,6 +70,7 @@ ALL_STAGES = frozenset(
         STAGE_ENRICH,
         STAGE_ATTACHMENTS,
         STAGE_CHUNK,
+        STAGE_EMBED,
     }
 )
 
@@ -157,6 +160,8 @@ class EmailProcessingService:
         attachment_extractor: AttachmentExtractionService | None = None,
         attachment_budget_seconds: float | None = None,
         chunker: EmailChunkingService | None = None,
+        embedder: EmailEmbeddingService | None = None,
+        embed_inline_budget_seconds: float | None = None,
     ):
         self._storage = storage
         self._canonicalizer = canonicalizer
@@ -167,6 +172,8 @@ class EmailProcessingService:
         self._attachment_extractor = attachment_extractor
         self._attachment_budget_seconds = attachment_budget_seconds
         self._chunker = chunker
+        self._embedder = embedder
+        self._embed_inline_budget_seconds = embed_inline_budget_seconds
 
     def prepare(
         self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
@@ -266,6 +273,12 @@ class EmailProcessingService:
         if wants(STAGE_CHUNK) and self._chunker is not None and canonicalize_ok:
             yield from self._chunk(uow, prepared)
 
+        if wants(STAGE_EMBED) and self._embedder is not None and canonicalize_ok:
+            budget = (
+                None if wanted == {STAGE_EMBED} else self._embed_inline_budget_seconds
+            )
+            yield from self._embed(uow, prepared, budget_seconds=budget)
+
     def _extract_attachments(
         self, uow: UnitOfWork, prepared: PreparedSplit
     ) -> Iterator[PipelineEvent]:
@@ -311,6 +324,41 @@ class EmailProcessingService:
                 "chunks_unchanged": outcome.chunks_unchanged,
                 "skipped_not_ready": outcome.skipped_not_ready,
                 "failed": outcome.failed,
+            },
+        )
+
+    def _embed(
+        self,
+        uow: UnitOfWork,
+        prepared: PreparedSplit,
+        *,
+        budget_seconds: float | None = None,
+    ) -> Iterator[PipelineEvent]:
+        """Embed chunks (stage 6) for the whole source account."""
+        embedder = self._embedder
+        if embedder is None:
+            return
+        yield PipelineEvent(stage="embedding")
+        outcome = embedder.embed(
+            uow,
+            prepared.source_account.id,
+            budget_seconds=budget_seconds,
+        )
+        if outcome.blocked_reason:
+            yield PipelineEvent(
+                stage="embed_blocked",
+                message=outcome.blocked_reason,
+            )
+            return
+        yield PipelineEvent(
+            stage="embedded",
+            processed=outcome.embedded + outcome.reused,
+            details={
+                "embedded": outcome.embedded,
+                "reused": outcome.reused,
+                "skipped_not_embeddable": outcome.skipped_not_embeddable,
+                "failed": outcome.failed,
+                "budget_exhausted": outcome.budget_exhausted,
             },
         )
 

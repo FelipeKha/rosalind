@@ -587,8 +587,9 @@ attachment text with a contextual prefix and denormalized filter columns. They
 are rebuildable by definition — keyed deterministically (`id` is a `uuid5` over
 `(email_id, chunk_kind, attachment_id, seq)`) and replaced in place when their
 source digest or `index_version` changes. `chunk_build` records the build
-bookkeeping that drives the work finder. Embeddings and the BM25/HNSW indexes
-are deferred to a later phase.
+bookkeeping that drives the work finder. Embeddings are stored as columns on
+the chunk row (one per model version) plus `embedding_failure` / `embedding_run`
+bookkeeping; the BM25/HNSW indexes are still deferred.
 
 ### `search.chunk`
 
@@ -616,9 +617,14 @@ are deferred to a later phase.
 | `tags` | text[] | no | namespaced labels |
 | `meta` | jsonb | no | `header_only`, `truncated`, `partial` flags |
 | `created_at` | timestamptz | no | |
+| `emb_bge_m3_v1` | halfvec(1024) | yes | null until the embed job runs |
+| `emb_bge_m3_v1_text_sha256` | text | yes | hash of the text that was embedded |
 
 - `uq_chunk_key` unique on `(email_id, chunk_kind, attachment_id, seq)`
   `NULLS NOT DISTINCT`.
+- The chunk upsert never writes the embedding columns. Staleness is detected
+  by comparing `emb_*_text_sha256` against `text_sha256`, so a chunker rebuild
+  that leaves a chunk's text unchanged keeps its embedding.
 
 ### `search.chunk_build`
 
@@ -643,6 +649,49 @@ thread_changed_at)`.
 
 - `uq_chunk_build_key` unique on `(email_id, chunk_kind, attachment_id)`
   `NULLS NOT DISTINCT`.
+
+### `search.embedding_failure`
+
+One row per `(chunk_id, space)` recording a text that could not be embedded
+(overlong, rejected by the model). The work finder skips a chunk while a
+failure row holds the same `text_sha256` as the chunk; a text change or an
+explicit retry re-queues it. `attempts` increments on each re-failure.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `chunk_id` | uuid | no | PK, FK → `search.chunk.id` `CASCADE` |
+| `space` | text | no | PK, e.g. `bge_m3_v1` |
+| `text_sha256` | text | no | the text that failed |
+| `error` | text | no | |
+| `attempts` | int | no | |
+| `last_attempt_at` | timestamptz | no | |
+
+### `search.embedding_run`
+
+One row per embed run, recording the serving path (host, locality, model
+revision) that produced the vectors — the disclosure ledger for remote
+embedders.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `space` | text | no | |
+| `started_at` / `finished_at` | timestamptz | no | |
+| `host` | text | no | embedder URL |
+| `device_class` | text | no | |
+| `dtype` | text | no | `float16` / `float32` |
+| `revision` | text | no | model revision |
+| `locality` | text | no | `local` / `remote` |
+| `chunks_embedded` | int | no | |
+| `chunks_failed` | int | no | |
+
+Embeddings are **derived data**: they are rebuildable from `text_for_index` and
+never edited by hand. Switching the embedding model is additive:
+
+1. add the new `emb_<space>` column pair to `search.chunk` and a registry entry;
+2. backfill with `--stage embed` (the work finder sees the null column);
+3. create the HNSW index (if adopted) and switch the `embedding_space` config;
+4. drop the old column once no query references it.
 
 ---
 

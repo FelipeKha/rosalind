@@ -70,7 +70,11 @@ def test_alembic_upgrade_head_creates_tables(postgres_url: str) -> None:
     assert {
         "chunk",
         "chunk_build",
+        "embedding_failure",
+        "embedding_run",
     } <= set(inspector.get_table_names(schema="search"))
+    chunk_cols = {c["name"] for c in inspector.get_columns("chunk", schema="search")}
+    assert {"emb_bge_m3_v1", "emb_bge_m3_v1_text_sha256"} <= chunk_cols
     source_account_cols = {
         column["name"] for column in inspector.get_columns("source_account")
     }

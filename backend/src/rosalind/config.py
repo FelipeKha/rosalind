@@ -67,5 +67,17 @@ class Settings(BaseSettings):
     chunk_tokenizer_path: str = "backend/assets/bge-m3/tokenizer.json"
     chunk_tokenizer_sha256: str | None = None
 
+    embedding_space: str = "bge_m3_v1"
+    embedder_url: str = ""
+    embed_window: int = 2048
+    embed_batch_tokens: int = 4096
+    embed_concurrency: int = 2
+    embed_timeout: float = 60.0
+    embed_retries: int = 3
+    embed_quotes: bool = False
+    embed_trash_spam: bool = False
+    allow_remote_embedding: bool = False
+    embed_inline_budget_seconds: float = 60.0
+
 
 settings = Settings()

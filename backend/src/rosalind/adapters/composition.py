@@ -18,11 +18,13 @@ from rosalind.adapters.outbound.google.auth import GoogleAuthGateway
 from rosalind.adapters.outbound.google.people import GooglePeopleGateway
 from rosalind.adapters.outbound.keycloak.jwt import KeycloakJwtVerifier
 from rosalind.adapters.outbound.object_storage.s3 import S3ObjectStorage
+from rosalind.adapters.outbound.persistence.embedding_spaces import embedding_space
 from rosalind.adapters.outbound.persistence.repositories.person import (
     PostgresPersonRepository,
 )
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.adapters.outbound.search.embedder_tei import TeiEmbedder
 from rosalind.adapters.outbound.search.tokenizer import BgeM3TokenCounter
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
@@ -40,6 +42,7 @@ from rosalind.application.services.email_reconciliation import (
     EmailReconciliationService,
 )
 from rosalind.application.services.emails import EmailProcessingService
+from rosalind.application.services.embedding import EmailEmbeddingService
 from rosalind.application.services.enrichment import EmailEnrichmentService
 from rosalind.application.services.imports import ImportService
 from rosalind.application.services.people import PersonService
@@ -99,6 +102,31 @@ chunking_service = EmailChunkingService(
     limit=settings.chunk_batch_size,
 )
 
+_token_counter = BgeM3TokenCounter(
+    settings.chunk_tokenizer_path,
+    settings.chunk_tokenizer_sha256,
+)
+
+embedding_service: EmailEmbeddingService | None = None
+if settings.embedder_url:
+    space = embedding_space(settings.embedding_space)
+    embedder = TeiEmbedder(
+        settings.embedder_url,
+        space,
+        timeout=settings.embed_timeout,
+        concurrency=settings.embed_concurrency,
+        retries=settings.embed_retries,
+    )
+    embedding_service = EmailEmbeddingService(
+        embedder,
+        _token_counter,
+        embed_quotes=settings.embed_quotes,
+        embed_trash_spam=settings.embed_trash_spam,
+        allow_remote_embedding=settings.allow_remote_embedding,
+        window=settings.embed_window,
+        batch_tokens=settings.embed_batch_tokens,
+    )
+
 email_processing_service = EmailProcessingService(
     storage=object_storage,
     canonicalizer=EmailCanonicalizationService(),
@@ -116,6 +144,8 @@ email_processing_service = EmailProcessingService(
     attachment_extractor=attachment_extraction_service,
     attachment_budget_seconds=settings.attachment_budget_seconds,
     chunker=chunking_service,
+    embedder=embedding_service,
+    embed_inline_budget_seconds=settings.embed_inline_budget_seconds,
 )
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy.halfvec import HALFVEC
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -109,6 +110,14 @@ class Chunk(Base):
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
+    # Embedding: one column per model version, null until the embed job runs.
+    # The companion hash records the text that was embedded, so staleness is
+    # detected by comparing hashes rather than trusting writers.
+    emb_bge_m3_v1: Mapped[list[float] | None] = mapped_column(
+        HALFVEC(1024), nullable=True
+    )
+    emb_bge_m3_v1_text_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -144,3 +153,40 @@ class ChunkBuild(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class EmbeddingFailure(Base):
+    __tablename__ = "embedding_failure"
+    __table_args__ = ({"schema": "search"},)
+
+    chunk_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("search.chunk.id", ondelete="CASCADE"), primary_key=True
+    )
+    space: Mapped[str] = mapped_column(Text, primary_key=True)
+    text_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    error: Mapped[str] = mapped_column(Text, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class EmbeddingRun(Base):
+    __tablename__ = "embedding_run"
+    __table_args__ = ({"schema": "search"},)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    space: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    finished_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    host: Mapped[str] = mapped_column(Text, nullable=False)
+    device_class: Mapped[str] = mapped_column(Text, nullable=False)
+    dtype: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[str] = mapped_column(Text, nullable=False)
+    locality: Mapped[str] = mapped_column(Text, nullable=False)
+    chunks_embedded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    chunks_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

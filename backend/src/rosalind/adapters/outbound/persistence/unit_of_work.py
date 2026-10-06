@@ -21,6 +21,9 @@ from rosalind.adapters.outbound.persistence.repositories.chunks import (
 from rosalind.adapters.outbound.persistence.repositories.email_canonical import (
     PostgresEmailCanonicalRepository,
 )
+from rosalind.adapters.outbound.persistence.repositories.embeddings import (
+    PostgresEmbeddingRepository,
+)
 from rosalind.adapters.outbound.persistence.repositories.enrichment import (
     PostgresAttachmentTextRepository,
     PostgresEmailEnrichmentRepository,
@@ -41,6 +44,7 @@ from rosalind.adapters.outbound.persistence.repositories.source_account import (
 from rosalind.adapters.outbound.persistence.repositories.source_record import (
     PostgresSourceRecordRepository,
 )
+from rosalind.application.ports.embedding import EmbeddingRepository
 from rosalind.application.ports.repositories import (
     AccountIdentityRepository,
     AccountRepository,
@@ -72,6 +76,7 @@ class SqlAlchemyUnitOfWork:
     email_enrichment: EmailEnrichmentRepository
     attachment_text: AttachmentTextRepository
     chunks: ChunkRepository
+    embeddings: EmbeddingRepository
 
     def __init__(self, session: Session):
         self._session = session
@@ -87,6 +92,7 @@ class SqlAlchemyUnitOfWork:
         self.email_enrichment = PostgresEmailEnrichmentRepository(session)
         self.attachment_text = PostgresAttachmentTextRepository(session)
         self.chunks = PostgresChunkRepository(session)
+        self.embeddings = PostgresEmbeddingRepository(session)
 
     def commit(self) -> None:
         self._session.commit()
