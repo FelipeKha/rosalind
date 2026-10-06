@@ -26,7 +26,9 @@ from rosalind.application.search.plan import (
     QueryVector,
     ResolvedEntity,
     Scope,
+    SearchPlan,
 )
+from rosalind.application.search.retrieve import LexicalResult
 
 __all__ = [
     "AuditEvent",
@@ -35,6 +37,7 @@ __all__ = [
     "CursorDecodeError",
     "EmbedderPort",
     "EntityResolverPort",
+    "LexicalRetrieverPort",
     "SearchConfig",
     "SearchMetadata",
     "SearchMetadataPort",
@@ -116,6 +119,17 @@ class ThreadResolverPort(Protocol):
 class EmbedderPort(Protocol):
     async def embed(self, text: str, model: str, version: str) -> QueryVector:
         """Embed a query text for semantic retrieval."""
+
+
+class LexicalRetrieverPort(Protocol):
+    async def retrieve(self, plan: SearchPlan) -> LexicalResult:
+        """Run filtered BM25 retrieval for a plan (online search step 2.1).
+
+        Returns up to ``plan.budgets.lexical_k`` ranked chunks with the engine's
+        BM25 score preserved, an ``exhausted`` flag that is only true when the
+        whole candidate stream was scanned, and a ``filter_path`` describing how
+        filters were applied. Must always apply ``plan.scope``, never widen it.
+        """
 
 
 class CursorDecodeError(Exception):

@@ -35,7 +35,7 @@ def _encryption_key(monkeypatch) -> None:
 @pytest.fixture(scope="session")
 def postgres_url() -> Iterator[str]:
     try:
-        container = PostgresContainer("pgvector/pgvector:pg18", driver="psycopg")
+        container = PostgresContainer("paradedb/paradedb:0.26.0-pg18", driver="psycopg")
         container.start()
     except Exception as exc:  # noqa: BLE001 - skip if Docker is unavailable
         pytest.skip(f"Docker unavailable: {exc}")

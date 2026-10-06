@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg18
+    image: paradedb/paradedb:0.26.0-pg18
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rosalind}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rosalind}

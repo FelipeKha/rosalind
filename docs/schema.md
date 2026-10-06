@@ -589,7 +589,8 @@ are rebuildable by definition — keyed deterministically (`id` is a `uuid5` ove
 source digest or `index_version` changes. `chunk_build` records the build
 bookkeeping that drives the work finder. Embeddings are stored as columns on
 the chunk row (one per model version) plus `embedding_failure` / `embedding_run`
-bookkeeping; the BM25/HNSW indexes are still deferred.
+bookkeeping; the BM25 index (ParadeDB `pg_search`) is created by migration 0018,
+while the HNSW index remains deferred.
 
 ### `search.chunk`
 
@@ -625,6 +626,35 @@ bookkeeping; the BM25/HNSW indexes are still deferred.
 - The chunk upsert never writes the embedding columns. Staleness is detected
   by comparing `emb_*_text_sha256` against `text_sha256`, so a chunker rebuild
   that leaves a chunk's text unchanged keeps its embedding.
+
+### `search.chunk` BM25 index (`chunk_bm25_idx`, migration 0018)
+
+ParadeDB `pg_search` BM25 index over `text_for_index`, with the scope/time/bool
+fast fields and the literal-tokenized text fields included so their filters push
+into the index scan:
+
+```sql
+CREATE INDEX chunk_bm25_idx ON search.chunk USING bm25 (
+    id, text_for_index, source_account_num, sent_at, has_attachment,
+    is_trash_or_spam, (sender_handle::pdb.literal),
+    (direction::pdb.literal), (language::pdb.literal)
+)
+```
+
+Lexical retrieval (online search step 2.1) classifies filters into two paths:
+
+- **pushdown** — `source_account_num` (scope), `sent_at`, `has_attachment`,
+  `is_trash_or_spam`, `sender_handle`, `direction`, `language`. These are
+  evaluated inside the index scan.
+- **overfetch (heap filters)** — `recipient_handles`, `participant_handles`,
+  `tags`, `thread_id`. These are not in the BM25 index; ParadeDB still applies
+  them correctly while scanning the candidate stream in score order, so a single
+  `LIMIT lexical_k + 1` query is exact for every filter. `filter_path` in the
+  retrieval result reports which situation applied.
+
+The `@@@` query is rendered from the structured `LexicalQuery` by the outbound
+adapter (`adapters.outbound.search.lexical`), which owns engine syntax and
+escaping; `application` never sees `@@@` or `paradedb.score`.
 
 ### `search.chunk_build`
 

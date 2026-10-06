@@ -41,18 +41,22 @@ from rosalind.application.search.request import (
     SearchRequestFilters,
     SortOrder,
 )
+from rosalind.application.search.retrieve import FilterPath, LexicalHit, LexicalResult
 
 __all__ = [
     "MAX_LIMIT",
     "Budgets",
     "Cursor",
     "Direction",
+    "FilterPath",
     "FusionConfig",
     "FusionStrategy",
     "GroupBy",
     "IndexVersions",
     "InvalidSearchRequest",
+    "LexicalHit",
     "LexicalQuery",
+    "LexicalResult",
     "ListPosition",
     "PlanHints",
     "PlanWarning",
