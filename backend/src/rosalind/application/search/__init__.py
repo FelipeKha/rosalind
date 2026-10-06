@@ -1,10 +1,37 @@
-"""Online search domain: the request DTO and the search enums.
+"""Online search domain: the request DTO, the search enums, and the plan.
 
-Phase 0 owns only the request side of the online pipeline; the ``SearchPlan``
-and ``ShortCircuit`` produced by Prepare (phase 1) land here later, per
-``docs/features/search_plan_schema.py``.
+Phase 0 owns the request side; Phase 1 adds the ``SearchPlan`` / ``ShortCircuit``
+produced by Prepare, per ``docs/features/search_plan_schema.py``.
 """
 
+from rosalind.application.search.plan import (
+    MAX_LIMIT,
+    Budgets,
+    Cursor,
+    FusionConfig,
+    FusionStrategy,
+    IndexVersions,
+    InvalidSearchRequest,
+    LexicalQuery,
+    ListPosition,
+    PlanHints,
+    PlanWarning,
+    PreparedQuery,
+    PrepareResult,
+    PrepareTimings,
+    Presentation,
+    QueryVector,
+    RequestContext,
+    ResolvedEntity,
+    ResolvedFilters,
+    Scope,
+    SearchPlan,
+    SearchStrategy,
+    ShortCircuit,
+    ShortCircuitReason,
+    WarningCode,
+    vector_digest,
+)
 from rosalind.application.search.request import (
     Direction,
     GroupBy,
@@ -16,11 +43,37 @@ from rosalind.application.search.request import (
 )
 
 __all__ = [
+    "MAX_LIMIT",
+    "Budgets",
+    "Cursor",
     "Direction",
+    "FusionConfig",
+    "FusionStrategy",
     "GroupBy",
+    "IndexVersions",
+    "InvalidSearchRequest",
+    "LexicalQuery",
+    "ListPosition",
+    "PlanHints",
+    "PlanWarning",
+    "PrepareResult",
+    "PrepareTimings",
+    "PreparedQuery",
+    "Presentation",
+    "QueryVector",
+    "RequestContext",
+    "ResolvedEntity",
+    "ResolvedFilters",
     "ResultView",
+    "Scope",
     "SearchMode",
+    "SearchPlan",
     "SearchRequest",
     "SearchRequestFilters",
+    "SearchStrategy",
+    "ShortCircuit",
+    "ShortCircuitReason",
     "SortOrder",
+    "WarningCode",
+    "vector_digest",
 ]

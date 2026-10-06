@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PersonProfileResult(BaseModel):
@@ -34,3 +34,31 @@ class MyProfileResult(BaseModel):
     preferred_username: str | None = None
     given_name: str | None = None
     family_name: str | None = None
+
+
+class SearchWarning(BaseModel):
+    code: str
+    message: str
+    field_name: str | None = None
+    suggestion: str | None = None
+
+
+class SearchResult(BaseModel):
+    """The ``search`` tool response.
+
+    Retrieval, fusion, rerank, and assembly are later phases, so ``results`` is
+    empty for now; a successful Prepare echoes the applied filters and warnings
+    so the agent can see how its request was interpreted.
+    """
+
+    request_id: uuid.UUID
+    audit_id: uuid.UUID
+    mode_requested: str | None = None
+    mode_effective: str | None = None
+    fingerprint: str | None = None
+    short_circuit: str | None = None
+    explanation: str | None = None
+    applied_filters: dict = Field(default_factory=dict)
+    warnings: list[SearchWarning] = Field(default_factory=list)
+    results: list[dict] = Field(default_factory=list)
+    next_cursor: str | None = None

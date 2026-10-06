@@ -79,5 +79,24 @@ class Settings(BaseSettings):
     allow_remote_embedding: bool = False
     embed_inline_budget_seconds: float = 60.0
 
+    # Online search (Prepare step). Budgets and fusion settings are
+    # configuration-controlled: they participate in the plan fingerprint, so the
+    # agent never chooses them.
+    search_index_version: str = "v1"
+    search_reranker: str | None = None
+    search_cursor_key: str | None = None
+    search_max_query_chars: int = 2000
+    search_max_list_values: int = 50
+    search_default_timezone: str = "UTC"
+    search_lexical_k: int = 50
+    search_semantic_k: int = 50
+    search_fused_k: int = 40
+    search_rerank_k: int = 30
+    search_window_k: int = 25
+    search_rrf_k: int = 60
+    search_lexical_weight: float = 1.0
+    search_semantic_weight: float = 1.0
+    search_max_chunks_per_item: int = 2
+
 
 settings = Settings()

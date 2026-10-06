@@ -14,13 +14,16 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from rosalind.adapters.inbound.mcp.schemas import SearchResult, SearchWarning
 from rosalind.application.search import (
     Direction,
     GroupBy,
     ResultView,
     SearchMode,
+    SearchPlan,
     SearchRequest,
     SearchRequestFilters,
+    ShortCircuit,
     SortOrder,
 )
 
@@ -111,4 +114,40 @@ def to_search_request(input: SearchEmailsInput) -> SearchRequest:
         limit=input.limit,
         cursor=input.cursor,
         mode=SearchMode(input.mode),
+    )
+
+
+def to_search_result(result: SearchPlan | ShortCircuit) -> SearchResult:
+    """Map a Prepare result onto the MCP ``search`` tool response.
+
+    Retrieval is a later phase, so ``results`` is empty and the response carries
+    the applied filters, warnings, and (for a short circuit) the reason.
+    """
+    if isinstance(result, ShortCircuit):
+        return SearchResult(
+            request_id=result.context.request_id,
+            audit_id=result.context.audit_id,
+            short_circuit=result.reason.value,
+            explanation=result.explanation,
+            applied_filters=result.applied(),
+            warnings=[_to_warning(warning) for warning in result.warnings],
+        )
+
+    return SearchResult(
+        request_id=result.context.request_id,
+        audit_id=result.context.audit_id,
+        mode_requested=result.mode_requested.value,
+        mode_effective=result.mode_effective.value,
+        fingerprint=result.fingerprint,
+        applied_filters=result.applied(),
+        warnings=[_to_warning(warning) for warning in result.warnings],
+    )
+
+
+def _to_warning(warning) -> SearchWarning:
+    return SearchWarning(
+        code=warning.code.value,
+        message=warning.message,
+        field_name=warning.field_name,
+        suggestion=warning.suggestion,
     )

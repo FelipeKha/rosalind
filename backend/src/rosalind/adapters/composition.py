@@ -7,7 +7,9 @@ adapters (and tests) build their service graph from here.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import hashlib
+import logging
+from collections.abc import Callable, Iterator
 
 from sqlalchemy.orm import Session
 
@@ -24,7 +26,10 @@ from rosalind.adapters.outbound.persistence.repositories.person import (
 )
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.adapters.outbound.search.audit import LoggingAudit
 from rosalind.adapters.outbound.search.embedder_tei import TeiEmbedder
+from rosalind.adapters.outbound.search.query_embedder import NullEmbedder, QueryEmbedder
+from rosalind.adapters.outbound.search.search_repository import PostgresSearchRepository
 from rosalind.adapters.outbound.search.tokenizer import BgeM3TokenCounter
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
@@ -33,6 +38,9 @@ from rosalind.application.canonicalization.person import CanonicalizationService
 from rosalind.application.ports.identity import TokenVerifier
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
+from rosalind.application.search import Budgets, FusionConfig, FusionStrategy
+from rosalind.application.search.cursor import HmacCursorCodec
+from rosalind.application.search.ports import SearchConfig
 from rosalind.application.services.accounts import AccountService
 from rosalind.application.services.attachment_extraction import (
     AttachmentExtractionService,
@@ -52,6 +60,52 @@ from rosalind.application.services.sources import SourceService
 from rosalind.config import settings
 from rosalind.domain.search import ChunkingParams
 
+
+def _cursor_signing_key() -> bytes:
+    if settings.search_cursor_key:
+        return settings.search_cursor_key.encode("utf-8")
+    if settings.token_encryption_key:
+        material = f"rosalind-search-cursor:{settings.token_encryption_key}"
+        return hashlib.sha256(material.encode("utf-8")).digest()
+    logging.getLogger(__name__).warning(
+        "no cursor signing key configured; using an insecure development key"
+    )
+    return b"rosalind-dev-cursor-signing-key"
+
+
+def _search_config() -> SearchConfig:
+    if settings.embedder_url:
+        space = embedding_space(settings.embedding_space)
+        embedding_model = space.model_id
+        embedding_version = space.revision or space.name
+    else:
+        embedding_model = None
+        embedding_version = None
+    return SearchConfig(
+        index_version=settings.search_index_version,
+        embedding_model=embedding_model,
+        embedding_version=embedding_version,
+        reranker=settings.search_reranker,
+        budgets=Budgets(
+            lexical_k=settings.search_lexical_k,
+            semantic_k=settings.search_semantic_k,
+            fused_k=settings.search_fused_k,
+            rerank_k=settings.search_rerank_k,
+            window_k=settings.search_window_k,
+        ),
+        fusion=FusionConfig(
+            strategy=FusionStrategy.RRF,
+            rrf_k=settings.search_rrf_k,
+            lexical_weight=settings.search_lexical_weight,
+            semantic_weight=settings.search_semantic_weight,
+            max_chunks_per_item=settings.search_max_chunks_per_item,
+        ),
+        max_query_chars=settings.search_max_query_chars,
+        max_list_values=settings.search_max_list_values,
+        default_timezone=settings.search_default_timezone,
+    )
+
+
 google_auth = GoogleAuthGateway()
 google_people = GooglePeopleGateway()
 
@@ -63,7 +117,11 @@ account_service = AccountService()
 
 token_verifier: TokenVerifier = KeycloakJwtVerifier()
 
-search_service = SearchService()
+search_audit = LoggingAudit()
+
+_search_cursor_codec = HmacCursorCodec(_cursor_signing_key())
+
+_search_embedder: NullEmbedder | QueryEmbedder = NullEmbedder()
 
 _google_person_parser = GooglePersonParser()
 
@@ -129,6 +187,9 @@ if settings.embedder_url:
         window=settings.embed_window,
         batch_tokens=settings.embed_batch_tokens,
     )
+    _search_embedder = QueryEmbedder(embedder)
+
+search_config = _search_config()
 
 email_processing_service = EmailProcessingService(
     storage=object_storage,
@@ -154,6 +215,26 @@ email_processing_service = EmailProcessingService(
 
 def build_person_service(session: Session) -> PersonService:
     return PersonService(PostgresPersonRepository(session))
+
+
+def build_search_service(session_factory: Callable[[], Session]) -> SearchService:
+    """Wire the search service with a request-scoped session factory.
+
+    Each port method opens its own short-lived session so Prepare's concurrent
+    lookups never share a ``Session`` across threads. ``session_factory`` is
+    supplied by the caller so tests can point it at a migrated engine.
+    """
+    repository = PostgresSearchRepository(session_factory)
+    return SearchService(
+        scope=repository,
+        metadata=repository,
+        entities=repository,
+        threads=repository,
+        embedder=_search_embedder,
+        codec=_search_cursor_codec,
+        audit=search_audit,
+        config=search_config,
+    )
 
 
 def get_uow() -> Iterator[UnitOfWork]:
@@ -184,10 +265,6 @@ def get_source_service() -> SourceService:
 
 def get_account_service() -> AccountService:
     return account_service
-
-
-def get_search_service() -> SearchService:
-    return search_service
 
 
 def get_token_verifier() -> TokenVerifier:

@@ -31,5 +31,6 @@ class KeycloakMCPTokenVerifier:
                 "preferred_username": verified.preferred_username,
                 "given_name": verified.given_name,
                 "family_name": verified.family_name,
+                "zoneinfo": verified.zoneinfo,
             },
         )
