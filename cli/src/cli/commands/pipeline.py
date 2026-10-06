@@ -21,12 +21,19 @@ pipeline_app = typer.Typer(help="Run the offline data pipeline.")
 
 
 @pipeline_app.command("run")
-def run(import_id: str) -> None:
-    """Run the offline pipeline for an import (currently the record split)."""
+def run(
+    import_id: str,
+    stage: str | None = typer.Option(
+        None,
+        "--stage",
+        help="Run a single pipeline stage (split, canonicalize, reconcile, enrich, attachments, chunk).",
+    ),
+) -> None:
+    """Run the offline pipeline for an import."""
     failed = 0
     last: dict[str, Any] | None = None
     try:
-        events = client.stream_pipeline(import_id)
+        events = client.stream_pipeline(import_id, stage=stage)
         for event in events:
             last = event
             failed = int(event.get("failed", failed))
@@ -101,6 +108,26 @@ def _render_event(event: dict[str, Any]) -> None:
             f"{details.get('messages_reassigned', 0)} reassigned · "
             f"{details.get('threads_created', 0)} created · "
             f"{details.get('threads_removed', 0)} removed"
+        )
+    elif stage == "extracting_attachments":
+        typer.echo("Extracting attachment text...")
+    elif stage == "attachments_extracted":
+        details = event.get("details") or {}
+        typer.echo(
+            "Attachments extracted: "
+            f"{details.get('done', 0)} done · "
+            f"{details.get('failed', 0)} failed · "
+            f"{details.get('needs_ocr', 0)} needs_ocr"
+        )
+    elif stage == "chunking":
+        typer.echo("Chunking derived text...")
+    elif stage == "chunked":
+        details = event.get("details") or {}
+        typer.echo(
+            "Chunked: "
+            f"{details.get('chunks_written', 0)} written · "
+            f"{details.get('chunks_unchanged', 0)} unchanged · "
+            f"{details.get('skipped_not_ready', 0)} skipped"
         )
     elif stage == "error":
         typer.echo(f"Error: {event.get('message')}", err=True)

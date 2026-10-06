@@ -14,6 +14,7 @@ Data is split into four schemas by role:
 | `raw` | Immutable provider evidence | Never deleted by canonical operations |
 | `core` | Canonical model + provenance | Cascades to dependent facts, never to `raw` |
 | `derived` | Enrich-stage read models (rebuildable) | Replaced in place; cascades from `core` |
+| `search` | Retrieval read models (chunks, rebuildable) | Replaced in place; cascades from `core` |
 | `agent` | Derived read models (views) | None — read-only projection |
 | `public` (default) | Operational: imports, source accounts, OAuth, accounts | Domain-specific (below) |
 
@@ -526,6 +527,7 @@ chunker and extractors consume.
 | `error` | text | yes | set when `status = 'failed'` |
 | `stage_version` | text | no | |
 | `input_sha256` | text | yes | equals `core.email_message.content_sha256`; the comparison key |
+| `segments_digest` | text | yes | hash over stage version, `input_sha256`, and each segment's kind/offsets/coverage; the chunk source digest for body and quote chunks (4C updates it on coverage change) |
 | `created_at` / `updated_at` | timestamptz | no | |
 
 ### `derived.email_segment`
@@ -568,12 +570,79 @@ concern.
 | `language` | text | yes | |
 | `error` | text | yes | |
 | `truncated` | boolean | no | true when the output was cut at the character cap |
+| `text_sha256` | text | yes | SHA-256 of the extracted text; lets a chunk rebuild reuse an unchanged embedding |
 | `stage_version` | text | no | |
 | `created_at` / `updated_at` | timestamptz | no | |
 
 Terminal statuses (`failed`, `unsupported`, `too_large`) are only retried when
 `stage_version` changes or on an explicit `--retry-failed`; otherwise every run
 would re-attempt each corrupt PDF.
+
+---
+
+## `search` — retrieval read models (chunks)
+
+Chunks are the unit of retrieval: a passage of email body, quoted history, or
+attachment text with a contextual prefix and denormalized filter columns. They
+are rebuildable by definition — keyed deterministically (`id` is a `uuid5` over
+`(email_id, chunk_kind, attachment_id, seq)`) and replaced in place when their
+source digest or `index_version` changes. `chunk_build` records the build
+bookkeeping that drives the work finder. Embeddings and the BM25/HNSW indexes
+are deferred to a later phase.
+
+### `search.chunk`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK, deterministic `uuid5` over the uniqueness key |
+| `email_id` | uuid | no | FK → `core.email_message.id` `CASCADE` |
+| `attachment_id` | uuid | yes | FK → `core.email_attachment.id` `CASCADE` |
+| `thread_id` | uuid | yes | FK → `core.email_thread.id` `SET NULL` |
+| `chunk_kind` | text | no | `email_body` / `email_quote` / `attachment` |
+| `seq` | int | no | position within the source (0 = message representative) |
+| `text_for_display` | text | no | the chunk text without the prefix |
+| `text_for_index` | text | no | contextual prefix + text |
+| `text_sha256` | text | no | lets a rebuild reuse an unchanged embedding |
+| `language` | text | yes | dominant language by segment length, else null |
+| `index_version` | text | no | chunker + prefix + tokenizer + params digest |
+| `source_account_id` / `source_account_num` | uuid / int | no | scope predicate |
+| `sent_at` | timestamptz | no | message `occurred_at` |
+| `sender_handle` | text | no | first `from` address (empty when missing) |
+| `recipient_handles` | text[] | no | to/cc/bcc |
+| `participant_handles` | text[] | no | sorted union of all roles |
+| `direction` | text | no | `received` / `sent` / `self` / `unknown` |
+| `has_attachment` | boolean | no | |
+| `is_trash_or_spam` | boolean | no | |
+| `tags` | text[] | no | namespaced labels |
+| `meta` | jsonb | no | `header_only`, `truncated`, `partial` flags |
+| `created_at` | timestamptz | no | |
+
+- `uq_chunk_key` unique on `(email_id, chunk_kind, attachment_id, seq)`
+  `NULLS NOT DISTINCT`.
+
+### `search.chunk_build`
+
+One row per `(email_id, chunk_kind, attachment_id)` recording when a kind's
+chunks were last built and from what source digest. The work finder selects an
+email when a build row is missing, `index_version` differs, `source_digest`
+differs from the current digest, or `built_at < GREATEST(updated_at,
+thread_changed_at)`.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `email_id` | uuid | no | FK → `core.email_message.id` `CASCADE` |
+| `chunk_kind` | text | no | |
+| `attachment_id` | uuid | yes | FK → `core.email_attachment.id` `CASCADE` |
+| `index_version` | text | no | |
+| `source_digest` | text | yes | `email_text.segments_digest` (body/quote) or `stage_version:text_sha256` (attachment) |
+| `built_at` | timestamptz | no | the time the inputs were read |
+| `chunk_count` | int | no | |
+| `status` | text | no | `done` / `empty` / `failed` |
+| `error` | text | yes | |
+
+- `uq_chunk_build_key` unique on `(email_id, chunk_kind, attachment_id)`
+  `NULLS NOT DISTINCT`.
 
 ---
 
@@ -613,6 +682,7 @@ Rosalind `account` (a user) — see [`auth.md`](auth.md).
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `id` | uuid | no | PK |
+| `num` | int | no | identity surrogate for scope filtering (pushdown-friendly) |
 | `provider` | varchar(50) | no | e.g. `google` |
 | `name` | text | yes | human-facing CLI slug; unique |
 | `account_identifier` | text | yes | provider-scoped account id |

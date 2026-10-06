@@ -87,6 +87,7 @@ class PostgresEmailEnrichmentRepository:
         error: str | None,
         stage_version: str,
         input_sha256: str | None,
+        segments_digest: str | None,
     ) -> None:
         now = utcnow()
         values = {
@@ -97,6 +98,7 @@ class PostgresEmailEnrichmentRepository:
             "error": error,
             "stage_version": stage_version,
             "input_sha256": input_sha256,
+            "segments_digest": segments_digest,
             "created_at": now,
             "updated_at": now,
         }
@@ -112,6 +114,7 @@ class PostgresEmailEnrichmentRepository:
                     "error": values["error"],
                     "stage_version": values["stage_version"],
                     "input_sha256": values["input_sha256"],
+                    "segments_digest": values["segments_digest"],
                     "updated_at": now,
                 },
             )
@@ -208,6 +211,7 @@ class PostgresAttachmentTextRepository:
             "language": result.language,
             "error": result.error,
             "truncated": result.truncated,
+            "text_sha256": result.text_sha256,
             "stage_version": stage_version,
             "created_at": now,
             "updated_at": now,
@@ -225,6 +229,7 @@ class PostgresAttachmentTextRepository:
                     "language": values["language"],
                     "error": values["error"],
                     "truncated": values["truncated"],
+                    "text_sha256": values["text_sha256"],
                     "stage_version": values["stage_version"],
                     "updated_at": now,
                 },

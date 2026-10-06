@@ -15,7 +15,12 @@ def process_import(import_id: str) -> dict[str, Any]:
     return http.api.post(f"/imports/{import_id}/process")
 
 
-def stream_pipeline(import_id: str) -> Iterator[dict[str, Any]]:
+def stream_pipeline(
+    import_id: str, stage: str | None = None
+) -> Iterator[dict[str, Any]]:
     """Run the offline pipeline and yield decoded progress events."""
-    for line in http.api.stream_post(f"/imports/{import_id}/pipeline"):
+    path = f"/imports/{import_id}/pipeline"
+    if stage:
+        path = f"{path}?stage={stage}"
+    for line in http.api.stream_post(path):
         yield json.loads(line)

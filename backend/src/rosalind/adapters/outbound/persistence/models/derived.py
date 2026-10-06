@@ -59,6 +59,7 @@ class EmailText(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     stage_version: Mapped[str] = mapped_column(Text, nullable=False)
     input_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    segments_digest: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -121,6 +122,7 @@ class AttachmentText(Base):
     language: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    text_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     stage_version: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow

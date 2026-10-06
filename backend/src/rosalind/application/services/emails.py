@@ -31,6 +31,10 @@ from rosalind.application.canonicalization.email_message import (
 from rosalind.application.errors import ImportNotFoundError, InvalidImportStateError
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
+from rosalind.application.services.attachment_extraction import (
+    AttachmentExtractionService,
+)
+from rosalind.application.services.chunking import EmailChunkingService
 from rosalind.application.services.email_reconciliation import (
     EmailReconciliationService,
 )
@@ -48,6 +52,24 @@ COMMIT_EVERY = 500
 PROGRESS_EVERY = 500
 
 NO_MESSAGE_ID_PREFIX = "no-message-id"
+
+STAGE_SPLIT = "split"
+STAGE_CANONICALIZE = "canonicalize"
+STAGE_RECONCILE = "reconcile"
+STAGE_ENRICH = "enrich"
+STAGE_ATTACHMENTS = "attachments"
+STAGE_CHUNK = "chunk"
+
+ALL_STAGES = frozenset(
+    {
+        STAGE_SPLIT,
+        STAGE_CANONICALIZE,
+        STAGE_RECONCILE,
+        STAGE_ENRICH,
+        STAGE_ATTACHMENTS,
+        STAGE_CHUNK,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -122,7 +144,7 @@ def _read_bytes(path: str) -> bytes:
 
 
 class EmailProcessingService:
-    """Runs the offline email pipeline (record split + canonicalize + enrich)."""
+    """Runs the offline email pipeline (split → canonicalize → enrich → chunk)."""
 
     def __init__(
         self,
@@ -132,6 +154,9 @@ class EmailProcessingService:
         enricher: EmailEnrichmentService | None = None,
         enrich_budget_seconds: float | None = None,
         enrich_batch_size: int = 500,
+        attachment_extractor: AttachmentExtractionService | None = None,
+        attachment_budget_seconds: float | None = None,
+        chunker: EmailChunkingService | None = None,
     ):
         self._storage = storage
         self._canonicalizer = canonicalizer
@@ -139,6 +164,9 @@ class EmailProcessingService:
         self._enricher = enricher
         self._enrich_budget_seconds = enrich_budget_seconds
         self._enrich_batch_size = enrich_batch_size
+        self._attachment_extractor = attachment_extractor
+        self._attachment_budget_seconds = attachment_budget_seconds
+        self._chunker = chunker
 
     def prepare(
         self, uow: UnitOfWork, account_id: uuid.UUID, import_id: uuid.UUID
@@ -174,43 +202,117 @@ class EmailProcessingService:
             total_bytes=total_bytes,
         )
 
-    def run(self, uow: UnitOfWork, prepared: PreparedSplit) -> Iterator[PipelineEvent]:
-        """Split the prepared mbox files, then canonicalize the resulting records.
+    def run(
+        self,
+        uow: UnitOfWork,
+        prepared: PreparedSplit,
+        *,
+        stages: set[str] | None = None,
+    ) -> Iterator[PipelineEvent]:
+        """Run the selected pipeline stages over the prepared import.
 
         Yields progress events as it goes. Each stage is committed in batches so
         a crash leaves only already-committed (deduplicated) work behind.
+        Chunking runs even when the attachment budget ran out (4B budget
+        exhaustion skips only 4B's remaining work, never chunk).
         """
+        wanted = set(stages) if stages is not None else set(ALL_STAGES)
+
+        def wants(name: str) -> bool:
+            return name in wanted
+
         counters = _Counters()
-        yield PipelineEvent(
-            stage="starting",
-            total_files=len(prepared.files),
-            total_bytes=prepared.total_bytes,
-        )
+        if wants(STAGE_SPLIT):
+            yield PipelineEvent(
+                stage="starting",
+                total_files=len(prepared.files),
+                total_bytes=prepared.total_bytes,
+            )
 
-        for file in prepared.files:
-            yield from self._split_file(uow, prepared, file, counters)
+            for file in prepared.files:
+                yield from self._split_file(uow, prepared, file, counters)
 
-        yield PipelineEvent(
-            stage="done",
-            total_files=len(prepared.files),
-            total_bytes=prepared.total_bytes,
-            processed=counters.processed,
-            created=counters.created,
-            reused=counters.reused,
-            failed=counters.failed,
-            processed_bytes=counters.processed_bytes,
-        )
+            yield PipelineEvent(
+                stage="done",
+                total_files=len(prepared.files),
+                total_bytes=prepared.total_bytes,
+                processed=counters.processed,
+                created=counters.created,
+                reused=counters.reused,
+                failed=counters.failed,
+                processed_bytes=counters.processed_bytes,
+            )
 
         canonicalize_ok = True
-        for event in self._canonicalize(uow, prepared):
-            if event.stage == "error":
-                canonicalize_ok = False
-            yield event
+        if wants(STAGE_CANONICALIZE):
+            for event in self._canonicalize(uow, prepared):
+                if event.stage == "error":
+                    canonicalize_ok = False
+                yield event
 
-        if canonicalize_ok:
+        if wants(STAGE_RECONCILE) and canonicalize_ok:
             yield from self._reconcile(uow, prepared)
-            if self._enricher is not None:
-                yield from self._enrich(uow, prepared)
+
+        if wants(STAGE_ENRICH) and self._enricher is not None and canonicalize_ok:
+            yield from self._enrich(uow, prepared)
+
+        if (
+            wants(STAGE_ATTACHMENTS)
+            and self._attachment_extractor is not None
+            and canonicalize_ok
+        ):
+            yield from self._extract_attachments(uow, prepared)
+
+        if wants(STAGE_CHUNK) and self._chunker is not None and canonicalize_ok:
+            yield from self._chunk(uow, prepared)
+
+    def _extract_attachments(
+        self, uow: UnitOfWork, prepared: PreparedSplit
+    ) -> Iterator[PipelineEvent]:
+        """Extract attachment text (4B) for the whole source account."""
+        extractor = self._attachment_extractor
+        if extractor is None:
+            return
+        yield PipelineEvent(stage="extracting_attachments")
+        outcome = extractor.extract(
+            uow,
+            prepared.source_account.id,
+            budget_seconds=self._attachment_budget_seconds,
+        )
+        yield PipelineEvent(
+            stage="attachments_extracted",
+            processed=outcome.processed,
+            details={
+                "done": outcome.done,
+                "empty": outcome.empty,
+                "needs_ocr": outcome.needs_ocr,
+                "unsupported": outcome.unsupported,
+                "too_large": outcome.too_large,
+                "encrypted": outcome.encrypted,
+                "failed": outcome.failed,
+                "budget_exhausted": outcome.budget_exhausted,
+            },
+        )
+
+    def _chunk(
+        self, uow: UnitOfWork, prepared: PreparedSplit
+    ) -> Iterator[PipelineEvent]:
+        """Chunk derived text (stage 5) for the whole source account."""
+        chunker = self._chunker
+        if chunker is None:
+            return
+        yield PipelineEvent(stage="chunking")
+        outcome = chunker.chunk(uow, prepared.source_account.id)
+        yield PipelineEvent(
+            stage="chunked",
+            processed=outcome.emails_synced,
+            details={
+                "chunks_written": outcome.chunks_written,
+                "chunks_unchanged": outcome.chunks_unchanged,
+                "skipped_not_ready": outcome.skipped_not_ready,
+                "failed": outcome.failed,
+            },
+        )
 
     def _enrich(
         self, uow: UnitOfWork, prepared: PreparedSplit

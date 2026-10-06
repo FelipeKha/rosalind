@@ -18,11 +18,11 @@ import sys
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
-from rosalind.domain.email import AttachmentStatus, AttachmentText
+from rosalind.domain.email import AttachmentStatus, AttachmentText, text_sha256
 
 ATTACHMENT_VERSION = "attachments/1"
 
@@ -106,6 +106,9 @@ class AttachmentExtractionService:
                 )
             else:
                 result = self._extract_isolated(item)
+
+            if result.status is AttachmentStatus.DONE:
+                result = replace(result, text_sha256=text_sha256(result.text))
 
             uow.attachment_text.replace_attachment_text(
                 result=result, stage_version=self.stage_version

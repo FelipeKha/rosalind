@@ -28,6 +28,7 @@ from rosalind.application.ports.repositories import (
     SourceAccountRepository,
     SourceRecordRepository,
 )
+from rosalind.application.ports.search import ChunkRepository
 
 
 class UnitOfWork(Protocol):
@@ -44,6 +45,7 @@ class UnitOfWork(Protocol):
     email_canonical: EmailCanonicalRepository
     email_enrichment: EmailEnrichmentRepository
     attachment_text: AttachmentTextRepository
+    chunks: ChunkRepository
 
     def commit(self) -> None: ...
 

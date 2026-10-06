@@ -67,6 +67,19 @@ def test_alembic_upgrade_head_creates_tables(postgres_url: str) -> None:
         "email_segment",
         "attachment_text",
     } <= set(inspector.get_table_names(schema="derived"))
+    assert {
+        "chunk",
+        "chunk_build",
+    } <= set(inspector.get_table_names(schema="search"))
+    source_account_cols = {
+        column["name"] for column in inspector.get_columns("source_account")
+    }
+    assert "num" in source_account_cols
+    derived_email_text_cols = {
+        column["name"]
+        for column in inspector.get_columns("email_text", schema="derived")
+    }
+    assert "segments_digest" in derived_email_text_cols
 
     # Leave the shared container clean for subsequent tests (the migration
     # creates the agent.person_profile view, which otherwise blocks drop_all).

@@ -23,6 +23,7 @@ from rosalind.adapters.outbound.persistence.repositories.person import (
 )
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.adapters.outbound.search.tokenizer import BgeM3TokenCounter
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
 )
@@ -34,6 +35,7 @@ from rosalind.application.services.accounts import AccountService
 from rosalind.application.services.attachment_extraction import (
     AttachmentExtractionService,
 )
+from rosalind.application.services.chunking import EmailChunkingService
 from rosalind.application.services.email_reconciliation import (
     EmailReconciliationService,
 )
@@ -44,6 +46,7 @@ from rosalind.application.services.people import PersonService
 from rosalind.application.services.processing import ProcessingService
 from rosalind.application.services.sources import SourceService
 from rosalind.config import settings
+from rosalind.domain.search import ChunkingParams
 
 google_auth = GoogleAuthGateway()
 google_people = GooglePeopleGateway()
@@ -72,6 +75,30 @@ import_service = ImportService(
     processing=processing_service,
 )
 
+attachment_extraction_service = AttachmentExtractionService(
+    storage=object_storage,
+    max_bytes=settings.attachment_max_bytes,
+    max_output_chars=settings.attachment_max_output_chars,
+    timeout_seconds=settings.attachment_timeout_seconds,
+)
+
+chunking_service = EmailChunkingService(
+    counter=BgeM3TokenCounter(
+        settings.chunk_tokenizer_path,
+        settings.chunk_tokenizer_sha256,
+    ),
+    params=ChunkingParams(
+        target_tokens=settings.chunk_target_tokens,
+        max_tokens=settings.chunk_max_tokens,
+        overlap_tokens=settings.chunk_overlap_tokens,
+        min_tail_tokens=settings.chunk_min_tail_tokens,
+        max_quote_tokens_per_email=settings.chunk_max_quote_tokens_per_email,
+        max_chunks_per_attachment=settings.chunk_max_chunks_per_attachment,
+        include_signature=settings.chunk_include_signature,
+    ),
+    limit=settings.chunk_batch_size,
+)
+
 email_processing_service = EmailProcessingService(
     storage=object_storage,
     canonicalizer=EmailCanonicalizationService(),
@@ -86,13 +113,9 @@ email_processing_service = EmailProcessingService(
         ),
         min_language_length=settings.enrich_min_language_length,
     ),
-)
-
-attachment_extraction_service = AttachmentExtractionService(
-    storage=object_storage,
-    max_bytes=settings.attachment_max_bytes,
-    max_output_chars=settings.attachment_max_output_chars,
-    timeout_seconds=settings.attachment_timeout_seconds,
+    attachment_extractor=attachment_extraction_service,
+    attachment_budget_seconds=settings.attachment_budget_seconds,
+    chunker=chunking_service,
 )
 
 

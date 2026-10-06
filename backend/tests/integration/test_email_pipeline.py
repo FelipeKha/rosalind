@@ -221,6 +221,9 @@ def test_second_observation_replaces_tags(
 
     list(service.run(uow, service.prepare(uow, account_id, import_id)))
 
+    (message,) = db_session.scalars(select(models.EmailMessage)).all()
+    updated_before = message.updated_at
+
     # A later archive with the same Message-ID but changed labels.
     second_storage = _FakeStorage(second)
     second_import = composition.import_service.create_import(
@@ -242,6 +245,11 @@ def test_second_observation_replaces_tags(
     tags = {t.tag for t in db_session.scalars(select(models.EmailTag)).all()}
     assert tags == {"gmail:Archive"}
     assert len(db_session.scalars(select(models.EmailMessageObservation)).all()) == 2
+
+    # A tag-only re-observation still bumps updated_at, which is the chunk
+    # work finder's signal to refresh denormalized filter columns.
+    (message_after,) = db_session.scalars(select(models.EmailMessage)).all()
+    assert message_after.updated_at > updated_before
 
 
 def test_reply_before_root_same_thread(uow: SqlAlchemyUnitOfWork, db_session) -> None:

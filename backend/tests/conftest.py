@@ -54,6 +54,7 @@ def _make_engine(url: str) -> Engine:
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS core"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS agent"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS derived"))
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS search"))
     Base.metadata.create_all(engine)
     return engine
 

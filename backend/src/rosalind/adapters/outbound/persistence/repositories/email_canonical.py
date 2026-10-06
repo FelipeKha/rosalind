@@ -150,6 +150,11 @@ class PostgresEmailCanonicalRepository:
         message.parser_version = canonical.parser_version
         message.canonicalizer_version = canonical.canonicalizer_version
         message.metadata_ = _metadata(canonical)
+        # Explicitly bump updated_at: a re-observation that only changes a child
+        # (e.g. tags) leaves the message's own columns unchanged, so the ORM
+        # onupdate would not fire. The chunk work finder relies on this bump to
+        # refresh denormalized filter columns.
+        message.updated_at = utcnow()
 
     def _insert_observation(
         self, message_id: uuid.UUID, canonical: CanonicalEmail

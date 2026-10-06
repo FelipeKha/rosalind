@@ -5,7 +5,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Identity,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,9 +30,11 @@ class SourceAccount(Base):
             name="uq_source_account_provider_identifier",
         ),
         UniqueConstraint("name", name="uq_source_account_name"),
+        UniqueConstraint("num", name="uq_source_account_num"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    num: Mapped[int] = mapped_column(Integer, Identity(always=True), nullable=False)
     account_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("account.id", ondelete="CASCADE"), nullable=True, index=True
     )

@@ -16,6 +16,8 @@ from rosalind.domain.email.enrichment import (
     EmailText,
     SegmentKind,
     content_sha256,
+    segments_digest,
+    text_sha256,
 )
 from rosalind.domain.email.message_id import normalize_message_id, parse_message_ids
 from rosalind.domain.email.observations import (
@@ -48,4 +50,6 @@ __all__ = [
     "message_uuid",
     "normalize_message_id",
     "parse_message_ids",
+    "segments_digest",
+    "text_sha256",
 ]

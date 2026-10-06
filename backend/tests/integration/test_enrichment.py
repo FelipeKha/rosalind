@@ -176,6 +176,7 @@ def test_failed_row_not_retried_unless_forced(uow, db_session) -> None:
         error="boom",
         stage_version=stage,
         input_sha256=content_sha256("Hello\n", None),
+        segments_digest=None,
     )
     uow.commit()
 

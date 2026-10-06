@@ -53,6 +53,45 @@ def content_sha256(text_plain: str | None, text_html: str | None) -> str:
     return digest.hexdigest()
 
 
+def segments_digest(
+    stage_version: str,
+    input_sha256: str | None,
+    segments: tuple[EmailSegment, ...],
+) -> str | None:
+    """Deterministic hash over the segmentation inputs and coverage state.
+
+    Captures the stage version, the input hash, and each segment's kind,
+    offsets, and coverage so a change to any of them (including 4C marking a
+    quote as covered) invalidates the chunk source digest. Returns ``None``
+    when there are no segments (nothing to tile).
+    """
+    if not segments:
+        return None
+    digest = hashlib.sha256()
+    for value in (stage_version, input_sha256 or ""):
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    for segment in segments:
+        for value in (
+            segment.kind.value,
+            str(segment.start_offset),
+            str(segment.end_offset),
+            str(segment.covered_by_email_id or ""),
+        ):
+            encoded = value.encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+    return digest.hexdigest()
+
+
+def text_sha256(text: str | None) -> str | None:
+    """SHA-256 of extracted attachment text; lets a rebuild reuse embeddings."""
+    if text is None:
+        return None
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True)
 class EmailSegment:
     """One span of ``clean_text`` classified into a ``SegmentKind``.
@@ -72,6 +111,9 @@ class EmailSegment:
     quoted_at: str | None = None
     language: str | None = None
     language_confidence: float | None = None
+    # Set by the (deferred) 4C coverage pass; included in ``segments_digest`` so
+    # a later coverage change invalidates the chunk source digest.
+    covered_by_email_id: str | None = None
 
     def text(self, clean_text: str) -> str:
         return clean_text[self.start_offset : self.end_offset]
@@ -108,3 +150,4 @@ class AttachmentText:
     language: str | None = None
     error: str | None = None
     truncated: bool = False
+    text_sha256: str | None = None

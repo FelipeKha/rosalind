@@ -28,6 +28,7 @@ def reset_schemas(engine: Engine) -> None:
         conn.execute(text("DROP SCHEMA IF EXISTS core CASCADE"))
         conn.execute(text("DROP SCHEMA IF EXISTS agent CASCADE"))
         conn.execute(text("DROP SCHEMA IF EXISTS derived CASCADE"))
+        conn.execute(text("DROP SCHEMA IF EXISTS search CASCADE"))
 
 
 def run_migrations(url: str) -> None:

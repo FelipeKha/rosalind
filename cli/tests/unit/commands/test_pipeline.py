@@ -21,7 +21,7 @@ def test_pipeline_run_success(monkeypatch) -> None:
         {"stage": "done", "processed": 2, "created": 2, "reused": 0, "failed": 0},
     ]
     monkeypatch.setattr(
-        pipeline.client, "stream_pipeline", lambda import_id: iter(events)
+        pipeline.client, "stream_pipeline", lambda import_id, stage=None: iter(events)
     )
 
     result = runner.invoke(app, ["pipeline", "run", "imp-1"])
@@ -34,7 +34,7 @@ def test_pipeline_run_success(monkeypatch) -> None:
 def test_pipeline_run_failed_exits_nonzero(monkeypatch) -> None:
     events = [{"stage": "done", "processed": 2, "created": 1, "reused": 0, "failed": 1}]
     monkeypatch.setattr(
-        pipeline.client, "stream_pipeline", lambda import_id: iter(events)
+        pipeline.client, "stream_pipeline", lambda import_id, stage=None: iter(events)
     )
 
     result = runner.invoke(app, ["pipeline", "run", "imp-1"])
@@ -43,7 +43,7 @@ def test_pipeline_run_failed_exits_nonzero(monkeypatch) -> None:
 
 
 def test_pipeline_run_api_error(monkeypatch) -> None:
-    def boom(import_id: str):
+    def boom(import_id: str, stage: str | None = None):
         raise pipeline.ApiClientError("boom")
 
     monkeypatch.setattr(pipeline.client, "stream_pipeline", boom)
@@ -57,7 +57,7 @@ def test_pipeline_run_api_error(monkeypatch) -> None:
 def test_pipeline_run_json_mode(monkeypatch) -> None:
     events = [{"stage": "done", "processed": 1, "created": 1, "reused": 0, "failed": 0}]
     monkeypatch.setattr(
-        pipeline.client, "stream_pipeline", lambda import_id: iter(events)
+        pipeline.client, "stream_pipeline", lambda import_id, stage=None: iter(events)
     )
 
     result = runner.invoke(app, ["--json", "pipeline", "run", "imp-1"])

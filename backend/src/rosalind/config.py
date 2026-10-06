@@ -56,5 +56,16 @@ class Settings(BaseSettings):
     attachment_max_output_chars: int = 1_000_000
     attachment_timeout_seconds: float = 120.0
 
+    chunk_target_tokens: int = 400
+    chunk_max_tokens: int = 480
+    chunk_overlap_tokens: int = 50
+    chunk_min_tail_tokens: int = 80
+    chunk_max_quote_tokens_per_email: int = 1200
+    chunk_max_chunks_per_attachment: int = 20
+    chunk_include_signature: bool = True
+    chunk_batch_size: int = 500
+    chunk_tokenizer_path: str = "backend/assets/bge-m3/tokenizer.json"
+    chunk_tokenizer_sha256: str | None = None
+
 
 settings = Settings()

@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 
 from rosalind.application.ports.enrichment import HtmlParser, LanguageDetector
 from rosalind.application.ports.unit_of_work import UnitOfWork
-from rosalind.domain.email import CleanMethod, EmailText, SegmentKind
+from rosalind.domain.email import CleanMethod, EmailText, SegmentKind, segments_digest
 from rosalind.domain.email.html import HtmlDocument
 from rosalind.domain.email.segmentation import segment_html, segment_plain
 from rosalind.domain.email.text import select_clean_text
@@ -140,6 +140,9 @@ class EmailEnrichmentService:
                     error=None,
                     stage_version=stage_version,
                     input_sha256=item.content_sha256,
+                    segments_digest=segments_digest(
+                        stage_version, item.content_sha256, text.segments
+                    ),
                 )
                 if status == STATUS_DONE:
                     counters["done"] += 1
@@ -153,6 +156,7 @@ class EmailEnrichmentService:
                     error=str(exc),
                     stage_version=stage_version,
                     input_sha256=item.content_sha256,
+                    segments_digest=None,
                 )
                 counters["failed"] += 1
 

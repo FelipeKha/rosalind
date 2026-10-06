@@ -129,18 +129,21 @@ def run_pipeline(
     uow: UowDep,
     email_pipeline: EmailPipelineDep,
     account: AccountDep,
+    stage: str | None = None,
 ) -> StreamingResponse:
-    """Run the offline email pipeline (currently the record-split stage).
+    """Run the offline email pipeline.
 
     Streams newline-delimited JSON progress events. Errors that can be decided
     before any work starts (unknown import, not completed, no source) are raised
     synchronously and mapped to HTTP errors; per-record failures are reported in
-    the stream rather than aborting the run.
+    the stream rather than aborting the run. ``stage`` restricts the run to a
+    single stage (e.g. ``chunk``) for rebuilds; omitting it runs all stages.
     """
     prepared = email_pipeline.prepare(uow, account.id, import_id)
+    stages = {stage} if stage else None
 
     def generate() -> Iterator[str]:
-        for event in email_pipeline.run(uow, prepared):
+        for event in email_pipeline.run(uow, prepared, stages=stages):
             yield json.dumps(event.to_dict()) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")

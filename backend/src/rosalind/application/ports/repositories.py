@@ -541,6 +541,7 @@ class EmailEnrichmentRepository(Protocol):
         error: str | None,
         stage_version: str,
         input_sha256: str | None,
+        segments_digest: str | None,
     ) -> None: ...
 
 
