@@ -98,5 +98,14 @@ class Settings(BaseSettings):
     search_semantic_weight: float = 1.0
     search_max_chunks_per_item: int = 2
 
+    # Semantic retrieval (step 2.2). Placeholders until the benchmark in
+    # backend/scripts/bench_semantic_retrieval.py sets them.
+    search_semantic_exact_threshold: int | None = None
+    search_hnsw_iterative_scan: str = "strict_order"
+    search_hnsw_max_scan_tuples: int | None = None
+    search_hnsw_scan_mem_multiplier: float | None = None
+    search_hnsw_ef_search: int | None = None
+    search_semantic_statement_timeout_ms: int | None = None
+
 
 settings = Settings()

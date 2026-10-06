@@ -656,6 +656,42 @@ The `@@@` query is rendered from the structured `LexicalQuery` by the outbound
 adapter (`adapters.outbound.search.lexical`), which owns engine syntax and
 escaping; `application` never sees `@@@` or `paradedb.score`.
 
+### `search.chunk` HNSW index (`chunk_emb_bge_m3_v1_hnsw`, migration 0019)
+
+HNSW index over the `halfvec` embedding column, for filtered approximate
+nearest-neighbor retrieval (online search step 2.2):
+
+```sql
+CREATE INDEX chunk_emb_bge_m3_v1_hnsw ON search.chunk
+    USING hnsw (emb_bge_m3_v1 halfvec_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+```
+
+Created with `CREATE INDEX CONCURRENTLY` (in an Alembic autocommit block), and
+only after the embedding backfill: HNSW maintenance during bulk loads is slow.
+The semantic retriever does not require the index — without it, the ANN query
+falls back to an exact scan — and the exact path never uses it. Apply migration
+0019 to real data only after `scripts/bench_semantic_retrieval.py` shows the ANN
+path beats the exact path at the corpus size.
+
+Semantic retrieval has two paths (`filter_path`):
+
+- **exact** — a `MATERIALIZED` CTE materializes the filtered rows, then exact
+  cosine distances are computed, sorted, and truncated. Always `complete`.
+- **ann_iterative** (default) — an HNSW scan with `SET LOCAL
+  hnsw.iterative_scan = 'strict_order'`, so filtered ANN keeps scanning until it
+  finds `semantic_k` qualifying rows or hits `hnsw.max_scan_tuples`. `complete`
+  is only asserted when a bounded exact count proves fewer than `semantic_k`
+  match; `scan_limit_hit` marks a scan that stopped before exhausting the
+  matching set.
+
+The semantic universe is a strict subset of the lexical one: the shared scope +
+filters, plus a fresh, non-null embedding (`emb_bge_m3_v1 IS NOT NULL` and
+`emb_bge_m3_v1_text_sha256 = text_sha256`, so a changed chunk's stale vector is
+never returned). Both retrievers share the same filter predicates
+(`adapters.outbound.search.filters`), but quote chunks are not embedded by
+default, so the two universes differ by design.
+
 ### `search.chunk_build`
 
 One row per `(email_id, chunk_kind, attachment_id)` recording when a kind's

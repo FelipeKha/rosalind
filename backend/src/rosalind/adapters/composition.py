@@ -30,6 +30,7 @@ from rosalind.adapters.outbound.search.audit import LoggingAudit
 from rosalind.adapters.outbound.search.embedder_tei import TeiEmbedder
 from rosalind.adapters.outbound.search.query_embedder import NullEmbedder, QueryEmbedder
 from rosalind.adapters.outbound.search.search_repository import PostgresSearchRepository
+from rosalind.adapters.outbound.search.semantic import SemanticRetrievalConfig
 from rosalind.adapters.outbound.search.tokenizer import BgeM3TokenCounter
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
@@ -81,6 +82,10 @@ def _search_config() -> SearchConfig:
     else:
         embedding_model = None
         embedding_version = None
+    if settings.search_semantic_k > 1000:
+        raise ValueError(
+            "search_semantic_k exceeds pgvector's hnsw.ef_search maximum (1000)"
+        )
     return SearchConfig(
         index_version=settings.search_index_version,
         embedding_model=embedding_model,
@@ -190,6 +195,17 @@ if settings.embedder_url:
     _search_embedder = QueryEmbedder(embedder)
 
 search_config = _search_config()
+
+# Semantic retrieval tuning (step 2.2). Constructed at import time so an invalid
+# hnsw setting fails fast; the retriever itself is wired in phase 3 (fusion).
+semantic_retrieval_config = SemanticRetrievalConfig(
+    exact_threshold=settings.search_semantic_exact_threshold,
+    iterative_scan=settings.search_hnsw_iterative_scan,  # type: ignore[arg-type]  # validated in __post_init__
+    max_scan_tuples=settings.search_hnsw_max_scan_tuples,
+    scan_mem_multiplier=settings.search_hnsw_scan_mem_multiplier,
+    ef_search=settings.search_hnsw_ef_search,
+    statement_timeout_ms=settings.search_semantic_statement_timeout_ms,
+)
 
 email_processing_service = EmailProcessingService(
     storage=object_storage,

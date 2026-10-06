@@ -29,6 +29,7 @@ from rosalind.application.search.plan import (
     SearchPlan,
 )
 from rosalind.application.search.retrieve import LexicalResult
+from rosalind.application.search.semantic import SemanticResult
 
 __all__ = [
     "AuditEvent",
@@ -42,6 +43,7 @@ __all__ = [
     "SearchMetadata",
     "SearchMetadataPort",
     "SearchScopePort",
+    "SemanticRetrieverPort",
     "ThreadResolverPort",
 ]
 
@@ -129,6 +131,19 @@ class LexicalRetrieverPort(Protocol):
         BM25 score preserved, an ``exhausted`` flag that is only true when the
         whole candidate stream was scanned, and a ``filter_path`` describing how
         filters were applied. Must always apply ``plan.scope``, never widen it.
+        """
+
+
+class SemanticRetrieverPort(Protocol):
+    async def retrieve(self, plan: SearchPlan) -> SemanticResult:
+        """Run filtered vector retrieval for a plan (online search step 2.2).
+
+        Returns up to ``plan.budgets.semantic_k`` ranked chunks with the engine's
+        cosine distance preserved, a ``complete`` flag that is only true when
+        every matching chunk was considered, and the ``filter_path`` describing
+        how the search was executed (``exact`` or ``ann_iterative``). Must always
+        apply ``plan.scope``, never widen it, and must only consider chunks whose
+        stored embedding is fresh (its companion text hash equals ``text_sha256``).
         """
 
 

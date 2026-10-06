@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from rosalind.adapters.outbound.persistence import models
+from rosalind.adapters.outbound.search.filters import filter_conditions, scope_nums
 from rosalind.application.search import (
     FilterPath,
     LexicalHit,
@@ -88,7 +89,7 @@ class ParadeDbLexicalRetriever:
         query_string = ParadeDbLexicalQueryRenderer().render(lexical)
 
         with self._factory() as session:
-            nums = self._scope_nums(session, plan.scope.source_account_ids)
+            nums = scope_nums(session, plan.scope.source_account_ids)
             rows = self._query(session, plan, query_string, nums)
 
         lexical_k = plan.budgets.lexical_k
@@ -103,17 +104,6 @@ class ParadeDbLexicalRetriever:
             elapsed_ms=(time.perf_counter() - started) * 1000,
         )
 
-    def _scope_nums(
-        self, session: Session, source_account_ids: frozenset[uuid.UUID]
-    ) -> list[int]:
-        return list(
-            session.scalars(
-                select(models.SourceAccount.num).where(
-                    models.SourceAccount.id.in_(source_account_ids)
-                )
-            ).all()
-        )
-
     def _query(
         self,
         session: Session,
@@ -126,7 +116,7 @@ class ParadeDbLexicalRetriever:
             cast(ColumnElement[bool], text("text_for_index @@@ :q")),
             chunk.source_account_num.in_(nums),
         ]
-        conditions.extend(_filter_conditions(plan))
+        conditions.extend(filter_conditions(plan))
 
         limit = plan.budgets.lexical_k + 1
         stmt = (
@@ -136,41 +126,6 @@ class ParadeDbLexicalRetriever:
             .limit(limit)
         )
         return list(session.execute(stmt, {"q": query_string}).all())
-
-
-def _filter_conditions(plan: SearchPlan) -> list[ColumnElement[bool]]:
-    chunk = models.Chunk
-    filters = plan.filters
-    conditions: list[ColumnElement[bool]] = []
-
-    if filters.senders:
-        conditions.append(chunk.sender_handle.in_(sorted(filters.senders)))
-    if filters.recipients:
-        conditions.append(chunk.recipient_handles.overlap(sorted(filters.recipients)))
-    if filters.participants:
-        conditions.append(
-            chunk.participant_handles.overlap(sorted(filters.participants))
-        )
-    if filters.direction is not None:
-        conditions.append(chunk.direction == filters.direction.value)
-    if filters.tags_any:
-        conditions.append(chunk.tags.overlap(sorted(filters.tags_any)))
-    if filters.tags_exclude:
-        conditions.append(~chunk.tags.overlap(sorted(filters.tags_exclude)))
-    if filters.has_attachment is not None:
-        conditions.append(chunk.has_attachment == filters.has_attachment)
-    if filters.thread_id is not None:
-        conditions.append(chunk.thread_id == filters.thread_id)
-    if filters.languages:
-        conditions.append(chunk.language.in_(sorted(filters.languages)))
-    if filters.sent_from is not None:
-        conditions.append(chunk.sent_at >= filters.sent_from)
-    if filters.sent_before is not None:
-        conditions.append(chunk.sent_at < filters.sent_before)
-    if not filters.include_trash_spam:
-        conditions.append(chunk.is_trash_or_spam.is_(False))
-
-    return conditions
 
 
 def _filter_path(plan: SearchPlan) -> FilterPath:

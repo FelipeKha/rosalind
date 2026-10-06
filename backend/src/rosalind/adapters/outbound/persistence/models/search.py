@@ -70,6 +70,13 @@ class Chunk(Base):
             "email_id",
             postgresql_where=text("chunk_kind = 'email_body' AND seq = 0"),
         ),
+        Index(
+            "chunk_emb_bge_m3_v1_hnsw",
+            "emb_bge_m3_v1",
+            postgresql_using="hnsw",
+            postgresql_ops={"emb_bge_m3_v1": "halfvec_cosine_ops"},
+            postgresql_with={"m": 16, "ef_construction": 64},
+        ),
         {"schema": "search"},
     )
 

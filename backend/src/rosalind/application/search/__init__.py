@@ -42,6 +42,12 @@ from rosalind.application.search.request import (
     SortOrder,
 )
 from rosalind.application.search.retrieve import FilterPath, LexicalHit, LexicalResult
+from rosalind.application.search.semantic import (
+    SemanticFilterPath,
+    SemanticHit,
+    SemanticResult,
+    SemanticRetrievalError,
+)
 
 __all__ = [
     "MAX_LIMIT",
@@ -75,6 +81,10 @@ __all__ = [
     "SearchRequest",
     "SearchRequestFilters",
     "SearchStrategy",
+    "SemanticFilterPath",
+    "SemanticHit",
+    "SemanticResult",
+    "SemanticRetrievalError",
     "ShortCircuit",
     "ShortCircuitReason",
     "SortOrder",

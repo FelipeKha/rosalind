@@ -53,6 +53,24 @@ def embedding_space(name: str) -> EmbeddingSpace:
         ) from None
 
 
+def space_for(model_id: str, version: str) -> EmbeddingSpace:
+    """Resolve the space a plan's ``(embedding_model, embedding_version)`` refers to.
+
+    The plan carries ``embedding_version`` as ``revision or name`` (see
+    ``composition._search_config``), so a space matches on ``model_id`` plus
+    ``(revision or name)``. Raises ``KeyError`` when no space matches, so a plan
+    pointing at an unknown model/version is refused instead of silently querying
+    the wrong column.
+    """
+    for space in _SPACES.values():
+        if space.model_id == model_id and (space.revision or space.name) == version:
+            return space
+    raise KeyError(
+        f"no embedding space for model {model_id!r} version {version!r}; "
+        f"known spaces: {sorted(_SPACES)}"
+    )
+
+
 def space_columns(name: str) -> SpaceColumns:
     try:
         return _COLUMNS[name]
