@@ -47,6 +47,7 @@ from rosalind.application.services.enrichment import EmailEnrichmentService
 from rosalind.application.services.imports import ImportService
 from rosalind.application.services.people import PersonService
 from rosalind.application.services.processing import ProcessingService
+from rosalind.application.services.search import SearchService
 from rosalind.application.services.sources import SourceService
 from rosalind.config import settings
 from rosalind.domain.search import ChunkingParams
@@ -61,6 +62,8 @@ source_service = SourceService(google_auth)
 account_service = AccountService()
 
 token_verifier: TokenVerifier = KeycloakJwtVerifier()
+
+search_service = SearchService()
 
 _google_person_parser = GooglePersonParser()
 
@@ -181,6 +184,10 @@ def get_source_service() -> SourceService:
 
 def get_account_service() -> AccountService:
     return account_service
+
+
+def get_search_service() -> SearchService:
+    return search_service
 
 
 def get_token_verifier() -> TokenVerifier:

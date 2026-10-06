@@ -17,6 +17,7 @@ from pydantic import AnyHttpUrl
 from rosalind import config
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.mcp.schemas import MyProfileResult, PersonProfileResult
+from rosalind.adapters.inbound.mcp.search import SearchEmailsInput, to_search_request
 from rosalind.adapters.inbound.mcp.verifier import KeycloakMCPTokenVerifier
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
@@ -46,6 +47,21 @@ mcp = MCPServer(
     token_verifier=KeycloakMCPTokenVerifier(composition.token_verifier),
     auth=_auth_settings(),
 )
+
+
+@mcp.tool()
+def search(input: SearchEmailsInput) -> object:
+    """Search the user's email archive.
+
+    Filters are ANDed across fields; lists within a field are ORed. Phase 0
+    registers the tool and its input contract only; the search itself is not
+    implemented yet and raises a clear error until the Prepare phase lands.
+    """
+    account_id = _current_account_id()
+    if account_id is None:
+        return None
+    request = to_search_request(input)
+    return composition.search_service.prepare(account_id, request)
 
 
 @mcp.tool()
