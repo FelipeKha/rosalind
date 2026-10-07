@@ -27,8 +27,10 @@ from rosalind.adapters.outbound.persistence.repositories.person import (
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.adapters.outbound.search.audit import LoggingAudit
+from rosalind.adapters.outbound.search.chunk_text import PostgresChunkTextRepository
 from rosalind.adapters.outbound.search.embedder_tei import TeiEmbedder
 from rosalind.adapters.outbound.search.query_embedder import NullEmbedder, QueryEmbedder
+from rosalind.adapters.outbound.search.reranker_tei import TeiReranker
 from rosalind.adapters.outbound.search.search_repository import PostgresSearchRepository
 from rosalind.adapters.outbound.search.semantic import SemanticRetrievalConfig
 from rosalind.adapters.outbound.search.tokenizer import BgeM3TokenCounter
@@ -41,7 +43,7 @@ from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.search import Budgets, FusionConfig, FusionStrategy
 from rosalind.application.search.cursor import HmacCursorCodec
-from rosalind.application.search.ports import SearchConfig
+from rosalind.application.search.ports import RerankConfig, RerankTextMode, SearchConfig
 from rosalind.application.services.accounts import AccountService
 from rosalind.application.services.attachment_extraction import (
     AttachmentExtractionService,
@@ -111,6 +113,32 @@ def _search_config() -> SearchConfig:
     )
 
 
+def _rerank_config() -> RerankConfig | None:
+    """Build the rerank configuration, failing fast on a misconfigured reranker.
+
+    ``search_reranker`` gates reranking (it is the ``IndexVersions.reranker``
+    stamp, revision-qualified), so it must be paired with a reachable URL.
+    """
+    if not settings.search_reranker:
+        return None
+    if not settings.search_reranker_url:
+        raise ValueError("search_reranker is set but search_reranker_url is empty")
+    try:
+        text_mode = RerankTextMode(settings.search_reranker_text_mode)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid search_reranker_text_mode {settings.search_reranker_text_mode!r}"
+        ) from exc
+    return RerankConfig(
+        max_input_tokens=settings.search_reranker_max_input_tokens,
+        text_mode=text_mode,
+        max_batch_size=settings.search_reranker_max_batch_size,
+        concurrency=settings.search_reranker_max_concurrent_requests,
+        timeout_ms=settings.search_reranker_timeout_ms,
+        deadline_ms=settings.search_reranker_deadline_ms,
+    )
+
+
 google_auth = GoogleAuthGateway()
 google_people = GooglePeopleGateway()
 
@@ -127,6 +155,18 @@ search_audit = LoggingAudit()
 _search_cursor_codec = HmacCursorCodec(_cursor_signing_key())
 
 _search_embedder: NullEmbedder | QueryEmbedder = NullEmbedder()
+
+_search_rerank_config = _rerank_config()
+
+_search_reranker: TeiReranker | None = None
+if _search_rerank_config is not None:
+    _search_reranker = TeiReranker(
+        settings.search_reranker_url,
+        timeout_s=_search_rerank_config.timeout_ms / 1000,
+        max_batch_size=_search_rerank_config.max_batch_size,
+        concurrency=_search_rerank_config.concurrency,
+        retries=_search_rerank_config.retries,
+    )
 
 _google_person_parser = GooglePersonParser()
 
@@ -251,6 +291,13 @@ def build_search_service(session_factory: Callable[[], Session]) -> SearchServic
         audit=search_audit,
         config=search_config,
     )
+
+
+def build_rerank_texts(
+    session_factory: Callable[[], Session],
+) -> PostgresChunkTextRepository:
+    """Wire the rerank text fetcher with a request-scoped session factory."""
+    return PostgresChunkTextRepository(session_factory)
 
 
 def get_uow() -> Iterator[UnitOfWork]:

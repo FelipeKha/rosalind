@@ -28,17 +28,22 @@ from rosalind.application.search.plan import (
     Scope,
     SearchPlan,
 )
+from rosalind.application.search.rerank import ChunkText, RerankTextMode
 from rosalind.application.search.retrieve import LexicalResult
 from rosalind.application.search.semantic import SemanticResult
 
 __all__ = [
     "AuditEvent",
     "AuditPort",
+    "ChunkTextPort",
     "CursorCodecPort",
     "CursorDecodeError",
     "EmbedderPort",
     "EntityResolverPort",
     "LexicalRetrieverPort",
+    "RerankConfig",
+    "RerankTextMode",
+    "RerankerPort",
     "SearchConfig",
     "SearchMetadata",
     "SearchMetadataPort",
@@ -68,6 +73,39 @@ class SearchConfig:
     max_query_chars: int
     max_list_values: int
     default_timezone: str
+
+
+@dataclass(frozen=True, slots=True)
+class RerankConfig:
+    """Rerank settings. Configuration, never agent input.
+
+    ``deadline_ms`` bounds the whole step; ``timeout_ms`` bounds a single
+    request. ``max_input_tokens`` is shared by the query, the passage, and the
+    cross-encoder's special tokens, so the orchestrator subtracts the query's
+    token count before deciding how much passage may remain.
+    """
+
+    max_input_tokens: int
+    text_mode: RerankTextMode = RerankTextMode.INDEX
+    max_batch_size: int = 32
+    concurrency: int = 1
+    retries: int = 1
+    timeout_ms: int = 20000
+    deadline_ms: int = 8000
+
+    def __post_init__(self) -> None:
+        if self.max_input_tokens < 1:
+            raise ValueError("max_input_tokens must be positive")
+        if self.max_batch_size < 1:
+            raise ValueError("max_batch_size must be positive")
+        if self.concurrency < 1:
+            raise ValueError("concurrency must be positive")
+        if self.retries < 0:
+            raise ValueError("retries cannot be negative")
+        if self.timeout_ms <= 0:
+            raise ValueError("timeout_ms must be positive")
+        if self.deadline_ms <= 0:
+            raise ValueError("deadline_ms must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +183,23 @@ class SemanticRetrieverPort(Protocol):
         apply ``plan.scope``, never widen it, and must only consider chunks whose
         stored embedding is fresh (its companion text hash equals ``text_sha256``).
         """
+
+
+class RerankerPort(Protocol):
+    async def rerank(self, query: str, passages: tuple[str, ...]) -> tuple[float, ...]:
+        """Score each passage against the query, returning raw scores in input order.
+
+        Higher is better. Raises ``RerankBackendError`` for a transient failure
+        that outlived retries and ``RerankError`` for a malformed response.
+        """
+
+
+class ChunkTextPort(Protocol):
+    async def get_rerank_texts(
+        self, chunk_ids: tuple[uuid.UUID, ...], mode: RerankTextMode
+    ) -> tuple[ChunkText, ...]:
+        """Return text for each id in requested order; ids absent from the store
+        are dropped (not an error). A database failure raises ``RerankError``."""
 
 
 class CursorDecodeError(Exception):

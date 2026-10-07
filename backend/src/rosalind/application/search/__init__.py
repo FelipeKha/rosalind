@@ -42,6 +42,17 @@ from rosalind.application.search.request import (
     SearchRequestFilters,
     SortOrder,
 )
+from rosalind.application.search.rerank import (
+    ChunkText,
+    RerankBackendError,
+    RerankedHit,
+    RerankError,
+    RerankInput,
+    RerankResult,
+    RerankStats,
+    RerankTextMode,
+    rerank,
+)
 from rosalind.application.search.retrieve import FilterPath, LexicalHit, LexicalResult
 from rosalind.application.search.semantic import (
     SemanticFilterPath,
@@ -53,6 +64,7 @@ from rosalind.application.search.semantic import (
 __all__ = [
     "MAX_LIMIT",
     "Budgets",
+    "ChunkText",
     "Cursor",
     "Direction",
     "FilterPath",
@@ -75,6 +87,13 @@ __all__ = [
     "Presentation",
     "QueryVector",
     "RequestContext",
+    "RerankBackendError",
+    "RerankError",
+    "RerankInput",
+    "RerankResult",
+    "RerankStats",
+    "RerankTextMode",
+    "RerankedHit",
     "ResolvedEntity",
     "ResolvedFilters",
     "ResultView",
@@ -93,5 +112,6 @@ __all__ = [
     "SortOrder",
     "WarningCode",
     "fuse",
+    "rerank",
     "vector_digest",
 ]

@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     # agent never chooses them.
     search_index_version: str = "v1"
     search_reranker: str | None = None
+    search_reranker_url: str = ""
+    search_reranker_timeout_ms: int = 20000
+    search_reranker_max_input_tokens: int = 512
+    search_reranker_text_mode: str = "index"
+    search_reranker_max_concurrent_requests: int = 1
+    search_reranker_max_batch_size: int = 32
+    search_reranker_deadline_ms: int = 8000
     search_cursor_key: str | None = None
     search_max_query_chars: int = 2000
     search_max_list_values: int = 50
