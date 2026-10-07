@@ -113,10 +113,10 @@ e2e-test:
 # ==============================================================================
 
 shellcheck:
-    find . -type f -name '*.sh' -not -path './.git/*' -exec shellcheck {} +
+    find . -type f -name '*.sh' -not -path './.git/*' -not -path '*/.venv/*' -exec shellcheck {} +
 
 shfmt:
-    find . -type f -name '*.sh' -not -path './.git/*' -exec shfmt -d {} +
+    find . -type f -name '*.sh' -not -path './.git/*' -not -path '*/.venv/*' -exec shfmt -d {} +
 
 
 # ==============================================================================

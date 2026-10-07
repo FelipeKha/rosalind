@@ -65,6 +65,7 @@ class KeycloakJwtVerifier:
             preferred_username=claims.get("preferred_username"),
             given_name=claims.get("given_name"),
             family_name=claims.get("family_name"),
+            zoneinfo=claims.get("zoneinfo"),
         )
 
     def _log_unverified_claims(self, token: str) -> None:

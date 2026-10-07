@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
+from fastapi.responses import StreamingResponse
 
 from rosalind.adapters.composition import (
+    get_email_processing_service,
     get_import_service,
     get_object_storage,
     get_processing_service,
@@ -18,6 +22,7 @@ from rosalind.adapters.inbound.http.schemas import imports as schemas
 from rosalind.application import manifest
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
+from rosalind.application.services.emails import EmailProcessingService
 from rosalind.application.services.imports import ImportService
 from rosalind.application.services.processing import ProcessingService
 from rosalind.domain.source import Import, ImportFile
@@ -30,6 +35,9 @@ UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 ImportDep = Annotated[ImportService, Depends(get_import_service)]
 ProcessingDep = Annotated[ProcessingService, Depends(get_processing_service)]
 StorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]
+EmailPipelineDep = Annotated[
+    EmailProcessingService, Depends(get_email_processing_service)
+]
 
 
 @router.get("", response_model=schemas.ImportListResponse)
@@ -113,6 +121,32 @@ def process_import(
         facts_reused=outcome.facts_reused,
         assertions_created=outcome.assertions_created,
     )
+
+
+@router.post("/{import_id}/pipeline")
+def run_pipeline(
+    import_id: uuid.UUID,
+    uow: UowDep,
+    email_pipeline: EmailPipelineDep,
+    account: AccountDep,
+    stage: str | None = None,
+) -> StreamingResponse:
+    """Run the offline email pipeline.
+
+    Streams newline-delimited JSON progress events. Errors that can be decided
+    before any work starts (unknown import, not completed, no source) are raised
+    synchronously and mapped to HTTP errors; per-record failures are reported in
+    the stream rather than aborting the run. ``stage`` restricts the run to a
+    single stage (e.g. ``chunk``) for rebuilds; omitting it runs all stages.
+    """
+    prepared = email_pipeline.prepare(uow, account.id, import_id)
+    stages = {stage} if stage else None
+
+    def generate() -> Iterator[str]:
+        for event in email_pipeline.run(uow, prepared, stages=stages):
+            yield json.dumps(event.to_dict()) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @router.get(

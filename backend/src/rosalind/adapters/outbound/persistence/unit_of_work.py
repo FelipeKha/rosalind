@@ -15,6 +15,19 @@ from rosalind.adapters.outbound.persistence.repositories.account import (
     PostgresAccountIdentityRepository,
     PostgresAccountRepository,
 )
+from rosalind.adapters.outbound.persistence.repositories.chunks import (
+    PostgresChunkRepository,
+)
+from rosalind.adapters.outbound.persistence.repositories.email_canonical import (
+    PostgresEmailCanonicalRepository,
+)
+from rosalind.adapters.outbound.persistence.repositories.embeddings import (
+    PostgresEmbeddingRepository,
+)
+from rosalind.adapters.outbound.persistence.repositories.enrichment import (
+    PostgresAttachmentTextRepository,
+    PostgresEmailEnrichmentRepository,
+)
 from rosalind.adapters.outbound.persistence.repositories.imports import (
     PostgresImportRepository,
 )
@@ -31,9 +44,13 @@ from rosalind.adapters.outbound.persistence.repositories.source_account import (
 from rosalind.adapters.outbound.persistence.repositories.source_record import (
     PostgresSourceRecordRepository,
 )
+from rosalind.application.ports.embedding import EmbeddingRepository
 from rosalind.application.ports.repositories import (
     AccountIdentityRepository,
     AccountRepository,
+    AttachmentTextRepository,
+    EmailCanonicalRepository,
+    EmailEnrichmentRepository,
     ImportRepository,
     OAuthAuthRequestRepository,
     OAuthCredentialRepository,
@@ -41,6 +58,7 @@ from rosalind.application.ports.repositories import (
     SourceAccountRepository,
     SourceRecordRepository,
 )
+from rosalind.application.ports.search import ChunkRepository
 
 
 class SqlAlchemyUnitOfWork:
@@ -54,6 +72,11 @@ class SqlAlchemyUnitOfWork:
     auth_requests: OAuthAuthRequestRepository
     imports: ImportRepository
     person_canonical: PersonCanonicalRepository
+    email_canonical: EmailCanonicalRepository
+    email_enrichment: EmailEnrichmentRepository
+    attachment_text: AttachmentTextRepository
+    chunks: ChunkRepository
+    embeddings: EmbeddingRepository
 
     def __init__(self, session: Session):
         self._session = session
@@ -65,6 +88,11 @@ class SqlAlchemyUnitOfWork:
         self.auth_requests = PostgresOAuthAuthRequestRepository(session)
         self.imports = PostgresImportRepository(session)
         self.person_canonical = PostgresPersonCanonicalRepository(session)
+        self.email_canonical = PostgresEmailCanonicalRepository(session)
+        self.email_enrichment = PostgresEmailEnrichmentRepository(session)
+        self.attachment_text = PostgresAttachmentTextRepository(session)
+        self.chunks = PostgresChunkRepository(session)
+        self.embeddings = PostgresEmbeddingRepository(session)
 
     def commit(self) -> None:
         self._session.commit()

@@ -9,6 +9,19 @@ from rosalind.adapters.outbound.persistence.models.account import (
     AccountIdentity,
 )
 from rosalind.adapters.outbound.persistence.models.base import Base, utcnow
+from rosalind.adapters.outbound.persistence.models.derived import (
+    AttachmentText,
+    EmailSegment,
+    EmailText,
+)
+from rosalind.adapters.outbound.persistence.models.email import (
+    EmailAttachment,
+    EmailMessage,
+    EmailMessageObservation,
+    EmailParticipant,
+    EmailTag,
+    EmailThread,
+)
 from rosalind.adapters.outbound.persistence.models.imports import Import, ImportFile
 from rosalind.adapters.outbound.persistence.models.person import (
     Person,
@@ -41,6 +54,12 @@ from rosalind.adapters.outbound.persistence.models.person import (
     SourceAssertion,
     SourceIdentity,
 )
+from rosalind.adapters.outbound.persistence.models.search import (
+    Chunk,
+    ChunkBuild,
+    EmbeddingFailure,
+    EmbeddingRun,
+)
 from rosalind.adapters.outbound.persistence.models.source import (
     OAuthAuthRequest,
     OAuthCredential,
@@ -51,7 +70,20 @@ from rosalind.adapters.outbound.persistence.models.source import (
 __all__ = [
     "Account",
     "AccountIdentity",
+    "AttachmentText",
     "Base",
+    "Chunk",
+    "ChunkBuild",
+    "EmailAttachment",
+    "EmailMessage",
+    "EmailMessageObservation",
+    "EmailParticipant",
+    "EmailSegment",
+    "EmailTag",
+    "EmailText",
+    "EmailThread",
+    "EmbeddingFailure",
+    "EmbeddingRun",
     "Import",
     "ImportFile",
     "OAuthAuthRequest",

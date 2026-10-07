@@ -679,6 +679,16 @@ class PostgresPersonCanonicalRepository:
         ).all()
         return set(person_ids)
 
+    def has_email(self, person_id: uuid.UUID) -> bool:
+        return (
+            self._session.scalar(
+                select(models.PersonEmail.id)
+                .where(models.PersonEmail.person_id == person_id)
+                .limit(1)
+            )
+            is not None
+        )
+
     def link_relation(
         self, *, relation_id: uuid.UUID, related_person_id: uuid.UUID
     ) -> None:

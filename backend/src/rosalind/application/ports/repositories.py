@@ -16,6 +16,12 @@ from typing import Any, Protocol
 
 from rosalind.application.read_models import PersonProfile
 from rosalind.domain.account import Account, AccountIdentity
+from rosalind.domain.email import (
+    AttachmentText,
+    CanonicalEmail,
+    EmailText,
+    ThreadEdge,
+)
 from rosalind.domain.person import (
     AddressObservation,
     DateObservation,
@@ -52,6 +58,45 @@ class FactUpsertResult:
     fact_id: uuid.UUID
     fact_created: bool
     assertion_created: bool
+
+
+@dataclass(frozen=True)
+class EmailSaveResult:
+    """Outcome of persisting one canonical email aggregate."""
+
+    message_id: uuid.UUID
+    status: str  # "created" | "updated" | "skipped"
+
+
+@dataclass(frozen=True)
+class ThreadReconcileResult:
+    """Outcome of one thread reconciliation pass over a source account."""
+
+    threads_created: int
+    threads_removed: int
+    messages_reassigned: int
+
+
+@dataclass(frozen=True)
+class EmailTextWorkItem:
+    """One message that needs (re)enrichment, with its body inputs."""
+
+    email_id: uuid.UUID
+    text_plain: str | None
+    text_html: str | None
+    content_sha256: str | None
+
+
+@dataclass(frozen=True)
+class AttachmentTextWorkItem:
+    """One attachment blob that needs (re)extraction."""
+
+    blob_sha256: str
+    storage_key: str
+    size: int
+    filename: str | None
+    declared_mime: str | None
+    detected_mime: str | None
 
 
 @dataclass(frozen=True)
@@ -115,6 +160,10 @@ class AccountIdentityRepository(Protocol):
 class AccountRepository(Protocol):
     def get(self, account_id: uuid.UUID) -> Account | None: ...
 
+    def set_self_person_id(
+        self, account_id: uuid.UUID, person_id: uuid.UUID
+    ) -> None: ...
+
 
 class SourceRecordRepository(Protocol):
     def persist(
@@ -123,14 +172,26 @@ class SourceRecordRepository(Protocol):
         source_account: SourceAccount,
         resource_type: str,
         external_id: str,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | None,
         payload_sha256: str,
         source_etag: str | None = None,
         source_updated_at: datetime | None = None,
         import_id: uuid.UUID | None = None,
+        payload_uri: str | None = None,
     ) -> SourceRecord: ...
 
     def list_for_import(self, import_id: uuid.UUID) -> list[SourceRecord]: ...
+
+    def persist_split(
+        self,
+        *,
+        source_account: SourceAccount,
+        resource_type: str,
+        external_id: str,
+        payload_sha256: str,
+        import_id: uuid.UUID,
+        payload_uri: str,
+    ) -> bool: ...
 
 
 class SourceAccountRepository(Protocol):
@@ -425,6 +486,77 @@ class PersonCanonicalRepository(Protocol):
 
     def find_person_ids_by_name(self, *, normalized_name: str) -> set[uuid.UUID]: ...
 
+    def has_email(self, person_id: uuid.UUID) -> bool: ...
+
     def link_relation(
         self, *, relation_id: uuid.UUID, related_person_id: uuid.UUID
+    ) -> None: ...
+
+
+class EmailCanonicalRepository(Protocol):
+    """Write port for canonicalizing email messages.
+
+    Persists a whole ``CanonicalEmail`` aggregate atomically (message, its
+    observation, participants, attachments, tags, and thread). The adapter owns
+    the SQL and the version/observation idempotency checks; the application
+    layer builds the aggregate and reports the outcome.
+    """
+
+    def self_handles(self, account_id: uuid.UUID) -> set[str]: ...
+
+    def save(self, canonical: CanonicalEmail) -> EmailSaveResult: ...
+
+    def list_thread_edges(self, source_account_id: uuid.UUID) -> list[ThreadEdge]: ...
+
+    def reconcile_threads(
+        self, source_account_id: uuid.UUID, roots: dict[str, str]
+    ) -> ThreadReconcileResult: ...
+
+
+class EmailEnrichmentRepository(Protocol):
+    """Write port for the enrich stage's derived text.
+
+    ``list_email_work`` is the work finder: one query that returns messages whose
+    derived row is missing, has a different ``stage_version``, or whose
+    ``input_sha256`` differs from the message's ``content_sha256`` (using
+    ``IS DISTINCT FROM`` so a NULL hash still counts as stale). ``replace_email_text``
+    replaces the message's derived text and segments in place.
+    """
+
+    def list_email_work(
+        self,
+        *,
+        source_account_id: uuid.UUID,
+        stage_version: str,
+        limit: int,
+        retry_failed: bool = False,
+    ) -> list[EmailTextWorkItem]: ...
+
+    def replace_email_text(
+        self,
+        *,
+        email_id: uuid.UUID,
+        text: EmailText,
+        status: str,
+        error: str | None,
+        stage_version: str,
+        input_sha256: str | None,
+        segments_digest: str | None,
+    ) -> None: ...
+
+
+class AttachmentTextRepository(Protocol):
+    """Write port for the enrich stage's derived attachment text."""
+
+    def list_blob_work(
+        self,
+        *,
+        source_account_id: uuid.UUID,
+        stage_version: str,
+        limit: int,
+        retry_failed: bool = False,
+    ) -> list[AttachmentTextWorkItem]: ...
+
+    def replace_attachment_text(
+        self, *, result: AttachmentText, stage_version: str
     ) -> None: ...

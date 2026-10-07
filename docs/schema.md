@@ -13,6 +13,8 @@ Data is split into four schemas by role:
 |---|---|---|
 | `raw` | Immutable provider evidence | Never deleted by canonical operations |
 | `core` | Canonical model + provenance | Cascades to dependent facts, never to `raw` |
+| `derived` | Enrich-stage read models (rebuildable) | Replaced in place; cascades from `core` |
+| `search` | Retrieval read models (chunks, rebuildable) | Replaced in place; cascades from `core` |
 | `agent` | Derived read models (views) | None — read-only projection |
 | `public` (default) | Operational: imports, source accounts, OAuth, accounts | Domain-specific (below) |
 
@@ -62,8 +64,9 @@ discards the original.
 | `source_etag` | text | yes | provider etag, if any |
 | `source_updated_at` | timestamptz | yes | provider's own modification time |
 | `observed_at` | timestamptz | no | when Rosalind recorded it |
-| `payload` | jsonb | no | canonical JSON of the full provider payload |
+| `payload` | jsonb | yes | canonical JSON of the full provider payload (JSON providers) |
 | `payload_sha256` | text | no | SHA-256 of the payload |
+| `payload_uri` | text | yes | object-storage key holding the payload bytes (byte providers, e.g. email messages) |
 
 Constraints / indexes:
 
@@ -407,6 +410,355 @@ Re-importing the same payload is a no-op because
 `uq_source_record_snapshot` and the fact value-uniqueness constraints absorb
 duplicates.
 
+### Email (Gmail) — messages, participants, attachments, threads
+
+Email is a different domain from Contacts: events and relationships, not
+attributes. It lives in the `core` schema but is record-level, not
+field-level — provenance is a direct link to the raw record (`email_message_observation`), not `source_assertion`.
+
+| Table | Role |
+|---|---|
+| `core.email_message` | one canonical message; identity `uuid5(source_account_id, message_id)` |
+| `core.email_message_observation` | provenance — one row per raw record that produced/re-produced a message |
+| `core.email_participant` | from/to/cc/bcc, email + optional name (no entity link yet) |
+| `core.email_attachment` | attachment metadata + content-addressed blob key |
+| `core.email_tag` | provider-namespaced labels (`gmail:Projects`) |
+| `core.email_thread` | simple store keyed on `(source_account_id, root_message_id)` |
+
+#### `core.email_message`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK, `uuid5` over `(source_account_id, message_id)` |
+| `source_account_id` | uuid | no | FK → `source_account.id` `RESTRICT`; indexed |
+| `message_id` | text | no | normalized (brackets+whitespace only, no case folding) |
+| `message_id_synthetic` | boolean | no | true when the message had no `Message-ID` |
+| `in_reply_to` | text | yes | |
+| `references` | text[] | yes | |
+| `occurred_at` | timestamptz | no | parsed `Date` header, else observation time |
+| `utc_offset_minutes` | int | yes | |
+| `direction` | text | no | `received` / `sent` / `self` / `unknown` |
+| `subject` / `text_plain` / `text_html` | text | yes | body as parsed |
+| `has_attachments` | boolean | no | at least one non-inline attachment |
+| `is_trash_or_spam` | boolean | no | derived from `Spam`/`Trash` labels |
+| `thread_id` | uuid | yes | FK → `core.email_thread.id` `SET NULL`; indexed |
+| `thread_changed_at` | timestamptz | yes | set when reconcile reassigns the message's thread (chunk-refresh signal) |
+| `parser_version` / `canonicalizer_version` | text | no | stage versions for idempotency |
+| `metadata` | jsonb | no | holds `parse_warnings` |
+
+- `uq_email_message_source_message` unique on `(source_account_id, message_id)`.
+- `ck_email_message_direction` on `direction`.
+
+#### `core.email_message_observation`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `message_id` | uuid | no | FK → `core.email_message.id` `CASCADE`; indexed |
+| `source_record_id` | uuid | no | FK → `raw.source_record.id` `RESTRICT`; **unique** |
+| `observed_at` | timestamptz | no | |
+
+`uq_email_message_observation_record` unique on `source_record_id`. The
+observation with the greatest `observed_at` drives tags: a later archive that
+re-imports the same `Message-ID` with changed labels creates a new observation
+and replaces the tag set.
+
+#### `core.email_participant`
+
+`id`, `message_id` (FK CASCADE, indexed), `role` (`from|to|cc|bcc`), `name`,
+`addr` (as observed), `addr_normalized` (lowercased), `seq`. Unique on
+`(message_id, role, addr_normalized)`. No `entity_id` link to `core.person` yet —
+entity resolution is deferred.
+
+#### `core.email_attachment`
+
+`id`, `message_id` (FK CASCADE, indexed), `filename`, `declared_mime`,
+`detected_mime`, `size`, `sha256`, `disposition`, `storage_key` (blob key),
+`part_index`, `status` (default `'present'`). Unique on `(message_id,
+part_index)`.
+
+#### `core.email_tag`
+
+`id`, `message_id` (FK CASCADE, indexed), `tag` (namespaced). Unique on
+`(message_id, tag)`.
+
+#### `core.email_thread`
+
+`id`, `source_account_id` (FK RESTRICT, indexed), `root_message_id` (not null),
+`provider_hint` (plain attribute, not part of the key), `created_at`. Unique on
+`(source_account_id, root_message_id)`.
+
+Threads are **reconciled** (JWZ-style threading, run idempotently after every
+canonicalize): the root is the transitive reply-chain root
+(`In-Reply-To ?? References[-1]`, walked to the top), with placeholder nodes for
+referenced-but-absent messages so a reply whose ancestors are missing still
+joins the same thread as its siblings. `root_message_id` may therefore be a
+missing ancestor. On a merge the surviving thread is the existing one with the
+most messages (ties: oldest); reassigned messages get `thread_changed_at`
+bumped. Thread IDs are unstable (`uuid4`) — citations/eval use message IDs.
+`provider_hint` is informational only and not used for merging. Quoted-segment
+coverage is deferred.
+
+---
+
+## `derived` — enrich-stage read models
+
+Derived rows are **rebuildable by definition**: they are keyed by an input hash
+and a stage version, replaced in place, and carry no provenance of their own —
+the evidence lives in `core` and `raw`. A stage re-runs its work finder to select
+rows that are missing, have a different `stage_version`, or whose `input_sha256`
+differs from the source (`IS DISTINCT FROM`, so a NULL hash counts as stale).
+
+`stage_version` composes the pipeline's own version plus the major.minor of each
+pinned library (e.g. `enrich/1+selectolax/1+lingua/2`), so a patch release of a
+library does not invalidate the whole mailbox.
+
+### `derived.email_text`
+
+One row per canonical message (keyed by `email_id`), holding the clean text the
+chunker and extractors consume.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `email_id` | uuid | no | PK; FK → `core.email_message.id` `ON DELETE CASCADE` |
+| `clean_text` | text | no | normalized (NFC, control chars stripped, whitespace collapsed within lines) |
+| `clean_method` | text | no | `plain` or `html` — which body representation it was derived from |
+| `status` | text | no | `done` / `empty` / `failed` |
+| `error` | text | yes | set when `status = 'failed'` |
+| `stage_version` | text | no | |
+| `input_sha256` | text | yes | equals `core.email_message.content_sha256`; the comparison key |
+| `segments_digest` | text | yes | hash over stage version, `input_sha256`, and each segment's kind/offsets/coverage; the chunk source digest for body and quote chunks (4C updates it on coverage change) |
+| `created_at` / `updated_at` | timestamptz | no | |
+
+### `derived.email_segment`
+
+The lossless tiling of `clean_text` into `new` / `quoted` / `forwarded` /
+`signature` / `disclaimer` spans. Segments tile `clean_text` exactly (no gaps or
+overlaps) via code-point offsets; the segment text is always
+`clean_text[start_offset:end_offset]` and is deliberately not stored (it
+duplicates `clean_text`).
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `email_id` | uuid | no | FK → `core.email_message.id` `ON DELETE CASCADE`; indexed |
+| `seq` | int | no | position within the message; unique with `email_id` |
+| `kind` | text | no | `new` / `quoted` / `forwarded` / `signature` / `disclaimer` |
+| `start_offset` / `end_offset` | int | no | code-point offsets into `clean_text` |
+| `language` | text | yes | ISO 639-1; null below a length/confidence threshold, and for signatures |
+| `language_confidence` | float | yes | |
+| `quote_depth` | int | no | nesting depth of a quoted/forwarded segment |
+| `attribution_raw` | text | yes | raw attribution line, kept unparsed |
+| `quoted_author` / `quoted_at` | text | yes | parsed only when confident (4C) |
+| `covered_by_email_id` | uuid | yes | FK → `core.email_message.id` `SET NULL`; set by 4C coverage |
+| `coverage_checked_at` | timestamptz | yes | set by 4C; nulled when segments are replaced |
+
+### `derived.attachment_text`
+
+One row per content-addressed blob (keyed by `blob_sha256`), so a PDF attached to
+ten emails is extracted once. There is **no foreign key** to
+`core.email_attachment` — `sha256` is not unique there. Orphan cleanup is a later
+concern.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `blob_sha256` | text | no | PK |
+| `status` | text | no | `done` / `empty` / `needs_ocr` / `unsupported` / `too_large` / `encrypted` / `failed` |
+| `text` | text | yes | extracted text |
+| `method` | text | yes | extractor key (`pdf`, `docx`, `xlsx`, `pptx`, `text`) |
+| `page_count` | int | yes | |
+| `language` | text | yes | |
+| `error` | text | yes | |
+| `truncated` | boolean | no | true when the output was cut at the character cap |
+| `text_sha256` | text | yes | SHA-256 of the extracted text; lets a chunk rebuild reuse an unchanged embedding |
+| `stage_version` | text | no | |
+| `created_at` / `updated_at` | timestamptz | no | |
+
+Terminal statuses (`failed`, `unsupported`, `too_large`) are only retried when
+`stage_version` changes or on an explicit `--retry-failed`; otherwise every run
+would re-attempt each corrupt PDF.
+
+---
+
+## `search` — retrieval read models (chunks)
+
+Chunks are the unit of retrieval: a passage of email body, quoted history, or
+attachment text with a contextual prefix and denormalized filter columns. They
+are rebuildable by definition — keyed deterministically (`id` is a `uuid5` over
+`(email_id, chunk_kind, attachment_id, seq)`) and replaced in place when their
+source digest or `index_version` changes. `chunk_build` records the build
+bookkeeping that drives the work finder. Embeddings are stored as columns on
+the chunk row (one per model version) plus `embedding_failure` / `embedding_run`
+bookkeeping; the BM25 index (ParadeDB `pg_search`) is created by migration 0018,
+while the HNSW index remains deferred.
+
+### `search.chunk`
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK, deterministic `uuid5` over the uniqueness key |
+| `email_id` | uuid | no | FK → `core.email_message.id` `CASCADE` |
+| `attachment_id` | uuid | yes | FK → `core.email_attachment.id` `CASCADE` |
+| `thread_id` | uuid | yes | FK → `core.email_thread.id` `SET NULL` |
+| `chunk_kind` | text | no | `email_body` / `email_quote` / `attachment` |
+| `seq` | int | no | position within the source (0 = message representative) |
+| `text_for_display` | text | no | the chunk text without the prefix |
+| `text_for_index` | text | no | contextual prefix + text |
+| `text_sha256` | text | no | lets a rebuild reuse an unchanged embedding |
+| `language` | text | yes | dominant language by segment length, else null |
+| `index_version` | text | no | chunker + prefix + tokenizer + params digest |
+| `source_account_id` / `source_account_num` | uuid / int | no | scope predicate |
+| `sent_at` | timestamptz | no | message `occurred_at` |
+| `sender_handle` | text | no | first `from` address (empty when missing) |
+| `recipient_handles` | text[] | no | to/cc/bcc |
+| `participant_handles` | text[] | no | sorted union of all roles |
+| `direction` | text | no | `received` / `sent` / `self` / `unknown` |
+| `has_attachment` | boolean | no | |
+| `is_trash_or_spam` | boolean | no | |
+| `tags` | text[] | no | namespaced labels |
+| `meta` | jsonb | no | `header_only`, `truncated`, `partial` flags |
+| `created_at` | timestamptz | no | |
+| `emb_bge_m3_v1` | halfvec(1024) | yes | null until the embed job runs |
+| `emb_bge_m3_v1_text_sha256` | text | yes | hash of the text that was embedded |
+
+- `uq_chunk_key` unique on `(email_id, chunk_kind, attachment_id, seq)`
+  `NULLS NOT DISTINCT`.
+- The chunk upsert never writes the embedding columns. Staleness is detected
+  by comparing `emb_*_text_sha256` against `text_sha256`, so a chunker rebuild
+  that leaves a chunk's text unchanged keeps its embedding.
+
+### `search.chunk` BM25 index (`chunk_bm25_idx`, migration 0018)
+
+ParadeDB `pg_search` BM25 index over `text_for_index`, with the scope/time/bool
+fast fields and the literal-tokenized text fields included so their filters push
+into the index scan:
+
+```sql
+CREATE INDEX chunk_bm25_idx ON search.chunk USING bm25 (
+    id, text_for_index, source_account_num, sent_at, has_attachment,
+    is_trash_or_spam, (sender_handle::pdb.literal),
+    (direction::pdb.literal), (language::pdb.literal)
+)
+```
+
+Lexical retrieval (online search step 2.1) classifies filters into two paths:
+
+- **pushdown** — `source_account_num` (scope), `sent_at`, `has_attachment`,
+  `is_trash_or_spam`, `sender_handle`, `direction`, `language`. These are
+  evaluated inside the index scan.
+- **overfetch (heap filters)** — `recipient_handles`, `participant_handles`,
+  `tags`, `thread_id`. These are not in the BM25 index; ParadeDB still applies
+  them correctly while scanning the candidate stream in score order, so a single
+  `LIMIT lexical_k + 1` query is exact for every filter. `filter_path` in the
+  retrieval result reports which situation applied.
+
+The `@@@` query is rendered from the structured `LexicalQuery` by the outbound
+adapter (`adapters.outbound.search.lexical`), which owns engine syntax and
+escaping; `application` never sees `@@@` or `paradedb.score`.
+
+### `search.chunk` HNSW index (`chunk_emb_bge_m3_v1_hnsw`, migration 0019)
+
+HNSW index over the `halfvec` embedding column, for filtered approximate
+nearest-neighbor retrieval (online search step 2.2):
+
+```sql
+CREATE INDEX chunk_emb_bge_m3_v1_hnsw ON search.chunk
+    USING hnsw (emb_bge_m3_v1 halfvec_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+```
+
+Created with `CREATE INDEX CONCURRENTLY` (in an Alembic autocommit block), and
+only after the embedding backfill: HNSW maintenance during bulk loads is slow.
+The semantic retriever does not require the index — without it, the ANN query
+falls back to an exact scan — and the exact path never uses it. Apply migration
+0019 to real data only after `scripts/bench_semantic_retrieval.py` shows the ANN
+path beats the exact path at the corpus size.
+
+Semantic retrieval has two paths (`filter_path`):
+
+- **exact** — a `MATERIALIZED` CTE materializes the filtered rows, then exact
+  cosine distances are computed, sorted, and truncated. Always `complete`.
+- **ann_iterative** (default) — an HNSW scan with `SET LOCAL
+  hnsw.iterative_scan = 'strict_order'`, so filtered ANN keeps scanning until it
+  finds `semantic_k` qualifying rows or hits `hnsw.max_scan_tuples`. `complete`
+  is only asserted when a bounded exact count proves fewer than `semantic_k`
+  match; `scan_limit_hit` marks a scan that stopped before exhausting the
+  matching set.
+
+The semantic universe is a strict subset of the lexical one: the shared scope +
+filters, plus a fresh, non-null embedding (`emb_bge_m3_v1 IS NOT NULL` and
+`emb_bge_m3_v1_text_sha256 = text_sha256`, so a changed chunk's stale vector is
+never returned). Both retrievers share the same filter predicates
+(`adapters.outbound.search.filters`), but quote chunks are not embedded by
+default, so the two universes differ by design.
+
+### `search.chunk_build`
+
+One row per `(email_id, chunk_kind, attachment_id)` recording when a kind's
+chunks were last built and from what source digest. The work finder selects an
+email when a build row is missing, `index_version` differs, `source_digest`
+differs from the current digest, or `built_at < GREATEST(updated_at,
+thread_changed_at)`.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `email_id` | uuid | no | FK → `core.email_message.id` `CASCADE` |
+| `chunk_kind` | text | no | |
+| `attachment_id` | uuid | yes | FK → `core.email_attachment.id` `CASCADE` |
+| `index_version` | text | no | |
+| `source_digest` | text | yes | `email_text.segments_digest` (body/quote) or `stage_version:text_sha256` (attachment) |
+| `built_at` | timestamptz | no | the time the inputs were read |
+| `chunk_count` | int | no | |
+| `status` | text | no | `done` / `empty` / `failed` |
+| `error` | text | yes | |
+
+- `uq_chunk_build_key` unique on `(email_id, chunk_kind, attachment_id)`
+  `NULLS NOT DISTINCT`.
+
+### `search.embedding_failure`
+
+One row per `(chunk_id, space)` recording a text that could not be embedded
+(overlong, rejected by the model). The work finder skips a chunk while a
+failure row holds the same `text_sha256` as the chunk; a text change or an
+explicit retry re-queues it. `attempts` increments on each re-failure.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `chunk_id` | uuid | no | PK, FK → `search.chunk.id` `CASCADE` |
+| `space` | text | no | PK, e.g. `bge_m3_v1` |
+| `text_sha256` | text | no | the text that failed |
+| `error` | text | no | |
+| `attempts` | int | no | |
+| `last_attempt_at` | timestamptz | no | |
+
+### `search.embedding_run`
+
+One row per embed run, recording the serving path (host, locality, model
+revision) that produced the vectors — the disclosure ledger for remote
+embedders.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `space` | text | no | |
+| `started_at` / `finished_at` | timestamptz | no | |
+| `host` | text | no | embedder URL |
+| `device_class` | text | no | |
+| `dtype` | text | no | `float16` / `float32` |
+| `revision` | text | no | model revision |
+| `locality` | text | no | `local` / `remote` |
+| `chunks_embedded` | int | no | |
+| `chunks_failed` | int | no | |
+
+Embeddings are **derived data**: they are rebuildable from `text_for_index` and
+never edited by hand. Switching the embedding model is additive:
+
+1. add the new `emb_<space>` column pair to `search.chunk` and a registry entry;
+2. backfill with `--stage embed` (the work finder sees the null column);
+3. create the HNSW index (if adopted) and switch the `embedding_space` config;
+4. drop the old column once no query references it.
+
 ---
 
 ## `agent` — derived read models
@@ -445,6 +797,7 @@ Rosalind `account` (a user) — see [`auth.md`](auth.md).
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `id` | uuid | no | PK |
+| `num` | int | no | identity surrogate for scope filtering (pushdown-friendly) |
 | `provider` | varchar(50) | no | e.g. `google` |
 | `name` | text | yes | human-facing CLI slug; unique |
 | `account_identifier` | text | yes | provider-scoped account id |

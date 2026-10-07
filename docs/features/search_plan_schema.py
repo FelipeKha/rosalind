@@ -38,7 +38,8 @@ AccountId = NewType("AccountId", UUID)
 SourceAccountId = NewType("SourceAccountId", UUID)
 EntityId = NewType("EntityId", UUID)
 ThreadId = NewType("ThreadId", UUID)
-ItemId = NewType("ItemId", UUID)
+EmailId = NewType("EmailId", UUID)
+"""``core.email_message.id`` (uuid5 of source account + RFC Message-ID)."""
 RequestId = NewType("RequestId", UUID)
 AuditId = NewType("AuditId", UUID)
 
@@ -83,8 +84,22 @@ class ResultView(StrEnum):
 
 
 class Direction(StrEnum):
+    """Matches the ``core.email_message.direction`` check constraint.
+
+    Note: a ``received`` filter excludes ``unknown`` (mailing lists, Bcc copies
+    to unregistered aliases). Expose all four values to the agent, and document
+    that in ``describe_capabilities``.
+    """
+
     RECEIVED = "received"
     SENT = "sent"
+    SELF = "self"
+    UNKNOWN = "unknown"
+
+
+class FusionStrategy(StrEnum):
+    RRF = "rrf"  # reciprocal rank fusion (v1 default)
+    CONVEX = "convex"  # convex combination of normalized scores (evaluated against RRF)
 
 
 class WarningCode(StrEnum):
@@ -94,6 +109,7 @@ class WarningCode(StrEnum):
     MODE_DEGRADED = "mode_degraded"
     QUERY_TRUNCATED = "query_truncated"
     LIMIT_CLAMPED = "limit_clamped"
+    RERANK_SKIPPED = "rerank_skipped"
 
 
 class ShortCircuitReason(StrEnum):
@@ -101,6 +117,7 @@ class ShortCircuitReason(StrEnum):
     NO_MATCHING_HANDLES = "no_matching_handles"
     CONTRADICTORY_FILTERS = "contradictory_filters"
     OUTSIDE_DATA_COVERAGE = "outside_data_coverage"
+    THREAD_NOT_FOUND = "thread_not_found"
 
 
 # --------------------------------------------------------------------------
@@ -173,7 +190,13 @@ class ResolvedEntity:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedFilters:
-    """Normalized filters. Lists were OR within a field; fields are AND."""
+    """Normalized filters. Lists were OR within a field; fields are AND.
+
+    Thread IDs are unstable (thread reconciliation merges and splits threads), so
+    the agent filters with ``thread_of`` (a message ID). Prepare resolves it to the
+    message's *current* thread for this request. The fingerprint and the cursor use
+    ``thread_of`` only, never ``thread_id``.
+    """
 
     senders: frozenset[Handle] = frozenset()
     recipients: frozenset[Handle] = frozenset()  # to/cc/bcc
@@ -182,7 +205,8 @@ class ResolvedFilters:
     tags_any: frozenset[Tag] = frozenset()
     tags_exclude: frozenset[Tag] = frozenset()
     has_attachment: bool | None = None
-    thread_id: ThreadId | None = None
+    thread_of: EmailId | None = None  # what the agent asked for: "the thread of this message"
+    thread_id: ThreadId | None = None  # that message's current thread, resolved for this request
     languages: frozenset[LanguageCode] = frozenset()
     sent_from: datetime | None = None  # inclusive, UTC
     sent_before: datetime | None = None  # exclusive, UTC
@@ -197,6 +221,8 @@ class ResolvedFilters:
             raise ValueError("sent_from must be before sent_before")
         if self.tags_any & self.tags_exclude:
             raise ValueError("a tag cannot be both included and excluded")
+        if (self.thread_of is None) != (self.thread_id is None):
+            raise ValueError("thread_of and thread_id must be set together")
 
     def to_echo(self) -> dict[str, object]:
         """JSON-friendly form for the response's ``applied_filters``."""
@@ -208,7 +234,7 @@ class ResolvedFilters:
             "tags": sorted(self.tags_any),
             "exclude_tags": sorted(self.tags_exclude),
             "has_attachment": self.has_attachment,
-            "thread_id": str(self.thread_id) if self.thread_id else None,
+            "thread_of": str(self.thread_of) if self.thread_of else None,
             "language": sorted(self.languages),
             "date_from_utc": _iso(self.sent_from),
             "date_before_utc": _iso(self.sent_before),
@@ -279,6 +305,8 @@ class Budgets:
     fused_k: int  # kept after fusion
     rerank_k: int  # sent to the reranker (ignored when reranking is off)
     window_k: int  # final ranked results available across pages
+    # When a reranker is configured, SearchPlan also requires window_k <= rerank_k:
+    # only reranked candidates have a meaningful order to page through.
 
     def __post_init__(self) -> None:
         values = (self.lexical_k, self.semantic_k, self.fused_k, self.rerank_k, self.window_k)
@@ -286,6 +314,35 @@ class Budgets:
             raise ValueError("all budgets must be positive")
         if self.window_k > self.fused_k:
             raise ValueError("window_k cannot exceed fused_k")
+        if self.rerank_k > self.fused_k:
+            raise ValueError("rerank_k cannot exceed fused_k")
+
+
+@dataclass(frozen=True, slots=True)
+class FusionConfig:
+    """Step 3 settings. Configuration, never agent input; part of the fingerprint."""
+
+    strategy: FusionStrategy = FusionStrategy.RRF
+    rrf_k: int = 60  # the usual RRF constant
+    lexical_weight: float = 1.0
+    semantic_weight: float = 1.0
+    convex_alpha: float | None = None  # weight of the semantic score in [0, 1]; CONVEX only
+    max_chunks_per_item: int = 2  # per-message cap applied before the reranker
+
+    def __post_init__(self) -> None:
+        if self.rrf_k < 1:
+            raise ValueError("rrf_k must be at least 1")
+        if self.lexical_weight < 0 or self.semantic_weight < 0:
+            raise ValueError("fusion weights cannot be negative")
+        if self.lexical_weight == 0 and self.semantic_weight == 0:
+            raise ValueError("at least one fusion weight must be positive")
+        if self.max_chunks_per_item < 1:
+            raise ValueError("max_chunks_per_item must be at least 1")
+        if self.strategy is FusionStrategy.CONVEX:
+            if self.convex_alpha is None or not 0.0 <= self.convex_alpha <= 1.0:
+                raise ValueError("CONVEX fusion needs convex_alpha in [0, 1]")
+        elif self.convex_alpha is not None:
+            raise ValueError("convex_alpha is only valid with CONVEX fusion")
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,7 +360,7 @@ class ListPosition:
     """Keyset position for the ``list`` strategy."""
 
     occurred_at: datetime
-    item_id: ItemId
+    email_id: EmailId
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +421,7 @@ class SearchPlan:
     presentation: Presentation
     budgets: Budgets
     versions: IndexVersions
+    fusion: FusionConfig = FusionConfig()
     cursor: Cursor | None = None
     warnings: tuple[PlanWarning, ...] = ()
     hints: PlanHints = PlanHints()
@@ -401,6 +459,8 @@ class SearchPlan:
 
         if self.presentation.limit > self.budgets.window_k:
             raise ValueError("limit cannot exceed window_k")
+        if self.rerank_enabled and self.budgets.window_k > self.budgets.rerank_k:
+            raise ValueError("window_k cannot exceed rerank_k when a reranker is configured")
 
         if self.cursor is not None:
             if self.strategy is SearchStrategy.RANKED:
@@ -411,15 +471,32 @@ class SearchPlan:
                 raise ValueError("list cursor needs a list_position")
 
     @property
+    def rerank_enabled(self) -> bool:
+        """True when step 4 should run (ranked strategy and a reranker configured)."""
+        return self.strategy is SearchStrategy.RANKED and self.versions.reranker is not None
+
+    @property
+    def rerank_query(self) -> str | None:
+        """Query text for the cross-encoder: the natural-language query when there
+        is one, otherwise the keywords joined (quotes dropped)."""
+        query = self.query
+        if query.semantic_text:
+            return query.semantic_text
+        if query.lexical is not None:
+            return " ".join((*query.lexical.terms, *query.lexical.phrases))
+        return None
+
+    @property
     def fingerprint(self) -> str:
         """Stable hash of everything that changes *what* is retrieved.
 
         Excludes the cursor, page size, view, request context and timings, so a
         cursor stays valid across page-size changes but not across different
-        queries, scopes, filters or index versions. The query vector is derived
+        queries, scopes, filters, fusion settings or index versions. Thread
+        filters are hashed by ``thread_of`` (stable), never the resolved thread ID. The query vector is derived
         from ``semantic_text`` plus the model version, so only those are hashed.
         """
-        f, q, v, b = self.filters, self.query, self.versions, self.budgets
+        f, q, v, b, fu = self.filters, self.query, self.versions, self.budgets, self.fusion
         payload: dict[str, object] = {
             "account": str(self.scope.account_id),
             "sources": sorted(str(item) for item in self.scope.source_account_ids),
@@ -430,7 +507,7 @@ class SearchPlan:
             "tags_any": sorted(f.tags_any),
             "tags_exclude": sorted(f.tags_exclude),
             "has_attachment": f.has_attachment,
-            "thread_id": str(f.thread_id) if f.thread_id else None,
+            "thread_of": str(f.thread_of) if f.thread_of else None,
             "languages": sorted(f.languages),
             "sent_from": _iso(f.sent_from),
             "sent_before": _iso(f.sent_before),
@@ -444,6 +521,14 @@ class SearchPlan:
             "group_by": self.presentation.group_by.value,
             "budgets": [b.lexical_k, b.semantic_k, b.fused_k, b.rerank_k, b.window_k],
             "versions": [v.index_version, v.embedding_model, v.embedding_version, v.reranker],
+            "fusion": [
+                fu.strategy.value,
+                fu.rrf_k,
+                fu.lexical_weight,
+                fu.semantic_weight,
+                fu.convex_alpha,
+                fu.max_chunks_per_item,
+            ],
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
@@ -454,6 +539,8 @@ class SearchPlan:
             **self.filters.to_echo(),
             "entities": _echo_entities(self.resolved_entities),
             "mode": self.mode_effective.value,
+            "fusion": self.fusion.strategy.value,
+            "rerank": self.rerank_enabled,
             "lexical": (
                 {"terms": list(self.query.lexical.terms), "phrases": list(self.query.lexical.phrases)}
                 if self.query.lexical

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.outbound.persistence.models.account import (
@@ -24,6 +24,13 @@ class PostgresAccountRepository:
     def get(self, account_id: uuid.UUID) -> Account | None:
         model = self._session.get(AccountModel, account_id)
         return self._to_account(model) if model is not None else None
+
+    def set_self_person_id(self, account_id: uuid.UUID, person_id: uuid.UUID) -> None:
+        self._session.execute(
+            update(AccountModel)
+            .where(AccountModel.id == account_id)
+            .values(self_person_id=person_id)
+        )
 
     @staticmethod
     def _to_account(model: AccountModel) -> Account:

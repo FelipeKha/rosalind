@@ -15,9 +15,13 @@ from __future__ import annotations
 from types import TracebackType
 from typing import Protocol, Self
 
+from rosalind.application.ports.embedding import EmbeddingRepository
 from rosalind.application.ports.repositories import (
     AccountIdentityRepository,
     AccountRepository,
+    AttachmentTextRepository,
+    EmailCanonicalRepository,
+    EmailEnrichmentRepository,
     ImportRepository,
     OAuthAuthRequestRepository,
     OAuthCredentialRepository,
@@ -25,6 +29,7 @@ from rosalind.application.ports.repositories import (
     SourceAccountRepository,
     SourceRecordRepository,
 )
+from rosalind.application.ports.search import ChunkRepository
 
 
 class UnitOfWork(Protocol):
@@ -38,6 +43,11 @@ class UnitOfWork(Protocol):
     auth_requests: OAuthAuthRequestRepository
     imports: ImportRepository
     person_canonical: PersonCanonicalRepository
+    email_canonical: EmailCanonicalRepository
+    email_enrichment: EmailEnrichmentRepository
+    attachment_text: AttachmentTextRepository
+    chunks: ChunkRepository
+    embeddings: EmbeddingRepository
 
     def commit(self) -> None: ...
 

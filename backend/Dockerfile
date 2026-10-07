@@ -4,9 +4,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
-# Update OS packages to the latest security patches
+# Update OS packages to the latest security patches.
+# libmagic1 is intentionally unpinned so we track the base image's patched
+# version; `apt-get upgrade` above pulls the latest security fixes.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the project into the image

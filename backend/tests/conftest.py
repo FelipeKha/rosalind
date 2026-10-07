@@ -35,7 +35,7 @@ def _encryption_key(monkeypatch) -> None:
 @pytest.fixture(scope="session")
 def postgres_url() -> Iterator[str]:
     try:
-        container = PostgresContainer("postgres:18", driver="psycopg")
+        container = PostgresContainer("paradedb/paradedb:0.26.0-pg18", driver="psycopg")
         container.start()
     except Exception as exc:  # noqa: BLE001 - skip if Docker is unavailable
         pytest.skip(f"Docker unavailable: {exc}")
@@ -53,6 +53,9 @@ def _make_engine(url: str) -> Engine:
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS raw"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS core"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS agent"))
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS derived"))
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS search"))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(engine)
     return engine
 

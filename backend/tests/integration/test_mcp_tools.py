@@ -13,7 +13,12 @@ from sqlalchemy.orm import sessionmaker
 
 import rosalind.adapters.inbound.mcp.server as mcp_server
 from rosalind.adapters import composition
-from rosalind.adapters.inbound.mcp.schemas import MyProfileResult, PersonProfileResult
+from rosalind.adapters.inbound.mcp.schemas import (
+    MyProfileResult,
+    PersonProfileResult,
+    SearchResult,
+)
+from rosalind.adapters.inbound.mcp.search import SearchEmailsInput
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tests._account import TEST_ISSUER, TEST_SUBJECT, ensure_account
 
@@ -126,3 +131,33 @@ def test_get_my_profile(migrated_engine: Engine, monkeypatch) -> None:
 
 def test_get_my_profile_returns_none_without_token() -> None:
     assert mcp_server.get_my_profile() is None
+
+
+def test_search_tool_rejects_malformed_input() -> None:
+    with pytest.raises(ToolError):
+        asyncio.run(mcp_server.mcp.call_tool("search", {"input": {"limit": 999}}))
+
+
+def test_search_tool_rejects_unknown_field() -> None:
+    with pytest.raises(ToolError):
+        asyncio.run(mcp_server.mcp.call_tool("search", {"input": {"bogus": 1}}))
+
+
+def test_search_tool_returns_empty_scope_without_data(
+    migrated_engine: Engine, monkeypatch
+) -> None:
+    factory = sessionmaker(
+        bind=migrated_engine, autoflush=False, expire_on_commit=False
+    )
+    monkeypatch.setattr(mcp_server, "SessionLocal", factory)
+
+    reset = auth_context_var.set(AuthenticatedUser(_test_token()))
+    try:
+        result = asyncio.run(
+            mcp_server.search(SearchEmailsInput(query="holidays in Spain"))
+        )
+    finally:
+        auth_context_var.reset(reset)
+
+    assert isinstance(result, SearchResult)
+    assert result.short_circuit == "empty_scope"

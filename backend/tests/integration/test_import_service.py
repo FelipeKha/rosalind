@@ -32,6 +32,15 @@ class _FakeStorage:
         if self.on_delete is not None:
             self.on_delete(keys)
 
+    def download(self, key: str, dest: object) -> None:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def put(self, key: str, data: bytes) -> None:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def exists(self, key: str) -> bool:  # pragma: no cover - unused
+        return False
+
 
 def _service(storage: _FakeStorage | None = None) -> imports.ImportService:
     return imports.ImportService(

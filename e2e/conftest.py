@@ -62,7 +62,7 @@ def network() -> Iterator[Network]:
 @pytest.fixture(scope="session")
 def postgres_container(network: Network) -> Iterator[PostgresContainer]:
     container = PostgresContainer(
-        "postgres:18",
+        "paradedb/paradedb:0.26.0-pg18",
         driver="psycopg",
         username=POSTGRES_USER,
         password=POSTGRES_PASSWORD,

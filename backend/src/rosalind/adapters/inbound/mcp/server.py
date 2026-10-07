@@ -16,7 +16,17 @@ from pydantic import AnyHttpUrl
 
 from rosalind import config
 from rosalind.adapters import composition
-from rosalind.adapters.inbound.mcp.schemas import MyProfileResult, PersonProfileResult
+from rosalind.adapters.inbound.mcp.schemas import (
+    MyProfileResult,
+    PersonProfileResult,
+    SearchResult,
+)
+from rosalind.adapters.inbound.mcp.search import (
+    SearchEmailsInput,
+    to_search_request,
+    to_search_result,
+    to_short_circuit_result,
+)
 from rosalind.adapters.inbound.mcp.verifier import KeycloakMCPTokenVerifier
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
@@ -25,6 +35,8 @@ from rosalind.application.read_models import (
     PersonProfile,
     current_account_from,
 )
+from rosalind.application.search import ShortCircuit
+from rosalind.application.services.search import PrepareContext
 
 
 def _auth_settings() -> AuthSettings:
@@ -46,6 +58,31 @@ mcp = MCPServer(
     token_verifier=KeycloakMCPTokenVerifier(composition.token_verifier),
     auth=_auth_settings(),
 )
+
+
+@mcp.tool()
+async def search(input: SearchEmailsInput) -> SearchResult | None:
+    """Search the user's email archive.
+
+    Filters are ANDed across fields; lists within a field are ORed. Prepare
+    validates and normalizes the request into a search plan (or a short circuit
+    when nothing can match); the ranked or list strategy then retrieves, fuses,
+    reranks, and assembles a bounded page of results.
+    """
+    auth = _auth_context()
+    if auth is None:
+        return None
+    account_id, client_id, zoneinfo = auth
+    request = to_search_request(input)
+    service = composition.build_search_service(SessionLocal)
+    context = PrepareContext(
+        account_id=account_id, client_id=client_id, timezone=zoneinfo
+    )
+    prepared = await service.prepare(context, request)
+    if isinstance(prepared, ShortCircuit):
+        return to_short_circuit_result(prepared)
+    response = await service.search(prepared)
+    return to_search_result(prepared, response)
 
 
 @mcp.tool()
@@ -89,6 +126,16 @@ def _current_account_id() -> uuid.UUID | None:
     Returns None when no token is present (e.g. the local stdio transport),
     which leaves the read-only person tools with no account to scope to.
     """
+    auth = _auth_context()
+    return auth[0] if auth is not None else None
+
+
+def _auth_context() -> tuple[uuid.UUID, str, str | None] | None:
+    """Resolve the authenticated account plus the token's client and timezone.
+
+    Returns ``(account_id, client_id, zoneinfo)`` or ``None`` when no token is
+    present. The account is provisioned just-in-time, keyed only by ``(iss, sub)``.
+    """
     token = get_access_token()
     if token is None or token.subject is None or token.claims is None:
         return None
@@ -98,7 +145,11 @@ def _current_account_id() -> uuid.UUID | None:
         uow = SqlAlchemyUnitOfWork(session)
         account = composition.account_service.get_or_create(uow, issuer, token.subject)
         uow.commit()
-        return account.id
+        return (
+            account.id,
+            token.client_id or "unknown",
+            token.claims.get("zoneinfo"),
+        )
 
 
 @mcp.tool()

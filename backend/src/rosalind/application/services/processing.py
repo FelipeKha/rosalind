@@ -269,6 +269,10 @@ class ProcessingService:
             raise InvalidPayloadError(
                 f"no canonicalizer for resource type {source_record.resource_type!r}"
             )
+        if source_record.payload is None:
+            raise InvalidPayloadError(
+                f"record {source_record.id} has no inline payload to canonicalize"
+            )
         observation = parser.parse(source_record.payload)
         return self._canonicalizer.canonicalize(
             uow, source_account, source_record, observation

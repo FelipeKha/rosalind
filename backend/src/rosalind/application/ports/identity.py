@@ -24,6 +24,7 @@ class VerifiedToken:
     preferred_username: str | None = None
     given_name: str | None = None
     family_name: str | None = None
+    zoneinfo: str | None = None
 
 
 class TokenVerifier(Protocol):
