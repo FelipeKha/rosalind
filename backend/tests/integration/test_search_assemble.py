@@ -161,6 +161,7 @@ def _chunk(
     seq=0,
     attachment_id=None,
     display_text="hello",
+    sent_at=_WHEN,
 ):
     db_session.add(
         models.Chunk(
@@ -177,7 +178,7 @@ def _chunk(
             index_version="v1",
             source_account_id=source.id,
             source_account_num=source.num,
-            sent_at=_WHEN,
+            sent_at=sent_at,
             sender_handle="mike@turnerroofing.com",
             recipient_handles=[],
             participant_handles=["mike@turnerroofing.com"],
@@ -315,8 +316,11 @@ def test_list_retriever_one_row_per_message_and_total(
     email_a = _email(migrated_db_session, source, "a@x", subject="A")
     email_b = _email(migrated_db_session, source, "b@x", subject="B")
     # A has two email_body chunks (seq 0 and 1); only seq 0 should be listed.
-    _chunk(migrated_db_session, source, email_a.id, seq=0)
-    _chunk(migrated_db_session, source, email_a.id, seq=1)
+    # Distinct sent_at keeps the DATE_DESC order deterministic (email_id is a
+    # random UUID, so it cannot serve as a stable tiebreaker).
+    later = datetime(2026, 3, 17, 10, 0, tzinfo=UTC)
+    _chunk(migrated_db_session, source, email_a.id, seq=0, sent_at=later)
+    _chunk(migrated_db_session, source, email_a.id, seq=1, sent_at=later)
     _chunk(migrated_db_session, source, email_b.id, seq=0)
     migrated_db_session.commit()
 
