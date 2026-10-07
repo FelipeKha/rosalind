@@ -4,6 +4,15 @@ Phase 0 owns the request side; Phase 1 adds the ``SearchPlan`` / ``ShortCircuit`
 produced by Prepare, per ``docs/features/search_plan_schema.py``.
 """
 
+from rosalind.application.search.assemble import (
+    DEFAULT_MAX_SNIPPET_CHARS,
+    AssemblyError,
+    ListResult,
+    SearchResultData,
+    assemble_list,
+    assemble_ranked,
+    make_snippet,
+)
 from rosalind.application.search.fusion import FusedCandidate, FusedCandidates, fuse
 from rosalind.application.search.plan import (
     MAX_LIMIT,
@@ -53,6 +62,12 @@ from rosalind.application.search.rerank import (
     RerankTextMode,
     rerank,
 )
+from rosalind.application.search.result import (
+    MatchedIn,
+    SearchCitation,
+    SearchResponse,
+    SearchResultRecord,
+)
 from rosalind.application.search.retrieve import FilterPath, LexicalHit, LexicalResult
 from rosalind.application.search.semantic import (
     SemanticFilterPath,
@@ -62,7 +77,9 @@ from rosalind.application.search.semantic import (
 )
 
 __all__ = [
+    "DEFAULT_MAX_SNIPPET_CHARS",
     "MAX_LIMIT",
+    "AssemblyError",
     "Budgets",
     "ChunkText",
     "Cursor",
@@ -79,6 +96,8 @@ __all__ = [
     "LexicalQuery",
     "LexicalResult",
     "ListPosition",
+    "ListResult",
+    "MatchedIn",
     "PlanHints",
     "PlanWarning",
     "PrepareResult",
@@ -98,10 +117,14 @@ __all__ = [
     "ResolvedFilters",
     "ResultView",
     "Scope",
+    "SearchCitation",
     "SearchMode",
     "SearchPlan",
     "SearchRequest",
     "SearchRequestFilters",
+    "SearchResponse",
+    "SearchResultData",
+    "SearchResultRecord",
     "SearchStrategy",
     "SemanticFilterPath",
     "SemanticHit",
@@ -111,7 +134,10 @@ __all__ = [
     "ShortCircuitReason",
     "SortOrder",
     "WarningCode",
+    "assemble_list",
+    "assemble_ranked",
     "fuse",
+    "make_snippet",
     "rerank",
     "vector_digest",
 ]

@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     search_max_query_chars: int = 2000
     search_max_list_values: int = 50
     search_default_timezone: str = "UTC"
+    search_snippet_max_chars: int = 800
     search_lexical_k: int = 50
     search_semantic_k: int = 50
     search_fused_k: int = 40

@@ -398,6 +398,7 @@ def test_not_applied_and_applied_have_the_same_shape() -> None:
         "rerank_rank",
         "rerank_score",
         "fused_rank",
+        "fused_score",
     ]
     assert skipped.applied is False
     assert applied.applied is True

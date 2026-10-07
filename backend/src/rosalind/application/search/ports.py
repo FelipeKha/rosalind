@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from rosalind.application.search.assemble import ListResult, SearchResultData
 from rosalind.application.search.plan import (
     Budgets,
     Cursor,
@@ -41,12 +42,14 @@ __all__ = [
     "EmbedderPort",
     "EntityResolverPort",
     "LexicalRetrieverPort",
+    "MessageListPort",
     "RerankConfig",
     "RerankTextMode",
     "RerankerPort",
     "SearchConfig",
     "SearchMetadata",
     "SearchMetadataPort",
+    "SearchResultDataPort",
     "SearchScopePort",
     "SemanticRetrieverPort",
     "ThreadResolverPort",
@@ -73,6 +76,7 @@ class SearchConfig:
     max_query_chars: int
     max_list_values: int
     default_timezone: str
+    snippet_max_chars: int = 800
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +204,34 @@ class ChunkTextPort(Protocol):
     ) -> tuple[ChunkText, ...]:
         """Return text for each id in requested order; ids absent from the store
         are dropped (not an error). A database failure raises ``RerankError``."""
+
+
+class SearchResultDataPort(Protocol):
+    async def get_results(
+        self,
+        plan: SearchPlan,
+        chunk_ids: tuple[uuid.UUID, ...],
+        *,
+        include_text: bool,
+    ) -> tuple[SearchResultData, ...]:
+        """Batch presentation metadata for the given chunks, in requested order.
+
+        Chunks that no longer exist are dropped (not an error); a database
+        failure raises ``AssemblyError``. ``include_text`` gates whether
+        ``text_for_display`` is selected, so a ``view=metadata`` search never
+        loads chunk text. ``plan.scope`` is always re-applied, so a chunk that
+        drifted out of scope cannot leak through assembly.
+        """
+
+
+class MessageListPort(Protocol):
+    async def list(self, plan: SearchPlan) -> ListResult:
+        """Filter-only keyset listing, one row per message (``email_body`` seq 0).
+
+        Applies ``plan.scope`` and ``plan.filters``, orders by the plan's sort
+        direction, and applies ``plan.cursor.list_position`` as a keyset bound.
+        Returns up to ``limit + 1`` items plus the exact total count.
+        """
 
 
 class CursorDecodeError(Exception):

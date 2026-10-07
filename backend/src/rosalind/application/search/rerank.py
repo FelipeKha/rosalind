@@ -89,12 +89,18 @@ class RerankInput:
 
 @dataclass(frozen=True, slots=True)
 class RerankedHit:
-    """One candidate in its final position."""
+    """One candidate in its final position.
+
+    ``fused_score`` is carried alongside ``rerank_score`` so assembly can report
+    a meaningful ranking score in both paths without keeping a separate lookup
+    into ``FusedCandidates``.
+    """
 
     chunk_id: uuid.UUID
     rerank_rank: int
     rerank_score: float | None  # None when reranking was not applied
     fused_rank: int
+    fused_score: float
 
     def __post_init__(self) -> None:
         if self.rerank_rank < 1:
@@ -135,9 +141,9 @@ async def rerank(
     fused: FusedCandidates,
     *,
     texts: ChunkTextPort,
-    reranker: RerankerPort,
-    token_counter: TokenCounter,
-    config: RerankConfig,
+    reranker: RerankerPort | None = None,
+    token_counter: TokenCounter | None = None,
+    config: RerankConfig | None = None,
 ) -> RerankResult:
     """Rerank the top ``rerank_k`` fused candidates, or fall back to fused order.
 
@@ -145,6 +151,10 @@ async def rerank(
     the candidate set. When reranking is disabled, skipped, or fails, ``applied``
     is ``False`` and ``ranked`` carries the fused order (limited to ``window_k``)
     with ``rerank_score=None``, so assembly never has to branch.
+
+    ``reranker`` / ``token_counter`` / ``config`` are optional only so a caller
+    with reranking disabled can short-circuit without wiring them; when
+    reranking is enabled they must all be present.
     """
     started = time.perf_counter()
 
@@ -176,6 +186,11 @@ async def rerank(
 
     if not fused.candidates or not plan.rerank_enabled:
         return not_applied((), fetch_ms=0.0, score_ms=0.0, candidates_in=0)
+
+    if reranker is None or token_counter is None or config is None:
+        raise RerankError(
+            "reranking is enabled but no reranker/tokenizer/config is wired"
+        )
 
     query = plan.rerank_query
     if query is None:
@@ -262,12 +277,16 @@ async def rerank(
         zip(inputs, scores),
         key=lambda pair: (-pair[1], pair[0].fused_rank, pair[0].chunk_id),
     )
+    fused_score_by_id = {
+        candidate.chunk_id: candidate.fused_score for candidate in fused.candidates
+    }
     ranked = tuple(
         RerankedHit(
             chunk_id=item.chunk_id,
             rerank_rank=position,
             rerank_score=score,
             fused_rank=item.fused_rank,
+            fused_score=fused_score_by_id[item.chunk_id],
         )
         for position, (item, score) in enumerate(pairs, start=1)
     )
@@ -298,6 +317,7 @@ def _fused_order(plan: SearchPlan, fused: FusedCandidates) -> tuple[RerankedHit,
             rerank_rank=candidate.fused_rank,
             rerank_score=None,
             fused_rank=candidate.fused_rank,
+            fused_score=candidate.fused_score,
         )
         for candidate in fused.candidates[: plan.budgets.window_k]
     )

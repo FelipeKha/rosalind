@@ -126,6 +126,38 @@ class FakeAudit:
         self.events.append(event)
 
 
+class FakeTokenCounter:
+    @property
+    def version(self) -> str:
+        return "fake/1"
+
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+    def split_boundaries(self, text: str, max_tokens: int) -> list[int]:
+        return [0, len(text)]
+
+
+class _UnusedRetriever:
+    async def retrieve(self, plan):
+        raise NotImplementedError("search pipeline is not exercised by Prepare tests")
+
+
+class _UnusedChunkText:
+    async def get_rerank_texts(self, chunk_ids, mode):
+        raise NotImplementedError("search pipeline is not exercised by Prepare tests")
+
+
+class _UnusedResultData:
+    async def get_results(self, plan, chunk_ids, *, include_text):
+        raise NotImplementedError("search pipeline is not exercised by Prepare tests")
+
+
+class _UnusedListRetriever:
+    async def list(self, plan):
+        raise NotImplementedError("search pipeline is not exercised by Prepare tests")
+
+
 def make_config(**kw) -> SearchConfig:
     return SearchConfig(
         index_version=kw.get("index_version", "v1"),
@@ -164,6 +196,14 @@ def make_service(**kw) -> tuple[SearchService, dict]:
         codec=codec,
         audit=audit,
         config=config,
+        lexical=kw.get("lexical", _UnusedRetriever()),
+        semantic=kw.get("semantic", _UnusedRetriever()),
+        reranker=kw.get("reranker", None),
+        rerank_config=kw.get("rerank_config", None),
+        chunk_text=kw.get("chunk_text", _UnusedChunkText()),
+        token_counter=kw.get("token_counter", FakeTokenCounter()),
+        result_data=kw.get("result_data", _UnusedResultData()),
+        list_retriever=kw.get("list_retriever", _UnusedListRetriever()),
     )
     parts = {
         "scope": scope,

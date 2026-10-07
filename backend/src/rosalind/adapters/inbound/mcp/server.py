@@ -25,6 +25,7 @@ from rosalind.adapters.inbound.mcp.search import (
     SearchEmailsInput,
     to_search_request,
     to_search_result,
+    to_short_circuit_result,
 )
 from rosalind.adapters.inbound.mcp.verifier import KeycloakMCPTokenVerifier
 from rosalind.adapters.outbound.persistence.session import SessionLocal
@@ -34,6 +35,7 @@ from rosalind.application.read_models import (
     PersonProfile,
     current_account_from,
 )
+from rosalind.application.search import ShortCircuit
 from rosalind.application.services.search import PrepareContext
 
 
@@ -64,7 +66,8 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
 
     Filters are ANDed across fields; lists within a field are ORed. Prepare
     validates and normalizes the request into a search plan (or a short circuit
-    when nothing can match); retrieval, fusion, and assembly are later phases.
+    when nothing can match); the ranked or list strategy then retrieves, fuses,
+    reranks, and assembles a bounded page of results.
     """
     auth = _auth_context()
     if auth is None:
@@ -75,8 +78,11 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
     context = PrepareContext(
         account_id=account_id, client_id=client_id, timezone=zoneinfo
     )
-    result = await service.prepare(context, request)
-    return to_search_result(result)
+    prepared = await service.prepare(context, request)
+    if isinstance(prepared, ShortCircuit):
+        return to_short_circuit_result(prepared)
+    response = await service.search(prepared)
+    return to_search_result(prepared, response)
 
 
 @mcp.tool()

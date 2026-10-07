@@ -29,10 +29,20 @@ from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOf
 from rosalind.adapters.outbound.search.audit import LoggingAudit
 from rosalind.adapters.outbound.search.chunk_text import PostgresChunkTextRepository
 from rosalind.adapters.outbound.search.embedder_tei import TeiEmbedder
+from rosalind.adapters.outbound.search.lexical import ParadeDbLexicalRetriever
+from rosalind.adapters.outbound.search.list_retriever import (
+    PostgresMessageListRetriever,
+)
 from rosalind.adapters.outbound.search.query_embedder import NullEmbedder, QueryEmbedder
 from rosalind.adapters.outbound.search.reranker_tei import TeiReranker
+from rosalind.adapters.outbound.search.result_data import (
+    PostgresSearchResultDataRepository,
+)
 from rosalind.adapters.outbound.search.search_repository import PostgresSearchRepository
-from rosalind.adapters.outbound.search.semantic import SemanticRetrievalConfig
+from rosalind.adapters.outbound.search.semantic import (
+    PgVectorSemanticRetriever,
+    SemanticRetrievalConfig,
+)
 from rosalind.adapters.outbound.search.tokenizer import BgeM3TokenCounter
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
@@ -110,6 +120,7 @@ def _search_config() -> SearchConfig:
         max_query_chars=settings.search_max_query_chars,
         max_list_values=settings.search_max_list_values,
         default_timezone=settings.search_default_timezone,
+        snippet_max_chars=settings.search_snippet_max_chars,
     )
 
 
@@ -290,6 +301,14 @@ def build_search_service(session_factory: Callable[[], Session]) -> SearchServic
         codec=_search_cursor_codec,
         audit=search_audit,
         config=search_config,
+        lexical=ParadeDbLexicalRetriever(session_factory),
+        semantic=PgVectorSemanticRetriever(session_factory, semantic_retrieval_config),
+        reranker=_search_reranker,
+        rerank_config=_search_rerank_config,
+        chunk_text=PostgresChunkTextRepository(session_factory),
+        token_counter=_token_counter,
+        result_data=PostgresSearchResultDataRepository(session_factory),
+        list_retriever=PostgresMessageListRetriever(session_factory),
     )
 
 

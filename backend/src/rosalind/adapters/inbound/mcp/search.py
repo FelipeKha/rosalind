@@ -14,7 +14,12 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from rosalind.adapters.inbound.mcp.schemas import SearchResult, SearchWarning
+from rosalind.adapters.inbound.mcp.schemas import (
+    SearchCitation,
+    SearchResult,
+    SearchResultItem,
+    SearchWarning,
+)
 from rosalind.application.search import (
     Direction,
     GroupBy,
@@ -23,6 +28,7 @@ from rosalind.application.search import (
     SearchPlan,
     SearchRequest,
     SearchRequestFilters,
+    SearchResponse,
     ShortCircuit,
     SortOrder,
 )
@@ -117,30 +123,50 @@ def to_search_request(input: SearchEmailsInput) -> SearchRequest:
     )
 
 
-def to_search_result(result: SearchPlan | ShortCircuit) -> SearchResult:
-    """Map a Prepare result onto the MCP ``search`` tool response.
+def to_search_result(plan: SearchPlan, response: SearchResponse) -> SearchResult:
+    """Map an assembled search response onto the MCP ``search`` tool response."""
+    return SearchResult(
+        request_id=plan.context.request_id,
+        audit_id=plan.context.audit_id,
+        mode_requested=plan.mode_requested.value,
+        mode_effective=plan.mode_effective.value,
+        fingerprint=plan.fingerprint,
+        applied_filters=response.applied_filters,
+        warnings=[_to_warning(warning) for warning in response.warnings],
+        results=[_to_item(record) for record in response.results],
+        total_estimate=response.total_estimate,
+        next_cursor=response.next_cursor,
+    )
 
-    Retrieval is a later phase, so ``results`` is empty and the response carries
-    the applied filters, warnings, and (for a short circuit) the reason.
-    """
-    if isinstance(result, ShortCircuit):
-        return SearchResult(
-            request_id=result.context.request_id,
-            audit_id=result.context.audit_id,
-            short_circuit=result.reason.value,
-            explanation=result.explanation,
-            applied_filters=result.applied(),
-            warnings=[_to_warning(warning) for warning in result.warnings],
-        )
 
+def to_short_circuit_result(result: ShortCircuit) -> SearchResult:
+    """Map a Prepare short circuit onto the MCP ``search`` tool response."""
     return SearchResult(
         request_id=result.context.request_id,
         audit_id=result.context.audit_id,
-        mode_requested=result.mode_requested.value,
-        mode_effective=result.mode_effective.value,
-        fingerprint=result.fingerprint,
+        short_circuit=result.reason.value,
+        explanation=result.explanation,
         applied_filters=result.applied(),
         warnings=[_to_warning(warning) for warning in result.warnings],
+    )
+
+
+def _to_item(record) -> SearchResultItem:
+    return SearchResultItem(
+        item_id=record.item_id,
+        thread_id=record.thread_id,
+        chunk_id=record.chunk_id,
+        subject=record.subject,
+        sender=record.sender,
+        date=record.date,
+        snippet=record.snippet,
+        matched_in=record.matched_in,
+        score=record.score,
+        citation=SearchCitation(
+            item_id=record.citation.item_id,
+            chunk_id=record.citation.chunk_id,
+            thread_id=record.citation.thread_id,
+        ),
     )
 
 

@@ -65,6 +65,7 @@ class WarningCode(StrEnum):
     QUERY_TRUNCATED = "query_truncated"
     LIMIT_CLAMPED = "limit_clamped"
     RERANK_SKIPPED = "rerank_skipped"
+    RETRIEVAL_DEGRADED = "retrieval_degraded"
 
 
 class ShortCircuitReason(StrEnum):
