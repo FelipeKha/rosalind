@@ -183,6 +183,7 @@ def test_basic_match_returns_hit_with_score_and_rank(
     assert _ids(result) == [chunk.id]
     assert result.hits[0].rank == 1
     assert result.hits[0].score > 0
+    assert result.hits[0].email_id == email.id
     assert result.exhausted is True
 
 

@@ -4,6 +4,7 @@ Phase 0 owns the request side; Phase 1 adds the ``SearchPlan`` / ``ShortCircuit`
 produced by Prepare, per ``docs/features/search_plan_schema.py``.
 """
 
+from rosalind.application.search.fusion import FusedCandidate, FusedCandidates, fuse
 from rosalind.application.search.plan import (
     MAX_LIMIT,
     Budgets,
@@ -55,6 +56,8 @@ __all__ = [
     "Cursor",
     "Direction",
     "FilterPath",
+    "FusedCandidate",
+    "FusedCandidates",
     "FusionConfig",
     "FusionStrategy",
     "GroupBy",
@@ -89,5 +92,6 @@ __all__ = [
     "ShortCircuitReason",
     "SortOrder",
     "WarningCode",
+    "fuse",
     "vector_digest",
 ]

@@ -94,8 +94,15 @@ class ParadeDbLexicalRetriever:
 
         lexical_k = plan.budgets.lexical_k
         hits = tuple(
-            LexicalHit(chunk_id=chunk_id, rank=rank, score=float(score))
-            for rank, (chunk_id, score) in enumerate(rows[:lexical_k], start=1)
+            LexicalHit(
+                chunk_id=chunk_id,
+                email_id=email_id,
+                rank=rank,
+                score=float(score),
+            )
+            for rank, (chunk_id, email_id, score) in enumerate(
+                rows[:lexical_k], start=1
+            )
         )
         return LexicalResult(
             hits=hits,
@@ -110,7 +117,7 @@ class ParadeDbLexicalRetriever:
         plan: SearchPlan,
         query_string: str,
         nums: Sequence[int],
-    ) -> list[tuple[uuid.UUID, float]]:
+    ) -> list[tuple[uuid.UUID, uuid.UUID, float]]:
         chunk = models.Chunk
         conditions: list[ColumnElement[bool]] = [
             cast(ColumnElement[bool], text("text_for_index @@@ :q")),
@@ -120,7 +127,7 @@ class ParadeDbLexicalRetriever:
 
         limit = plan.budgets.lexical_k + 1
         stmt = (
-            select(chunk.id, text("paradedb.score(id) AS score"))
+            select(chunk.id, chunk.email_id, text("paradedb.score(id) AS score"))
             .where(*conditions)
             .order_by(text("paradedb.score(id) DESC"), chunk.id.asc())
             .limit(limit)

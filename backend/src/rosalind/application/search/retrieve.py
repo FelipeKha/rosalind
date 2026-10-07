@@ -7,9 +7,11 @@ nothing here knows how BM25 was executed.
 
 ``score`` is the engine's BM25 score, preserved exactly. ``rank`` is the
 1-based position in the deterministic ordering (``score DESC, id ASC``), which
-later steps (fusion, evaluation) rely on. ``exhausted`` means fewer than
-``lexical_k`` chunks matched *in total* — a fact the adapter can only assert
-when it has scanned the whole candidate stream, never when a backend failed.
+later steps (fusion, evaluation) rely on. ``email_id`` is carried so step 3 can
+apply its per-message cap without a second lookup. ``exhausted`` means fewer
+than ``lexical_k`` chunks matched *in total* — a fact the adapter can only
+assert when it has scanned the whole candidate stream, never when a backend
+failed.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ class LexicalHit:
     """One ranked chunk produced by lexical retrieval."""
 
     chunk_id: uuid.UUID
+    email_id: uuid.UUID
     rank: int  # 1-based, deterministic (score DESC, id ASC)
     score: float  # the engine's BM25 score, unmodified
 
