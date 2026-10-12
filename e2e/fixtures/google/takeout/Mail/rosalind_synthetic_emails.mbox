@@ -257,7 +257,7 @@ ent is planned for 25 March.</p></body></html>
 
 From sender@example.test Sat Mar 01 00:00:00 2025
 Message-ID: <msg-016@example.test>
-Date:
+Date: not-a-valid-date
 From: sender@example.test
 To: felipe@example.test
 Subject: Malformed date fixture

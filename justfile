@@ -105,7 +105,10 @@ e2e-install:
     cd e2e && uv sync
 
 e2e-test:
-    cd e2e && uv run pytest
+    cd e2e && uv run pytest -m "not rag"
+
+e2e-test-rag:
+    cd e2e && uv run pytest -m rag
 
 
 # ==============================================================================

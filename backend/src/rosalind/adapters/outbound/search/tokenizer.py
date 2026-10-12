@@ -37,7 +37,7 @@ class BgeM3TokenCounter:
         from tokenizers import Tokenizer  # imported lazily so wiring needs no asset
 
         tokenizer_cls: Any = Tokenizer
-        self._tokenizer = tokenizer_cls.from_bytes(data)
+        self._tokenizer = tokenizer_cls.from_buffer(data)
         self._file_sha256 = digest
 
     @property
