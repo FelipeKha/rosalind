@@ -8,6 +8,7 @@ adapters (and tests) build their service graph from here.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import logging
 from collections.abc import Callable, Iterator
 
@@ -28,6 +29,9 @@ from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.adapters.outbound.search.audit import LoggingAudit
 from rosalind.adapters.outbound.search.chunk_text import PostgresChunkTextRepository
+from rosalind.adapters.outbound.search.embedder_flagembedding import (
+    FlagEmbeddingEmbedder,
+)
 from rosalind.adapters.outbound.search.embedder_tei import TeiEmbedder
 from rosalind.adapters.outbound.search.lexical import ParadeDbLexicalRetriever
 from rosalind.adapters.outbound.search.list_retriever import (
@@ -48,6 +52,7 @@ from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
 )
 from rosalind.application.canonicalization.person import CanonicalizationService
+from rosalind.application.ports.embedding import Embedder
 from rosalind.application.ports.identity import TokenVerifier
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
@@ -71,7 +76,7 @@ from rosalind.application.services.processing import ProcessingService
 from rosalind.application.services.search import SearchService
 from rosalind.application.services.sources import SourceService
 from rosalind.config import settings
-from rosalind.domain.search import ChunkingParams
+from rosalind.domain.search import ChunkingParams, EmbeddingSpace
 
 
 def _cursor_signing_key() -> bytes:
@@ -87,7 +92,7 @@ def _cursor_signing_key() -> bytes:
 
 
 def _search_config() -> SearchConfig:
-    if settings.embedder_url:
+    if _embedder is not None:
         space = embedding_space(settings.embedding_space)
         embedding_model = space.model_id
         embedding_version = space.revision or space.name
@@ -150,6 +155,46 @@ def _rerank_config() -> RerankConfig | None:
     )
 
 
+def _build_embedder(space: EmbeddingSpace) -> Embedder | None:
+    """Build the embedding backend selected by ``embedder_backend``.
+
+    ``flagembedding`` (default) runs BGE-M3 in-process, using MPS on Apple
+    Silicon; ``tei`` targets a remote HTTP server via ``embedder_url``. When
+    FlagEmbedding is requested but not installed (the ``ml`` dependency group is
+    optional), embedding is disabled with a warning rather than crashing the
+    process, so non-embedding workflows keep working without torch.
+    """
+    backend = settings.embedder_backend.strip().lower()
+    if backend == "flagembedding":
+        if importlib.util.find_spec("FlagEmbedding") is None:
+            logging.getLogger(__name__).warning(
+                "embedder_backend=flagembedding but FlagEmbedding is not "
+                "installed; embedding disabled (run `uv sync --group ml`)"
+            )
+            return None
+        return FlagEmbeddingEmbedder(
+            space,
+            device=settings.embedder_device,
+            use_fp16=settings.embedder_use_fp16,
+            batch_size=settings.embedder_batch_size,
+            max_length=settings.embedder_max_length,
+        )
+    if backend == "tei":
+        if not settings.embedder_url:
+            raise ValueError("embedder_backend=tei requires embedder_url")
+        return TeiEmbedder(
+            settings.embedder_url,
+            space,
+            timeout=settings.embed_timeout,
+            concurrency=settings.embed_concurrency,
+            retries=settings.embed_retries,
+        )
+    raise ValueError(
+        f"unsupported embedder_backend {settings.embedder_backend!r}; "
+        "expected 'flagembedding' or 'tei'"
+    )
+
+
 google_auth = GoogleAuthGateway()
 google_people = GooglePeopleGateway()
 
@@ -166,6 +211,8 @@ search_audit = LoggingAudit()
 _search_cursor_codec = HmacCursorCodec(_cursor_signing_key())
 
 _search_embedder: NullEmbedder | QueryEmbedder = NullEmbedder()
+
+_embedder: Embedder | None = None
 
 _search_rerank_config = _rerank_config()
 
@@ -225,17 +272,10 @@ _token_counter = BgeM3TokenCounter(
 )
 
 embedding_service: EmailEmbeddingService | None = None
-if settings.embedder_url:
-    space = embedding_space(settings.embedding_space)
-    embedder = TeiEmbedder(
-        settings.embedder_url,
-        space,
-        timeout=settings.embed_timeout,
-        concurrency=settings.embed_concurrency,
-        retries=settings.embed_retries,
-    )
+_embedder = _build_embedder(embedding_space(settings.embedding_space))
+if _embedder is not None:
     embedding_service = EmailEmbeddingService(
-        embedder,
+        _embedder,
         _token_counter,
         embed_quotes=settings.embed_quotes,
         embed_trash_spam=settings.embed_trash_spam,
@@ -243,7 +283,7 @@ if settings.embedder_url:
         window=settings.embed_window,
         batch_tokens=settings.embed_batch_tokens,
     )
-    _search_embedder = QueryEmbedder(embedder)
+    _search_embedder = QueryEmbedder(_embedder)
 
 search_config = _search_config()
 

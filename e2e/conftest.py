@@ -2,22 +2,22 @@
 
 The stack under test is:
 
-    CLI (subprocess) ──► backend (uvicorn in Docker) ──► PostgreSQL
+    CLI (subprocess) ──► backend ──► PostgreSQL
                         └─► SeaweedFS (S3-compatible object storage)
 
-PostgreSQL and the backend share a Docker network so the backend can reach the
-database by container alias. SeaweedFS is reached directly from the host CLI
-process, matching the production data-plane topology.
-
-The email-RAG suite (``pytest -m rag``) additionally starts a TEI embedder
-container serving BGE-M3 and points the backend at it, so the offline embed
-stage and the online semantic branch run against the real model.
+PostgreSQL and SeaweedFS run as testcontainers reachable from the host. The
+non-RAG suite runs the backend as a Docker image; the email-RAG suite
+(``pytest -m rag``) runs the backend as a native host process so BGE-M3 runs
+in-process via FlagEmbedding on Apple's MPS backend, exercising the same
+embedding path as local development.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import signal
+import socket
 import subprocess
 import tempfile
 import time
@@ -25,9 +25,9 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
 import boto3
-import docker
 import httpx
 import psycopg
 import pytest
@@ -57,15 +57,9 @@ BACKEND_IMAGE = "rosalind-e2e"
 
 SELF_EMAIL = "felipe@example.test"
 
-TEI_IMAGE = os.environ.get(
-    "ROSALIND_E2E_TEI_IMAGE",
-    "ghcr.io/huggingface/text-embeddings-inference:cpu-1.6",
-)
-TEI_MODEL = os.environ.get("ROSALIND_E2E_TEI_MODEL", "BAAI/bge-m3")
-TEI_NETWORK_URL = "http://tei-embedder:80"
-# TEI publishes amd64 images only; force amd64 so the container also runs on
-# arm64 hosts (Rosetta/QEMU emulation under Docker Desktop).
-TEI_PLATFORM = os.environ.get("ROSALIND_E2E_TEI_PLATFORM", "linux/amd64")
+# The RAG suite runs the backend natively with FlagEmbedding on MPS (Apple
+# Silicon). The device can be overridden (e.g. "cpu") for non-Mac hosts.
+RAG_EMBEDDER_DEVICE = os.environ.get("ROSALIND_E2E_EMBEDDER_DEVICE", "mps")
 
 TOKENIZER_SHA256 = "21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08"
 
@@ -288,65 +282,125 @@ def run_rosalind(cli_env: dict[str, str]):
 
 
 @pytest.fixture(scope="session")
-def tei_embedder(network: Network) -> Iterator[str]:
-    """A TEI container serving BGE-M3, reachable by the backend as
-    ``tei-embedder``. Yields the host-mapped ``/embed`` URL for contract checks."""
-    try:
-        container = (
-            DockerContainer(TEI_IMAGE, platform=TEI_PLATFORM)
-            .with_command(f"--model-id {TEI_MODEL} --port 80")
-            .with_network(network)
-            .with_network_aliases("tei-embedder")
-            .with_exposed_ports(80)
-        )
-        _pull_image(container, TEI_IMAGE, TEI_PLATFORM)
-        container.start()
-    except Exception as exc:  # noqa: BLE001 - skip if the model/image is unavailable
-        pytest.skip(f"TEI embedder unavailable: {exc}")
-        return ""
-
-    try:
-        host = container.get_container_host_ip()
-        port = container.get_exposed_port(80)
-        url = f"http://{host}:{port}"
-        _wait_for_tei(url)
-        yield url
-    finally:
-        container.stop()
-
-
-def _pull_image(container: DockerContainer, image: str, platform: str) -> None:
-    """Pre-pull ``image`` for ``platform`` (testcontainers pulls host-platform)."""
-    client = container.get_docker_client()
-    try:
-        client.client.images.get(image)
-    except docker.errors.ImageNotFound:
-        client.client.images.pull(image, platform=platform)
-
-
-@pytest.fixture(scope="session")
 def rag_backend_base_url(
-    network: Network,
     postgres_container: PostgresContainer,
     s3_endpoint: str,
-    tei_embedder: str,
 ) -> Iterator[str]:
-    base_url, container, image = _start_backend_container(
-        network,
-        postgres_container,
-        s3_endpoint,
-        extra_env={
-            "ROSALIND_EMBEDDER_URL": TEI_NETWORK_URL,
-            "ROSALIND_ALLOW_REMOTE_EMBEDDING": "true",
-            "ROSALIND_CHUNK_TOKENIZER_PATH": "/app/assets/bge-m3/tokenizer.json",
-            "ROSALIND_CHUNK_TOKENIZER_SHA256": TOKENIZER_SHA256,
-        },
-    )
+    """A native backend process embedding in-process via FlagEmbedding on MPS.
+
+    Runs the backend with ``uv run`` against the same host-reachable Postgres and
+    SeaweedFS the CLI uses, so the embed stage and online semantic branch run on
+    the Mac's GPU rather than an emulated CPU server.
+    """
+    if not _flagembedding_available():
+        pytest.skip(
+            "FlagEmbedding is not installed in the backend env; "
+            "run `just backend-install-ml` to enable in-process embedding"
+        )
+    base_url, proc, log_file = _start_native_backend(postgres_container, s3_endpoint)
     try:
         yield base_url
     finally:
-        container.stop()
-        image.remove()
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=30)
+        log_file.close()
+
+
+def _flagembedding_available() -> bool:
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--directory",
+            str(BACKEND_DIR),
+            "python",
+            "-c",
+            "import importlib.util; "
+            "raise SystemExit(0 if importlib.util.find_spec('FlagEmbedding') else 1)",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _backend_env(
+    postgres_container: PostgresContainer, s3_endpoint: str
+) -> dict[str, str]:
+    return {
+        **os.environ,
+        "ROSALIND_DATABASE_URL": postgres_container.get_connection_url(),
+        "ROSALIND_S3_ENDPOINT": s3_endpoint,
+        "ROSALIND_S3_ACCESS_KEY": S3_ACCESS_KEY,
+        "ROSALIND_S3_SECRET_KEY": S3_SECRET_KEY,
+        "ROSALIND_S3_REGION": S3_REGION,
+        "ROSALIND_AUTH_ENABLED": "false",
+        "ROSALIND_EMBEDDER_BACKEND": "flagembedding",
+        "ROSALIND_EMBEDDER_DEVICE": RAG_EMBEDDER_DEVICE,
+        "ROSALIND_CHUNK_TOKENIZER_PATH": str(
+            BACKEND_DIR / "assets" / "bge-m3" / "tokenizer.json"
+        ),
+        "ROSALIND_CHUNK_TOKENIZER_SHA256": TOKENIZER_SHA256,
+    }
+
+
+def _start_native_backend(
+    postgres_container: PostgresContainer, s3_endpoint: str
+) -> tuple[str, subprocess.Popen, TextIO]:
+    env = _backend_env(postgres_container, s3_endpoint)
+
+    migrated = subprocess.run(
+        ["uv", "run", "--directory", str(BACKEND_DIR), "alembic", "upgrade", "head"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert migrated.returncode == 0, migrated.stdout + migrated.stderr
+
+    port = _free_port()
+    log_file = tempfile.NamedTemporaryFile(
+        mode="w", prefix="rosalind-rag-backend-", suffix=".log", delete=False
+    )
+    log_path = Path(log_file.name)
+    proc = subprocess.Popen(
+        [
+            "uv",
+            "run",
+            "--directory",
+            str(BACKEND_DIR),
+            "uvicorn",
+            "rosalind.adapters.inbound.http.app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        env=env,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        _wait_for_health(base_url)
+    except Exception:
+        log_file.flush()
+        log_file.close()
+        raise RuntimeError(
+            f"native backend failed to start; log:\n{log_path.read_text()}"
+        )
+    return base_url, proc, log_file
 
 
 @pytest.fixture(scope="session")
@@ -523,22 +577,3 @@ def _wait_for_health(base_url: str, timeout: float = 120.0) -> None:
             last_error = exc
         time.sleep(1.0)
     raise RuntimeError(f"backend did not become healthy: {last_error}")
-
-
-def _wait_for_tei(url: str, timeout: float = 900.0) -> None:
-    deadline = time.monotonic() + timeout
-    last_error: str | None = None
-    while time.monotonic() < deadline:
-        try:
-            response = httpx.post(
-                f"{url}/embed",
-                json={"inputs": ["ping"], "normalize": True},
-                timeout=60.0,
-            )
-            if response.status_code == 200:
-                return
-            last_error = f"HTTP {response.status_code}"
-        except httpx.HTTPError as exc:
-            last_error = str(exc)
-        time.sleep(3.0)
-    raise RuntimeError(f"TEI embedder did not become ready: {last_error}")

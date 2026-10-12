@@ -28,11 +28,13 @@ migrate:
 
 dev:
     docker compose up -d
+    cd backend && uv sync --group ml
     cd backend && just migrate
     cd backend && just serve
 
 dev-mcp:
     docker compose up -d
+    cd backend && uv sync --group ml
     cd backend && just migrate
     cd backend && just mcp-serve
 
@@ -42,6 +44,9 @@ dev-mcp:
 
 backend-install:
     cd backend && uv sync
+
+backend-install-ml:
+    cd backend && uv sync --group ml
 
 backend-format:
     cd backend && just format
@@ -108,6 +113,7 @@ e2e-test:
     cd e2e && uv run pytest -m "not rag"
 
 e2e-test-rag:
+    just backend-install-ml
     cd e2e && uv run pytest -m rag
 
 

@@ -25,5 +25,5 @@ dev = []
 
 [tool.pytest.ini_options]
 markers = [
-    "rag: full email-RAG suite (real Postgres + SeaweedFS + BGE-M3 via TEI)",
+    "rag: full email-RAG suite (real Postgres + SeaweedFS + BGE-M3 via FlagEmbedding/MPS)",
 ]

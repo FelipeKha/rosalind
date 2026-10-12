@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     chunk_tokenizer_sha256: str | None = None
 
     embedding_space: str = "bge_m3_v1"
+    embedder_backend: str = "flagembedding"
+    embedder_device: str = "auto"
+    embedder_use_fp16: bool = False
+    embedder_batch_size: int = 8
+    embedder_max_length: int = 512
     embedder_url: str = ""
     embed_window: int = 2048
     embed_batch_tokens: int = 4096

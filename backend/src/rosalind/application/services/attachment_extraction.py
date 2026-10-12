@@ -157,7 +157,13 @@ class AttachmentExtractionService:
         ]
 
         def _limits() -> None:
-            resource.setrlimit(resource.RLIMIT_AS, (self._max_bytes + (512 << 20),) * 2)
+            limit = self._max_bytes + (512 << 20)
+            try:
+                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+            except ValueError, OSError:
+                # RLIMIT_AS is not enforceable on macOS (the kernel reports
+                # RLIM_INFINITY and rejects finite limits); the cap is best-effort.
+                pass
 
         try:
             completed = subprocess.run(  # nosec B603 - fixed argv, no shell, blob via temp file

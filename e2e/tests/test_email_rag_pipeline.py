@@ -1,9 +1,10 @@
 """Full-pipeline ingestion smoke test for the synthetic MBOX.
 
 Runs the real split → canonicalize → reconcile → enrich → attachments → chunk →
-embed pipeline (via the CLI) against PostgreSQL/pgvector + SeaweedFS + TEI, then
-asserts persisted state at each boundary: raw records, canonical emails, thread
-reconciliation, derived text, chunks, and embeddings.
+embed pipeline (via the CLI) against PostgreSQL/pgvector + SeaweedFS +
+BGE-M3 via FlagEmbedding, then asserts persisted state at each boundary: raw
+records, canonical emails, thread reconciliation, derived text, chunks, and
+embeddings.
 """
 
 from __future__ import annotations

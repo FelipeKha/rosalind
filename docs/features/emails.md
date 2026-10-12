@@ -49,6 +49,7 @@ Indexes                   FTS + embeddings, derived and rebuildable
 |  |  |	Ollama | Ollama lets you use open models with your coding agents so you can spend less while keeping your data private | [Ollama website](https://ollama.com/) |
 |  |  |	Llama.cpp | Run efficient Large Language Model Inference in pure  C/C++ | [Llama.cpp website](https://llama-cpp.com/) |
 |  |  |	Hugging Face's Text Embeddings Inference server | Toolkit designed for efficient deployment and serving of open source text embeddings models | [Text Embeddings Inference](https://huggingface.co/docs/text-embeddings-inference/en/index) |
+|  |  |	FlagEmbedding | Reference library for BGE models; runs BGE-M3 in-process (dense/sparse/colbert), with Apple MPS support for local inference | [FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding) |
 |  |  |	bge-reranker-v2-m3 | Different from embedding model, reranker uses question and document as input and directly output similarity instead of embedding | [Reranker](https://huggingface.co/BAAI/bge-reranker-v2-m3) |
 | The LLM as query planner | Good tool surface, because the planning happens in the agent |	Model Context Protocol (MCP) | Open-source standard for connecting AI applications to external systems | [MCP website](https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro) |
 | Entity extraction at ingestion | Structured extraction for the categories people ask about most: purchases, bookings, appointments, bills |	Schema.org | Collaborative, community activity with a mission to create, maintain, and promote schemas for structured data on the Internet, on web pages, in email messages, and beyond | [Schema.org website](https://schema.org/) |
@@ -334,6 +335,11 @@ chunk B  (attachment)
 ### 6. Embedding
 #### 6.1. Embedding
 Each chunk's text_for_index (prefix included) goes to the embedding model, and the resulting vector is stored next to the chunk.
+
+The embedding backend is selected by configuration (`embedder_backend`). Locally it
+runs in-process via `FlagEmbedding` on Apple's MPS backend (no serving container);
+`embedder_backend=tei` points at a remote Text Embeddings Inference server for
+production/deployed use. Both implement the same `Embedder` port.
 
 search.chunk_embedding
   (chunk A, bge-m3, v1) → vector(1024)
