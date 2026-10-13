@@ -22,6 +22,51 @@ When enabled, the backend mounts the `/eval` HTTP routes; when disabled they do
 not exist (the modules are never imported). **Enable eval only against a
 throwaway test database** (ParadeDB + pgvector, migrated).
 
+## Isolated eval stack
+
+The justfile runs eval against its **own** Postgres, object storage, and
+Keycloak — a separate Compose project (`rosalind-eval`) with its own volumes, so
+dev and eval never share data and can run at the same time.
+
+| Service | dev | eval |
+|---|---|---|
+| Postgres (ParadeDB) | 5432 | 5433 |
+| SeaweedFS S3 | 8333 | 8334 |
+| Keycloak | 8080 | 8081 |
+| Backend API | 8000 | 8001 |
+
+```bash
+just eval-up        # start eval Postgres + SeaweedFS + Keycloak (project rosalind-eval)
+just eval-migrate   # apply migrations to the eval database
+just eval-dev       # eval-up + ml deps + eval-migrate + eval backend on :8001 (eval mode on)
+just eval-serve     # just the eval backend (ROSALIND_EVAL__ENABLED=true)
+just eval-logs      # tail eval infrastructure logs
+just eval-cli ...   # run the CLI against the eval backend/Keycloak
+just eval-down      # stop eval infrastructure (keep volumes)
+just eval-reset     # wipe only the eval project volumes (dev volumes untouched)
+```
+
+`just eval-cli` points the CLI at `http://localhost:8001` /
+`http://localhost:8081` and uses `ROSALIND_CONFIG_DIR=~/.config/rosalind-eval`,
+so its Keycloak tokens are kept separate from dev. `eval-reset` is
+project-scoped, so it never deletes dev raw evidence.
+
+Typical run:
+
+```bash
+just eval-dev
+just eval-cli auth login
+just eval-cli import create --source google --type takeout /path/to/Mail
+just eval-cli pipeline run <import_id>
+just eval-cli eval items --import <import_id>       # key gold manually
+just eval-cli eval run --config backend/configs/eval/experiments/mode-hybrid.yaml
+just eval-cli eval compare <runA> <runB>
+just eval-reset
+```
+
+The eval Compose file is `docker-compose.eval.yml`; it reuses
+`keycloak/rosalind-realm.json` in a second Keycloak instance.
+
 ## Dependency rule
 
 Eval lives under the normal hexagonal layers — `application/eval/`

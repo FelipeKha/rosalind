@@ -31,12 +31,69 @@ dev:
     cd backend && uv sync --group ml
     cd backend && just migrate
     cd backend && just serve
-
 dev-mcp:
     docker compose up -d
     cd backend && uv sync --group ml
     cd backend && just migrate
     cd backend && just mcp-serve
+
+
+# ==============================================================================
+# Eval mode (isolated stack: own Postgres, object storage and Keycloak)
+# ==============================================================================
+
+# Dedicated Compose project so eval volumes/network never touch the dev stack.
+eval_compose := "docker compose -p rosalind-eval -f docker-compose.eval.yml"
+eval_database_url := "postgresql+psycopg://rosalind:rosalind@localhost:5433/rosalind_eval"
+eval_s3_endpoint := "http://localhost:8334"
+eval_keycloak_url := "http://localhost:8081"
+eval_api_url := "http://localhost:8001"
+
+# Start the eval infrastructure
+eval-up:
+    {{eval_compose}} up -d
+
+# Stop the eval infrastructure (keeps eval volumes)
+eval-down:
+    {{eval_compose}} down
+
+# Tail eval infrastructure logs
+eval-logs:
+    {{eval_compose}} logs -f --tail=100
+
+# Wipe only the eval project volumes (throwaway eval data; dev volumes untouched)
+eval-reset:
+    {{eval_compose}} down -v
+
+# Apply migrations to the eval database
+eval-migrate:
+    cd backend && ROSALIND_DATABASE_URL={{eval_database_url}} just migrate
+
+# Serve the backend in eval mode
+eval-serve:
+    cd backend && \
+        ROSALIND_EVAL__ENABLED=true \
+        ROSALIND_DATABASE_URL={{eval_database_url}} \
+        ROSALIND_S3_ENDPOINT={{eval_s3_endpoint}} \
+        ROSALIND_KEYCLOAK_URL={{eval_keycloak_url}} \
+        uv run uvicorn rosalind.adapters.inbound.http.app:app --port 8001 --reload
+
+# One-shot: eval infra + ml deps + migrations + eval backend
+eval-dev:
+    just eval-up
+    cd backend && uv sync --group ml
+    just eval-migrate
+    just eval-serve
+
+# Run the CLI against the eval backend and Keycloak, with isolated credentials
+eval-cli *ARGS:
+    cd cli && \
+        ROSALIND_API_URL={{eval_api_url}} \
+        ROSALIND_KEYCLOAK_URL={{eval_keycloak_url}} \
+        ROSALIND_S3_ENDPOINT={{eval_s3_endpoint}} \
+        ROSALIND_CONFIG_DIR=$HOME/.config/rosalind-eval \
+        uv run rosalind {{ARGS}}
+
 
 # ==============================================================================
 # Backend
