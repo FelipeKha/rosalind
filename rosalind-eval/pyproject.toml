@@ -31,6 +31,9 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.6,<0.17",
 ]
+gen = [
+    "instructor>=1.0.0",
+]
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
