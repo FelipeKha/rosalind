@@ -61,7 +61,7 @@ SELF_EMAIL = "felipe@example.test"
 # Silicon). The device can be overridden (e.g. "cpu") for non-Mac hosts.
 RAG_EMBEDDER_DEVICE = os.environ.get("ROSALIND_E2E_EMBEDDER_DEVICE", "mps")
 
-TOKENIZER_SHA256 = "21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08"
+TOKENIZER_SHA256 = "21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08"  # gitleaks:allow
 
 IMPORT_ID_RE = re.compile(r"ID:\s+([0-9a-f-]{36})")
 
@@ -118,7 +118,9 @@ def s3_endpoint(network: Network) -> Iterator[str]:
             .with_network_aliases("seaweedfs")
             .with_exposed_ports(8333)
         )
-        container.waiting_for(LogMessageWaitStrategy("Start Seaweed S3 API Server"))
+        container.waiting_for(
+            LogMessageWaitStrategy("Start Seaweed S3 API Server")
+        )
         container.start()
     except Exception as exc:  # noqa: BLE001 - skip if Docker is unavailable
         pytest.skip(f"Docker unavailable: {exc}")
@@ -297,7 +299,9 @@ def rag_backend_base_url(
             "FlagEmbedding is not installed in the backend env; "
             "run `just backend-install-ml` to enable in-process embedding"
         )
-    base_url, proc, log_file = _start_native_backend(postgres_container, s3_endpoint)
+    base_url, proc, log_file = _start_native_backend(
+        postgres_container, s3_endpoint
+    )
     try:
         yield base_url
     finally:
@@ -364,7 +368,15 @@ def _start_native_backend(
     env = _backend_env(postgres_container, s3_endpoint)
 
     migrated = subprocess.run(
-        ["uv", "run", "--directory", str(BACKEND_DIR), "alembic", "upgrade", "head"],
+        [
+            "uv",
+            "run",
+            "--directory",
+            str(BACKEND_DIR),
+            "alembic",
+            "upgrade",
+            "head",
+        ],
         env=env,
         capture_output=True,
         text=True,
@@ -408,7 +420,9 @@ def _start_native_backend(
 
 
 @pytest.fixture(scope="session")
-def rag_pg_conn(postgres_container: PostgresContainer) -> Iterator[psycopg.Connection]:
+def rag_pg_conn(
+    postgres_container: PostgresContainer,
+) -> Iterator[psycopg.Connection]:
     url = postgres_container.get_connection_url().replace("+psycopg", "")
     conn = psycopg.connect(url)
     try:
@@ -438,7 +452,12 @@ def rag_self_person(
                 "INSERT INTO account_identity "
                 "(id, account_id, issuer, subject, created_at, last_seen_at) "
                 "VALUES (%s, %s, %s, %s, now(), now())",
-                (str(uuid.uuid4()), account_id, ANONYMOUS_ISSUER, ANONYMOUS_SUBJECT),
+                (
+                    str(uuid.uuid4()),
+                    account_id,
+                    ANONYMOUS_ISSUER,
+                    ANONYMOUS_SUBJECT,
+                ),
             )
         else:
             account_id = str(row[0])
@@ -459,7 +478,11 @@ def rag_self_person(
             (person_id, account_id),
         )
     rag_pg_conn.commit()
-    return {"account_id": account_id, "person_id": person_id, "email": SELF_EMAIL}
+    return {
+        "account_id": account_id,
+        "person_id": person_id,
+        "email": SELF_EMAIL,
+    }
 
 
 @pytest.fixture(scope="session")
