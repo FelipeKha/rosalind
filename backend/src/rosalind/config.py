@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     s3_secret_key: str = "rosalind"
     s3_region: str = "us-east-1"
 
+    log_level: str = "INFO"
+    log_format: str = "console"
+    log_query_text: bool = False
+
+    # How long rows in ``search.request_log`` are retained before pruning.
+    search_request_log_retention_days: int = 30
+
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"

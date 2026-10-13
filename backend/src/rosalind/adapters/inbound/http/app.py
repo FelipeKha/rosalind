@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -22,9 +25,22 @@ from rosalind.application.errors import (
     UnsupportedImportTypeError,
 )
 from rosalind.application.search import InvalidSearchRequest
+from rosalind.config import settings
+from rosalind.logging import configure_logging
 from rosalind.security import SecurityError
 
-app = FastAPI(title="Rosalind")
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    configure_logging(
+        settings.log_level,
+        settings.log_format,
+        log_query_text=settings.log_query_text,
+    )
+    yield
+
+
+app = FastAPI(title="Rosalind", lifespan=_lifespan)
 
 app.include_router(health.router)
 app.include_router(me.router)

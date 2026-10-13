@@ -51,6 +51,7 @@ from rosalind.adapters.outbound.search.semantic import (
     SemanticRetrievalConfig,
 )
 from rosalind.adapters.outbound.search.tokenizer import BgeM3TokenCounter
+from rosalind.adapters.outbound.search.trace_log import SearchTraceRecorder
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
 )
@@ -389,6 +390,7 @@ def build_search_service(session_factory: Callable[[], Session]) -> SearchServic
         token_counter=_token_counter,
         result_data=PostgresSearchResultDataRepository(session_factory),
         list_retriever=PostgresMessageListRetriever(session_factory),
+        trace_recorder=SearchTraceRecorder(session_factory),
     )
 
 

@@ -9,7 +9,10 @@ from rosalind.config import settings
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: running migrations must not disable the
+    # application's loggers (the default would silence rosalind.* for the rest
+    # of the process, e.g. inside test runs that migrate and then log).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 if not config.get_main_option("sqlalchemy.url"):
     config.set_main_option("sqlalchemy.url", settings.database_url)

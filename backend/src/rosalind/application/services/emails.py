@@ -13,8 +13,10 @@ avoid duplicates.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import tempfile
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -73,6 +75,69 @@ ALL_STAGES = frozenset(
         STAGE_EMBED,
     }
 )
+
+logger = logging.getLogger("rosalind.ingestion")
+
+# Terminal events carry the final per-stage tallies for a run; progress events
+# (ending in -ing) repeat and must not be accumulated.
+_TERMINAL_STAGES = frozenset(
+    {
+        "done",
+        "canonicalized",
+        "reconciled",
+        "enriched",
+        "attachments_extracted",
+        "chunked",
+        "embedded",
+        "embed_blocked",
+        "error",
+    }
+)
+
+
+def _event_outcomes(event: PipelineEvent) -> tuple[int, int, int]:
+    """Map an event onto the (ok, skipped_unchanged, failed) vocabulary.
+
+    ``ok`` is new work; ``skipped_unchanged`` is work proven identical to a
+    prior run (the idempotent re-import case); ``failed`` is quarantined work.
+    """
+    details = event.details or {}
+    if details:
+        ok = details.get(
+            "chunks_written",
+            details.get("embedded", details.get("done", event.created)),
+        )
+        skipped = details.get("chunks_unchanged", details.get("reused", event.reused))
+        failed = details.get("failed", event.failed)
+        return int(ok), int(skipped), int(failed)
+    return int(event.created), int(event.reused), int(event.failed)
+
+
+def _record_event(
+    event: PipelineEvent,
+    summary: dict[str, tuple[int, int, int]],
+    started: float,
+) -> None:
+    """Log one ingestion stage event and accumulate terminal tallies. No content."""
+    ok, skipped, failed = _event_outcomes(event)
+    logger.info(
+        "ingestion_stage",
+        extra={
+            "stage": event.stage,
+            "processed": event.processed,
+            "ok": ok,
+            "skipped_unchanged": skipped,
+            "failed": failed,
+            "elapsed_ms": (time.perf_counter() - started) * 1000,
+        },
+    )
+    if event.stage in _TERMINAL_STAGES:
+        previous = summary.get(event.stage, (0, 0, 0))
+        summary[event.stage] = (
+            previous[0] + ok,
+            previous[1] + skipped,
+            previous[2] + failed,
+        )
 
 
 @dataclass(frozen=True)
@@ -210,6 +275,34 @@ class EmailProcessingService:
         )
 
     def run(
+        self,
+        uow: UnitOfWork,
+        prepared: PreparedSplit,
+        *,
+        stages: set[str] | None = None,
+    ) -> Iterator[PipelineEvent]:
+        """Run the pipeline, logging a content-free event per stage plus a summary.
+
+        Yields the same progress events as before; the logging wrapper observes
+        them (ok/skipped_unchanged/failed counts) without changing the stream.
+        """
+        started = time.perf_counter()
+        summary: dict[str, tuple[int, int, int]] = {}
+        try:
+            for event in self._run(uow, prepared, stages=stages):
+                _record_event(event, summary, started)
+                yield event
+        finally:
+            logger.info(
+                "ingestion_run_summary",
+                extra={
+                    "import_id": str(prepared.import_id),
+                    "stages": summary,
+                    "elapsed_ms": (time.perf_counter() - started) * 1000,
+                },
+            )
+
+    def _run(
         self,
         uow: UnitOfWork,
         prepared: PreparedSplit,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from rosalind.application.search.ports import AuditEvent
+from rosalind.logging import log_context
 
 logger = logging.getLogger("rosalind.search.audit")
 
@@ -18,25 +19,29 @@ __all__ = ["LoggingAudit"]
 
 class LoggingAudit:
     async def record(self, event: AuditEvent) -> None:
-        logger.info(
-            "search_prepare",
-            extra={
-                "request_id": str(event.request_id),
-                "audit_id": str(event.audit_id),
-                "account_id": str(event.account_id),
-                "client_id": event.client_id,
-                "source_account_ids": sorted(str(i) for i in event.source_account_ids),
-                "fingerprint": event.fingerprint,
-                "mode_requested": event.mode_requested,
-                "mode_effective": event.mode_effective,
-                "index_version": event.index_version,
-                "embedding_model": event.embedding_model,
-                "embedding_version": event.embedding_version,
-                "warnings": [warning.code.value for warning in event.warnings],
-                "short_circuit_reason": event.short_circuit_reason,
-                "timings_ms": _timings(event),
-            },
-        )
+        with log_context(
+            request_id=str(event.request_id),
+            audit_id=str(event.audit_id),
+            account_id=str(event.account_id),
+            plan_fingerprint=event.fingerprint,
+        ):
+            logger.info(
+                "search_prepare",
+                extra={
+                    "client_id": event.client_id,
+                    "source_account_ids": sorted(
+                        str(i) for i in event.source_account_ids
+                    ),
+                    "mode_requested": event.mode_requested,
+                    "mode_effective": event.mode_effective,
+                    "index_version": event.index_version,
+                    "embedding_model": event.embedding_model,
+                    "embedding_version": event.embedding_version,
+                    "warnings": [warning.code.value for warning in event.warnings],
+                    "short_circuit_reason": event.short_circuit_reason,
+                    "timings_ms": _timings(event),
+                },
+            )
 
 
 def _timings(event: AuditEvent) -> dict[str, float | None] | None:

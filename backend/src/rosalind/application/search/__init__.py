@@ -14,6 +14,11 @@ from rosalind.application.search.assemble import (
     make_snippet,
 )
 from rosalind.application.search.fusion import FusedCandidate, FusedCandidates, fuse
+from rosalind.application.search.overrides import (
+    PipelineCache,
+    PipelineOverrides,
+    ResumeStage,
+)
 from rosalind.application.search.plan import (
     MAX_LIMIT,
     Budgets,
@@ -75,6 +80,7 @@ from rosalind.application.search.semantic import (
     SemanticResult,
     SemanticRetrievalError,
 )
+from rosalind.application.search.trace import SearchTrace, TraceLevel, TraceSummary
 
 __all__ = [
     "DEFAULT_MAX_SNIPPET_CHARS",
@@ -98,6 +104,8 @@ __all__ = [
     "ListPosition",
     "ListResult",
     "MatchedIn",
+    "PipelineCache",
+    "PipelineOverrides",
     "PlanHints",
     "PlanWarning",
     "PrepareResult",
@@ -116,6 +124,7 @@ __all__ = [
     "ResolvedEntity",
     "ResolvedFilters",
     "ResultView",
+    "ResumeStage",
     "Scope",
     "SearchCitation",
     "SearchMode",
@@ -126,6 +135,7 @@ __all__ = [
     "SearchResultData",
     "SearchResultRecord",
     "SearchStrategy",
+    "SearchTrace",
     "SemanticFilterPath",
     "SemanticHit",
     "SemanticResult",
@@ -133,6 +143,8 @@ __all__ = [
     "ShortCircuit",
     "ShortCircuitReason",
     "SortOrder",
+    "TraceLevel",
+    "TraceSummary",
     "WarningCode",
     "assemble_list",
     "assemble_ranked",

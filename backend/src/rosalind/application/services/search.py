@@ -26,29 +26,24 @@ from rosalind.application.canonicalization.email import normalize_email
 from rosalind.application.search import (
     Cursor,
     InvalidSearchRequest,
-    LexicalResult,
+    PipelineCache,
+    PipelineOverrides,
     PreparedQuery,
     PrepareTimings,
     QueryVector,
     RequestContext,
     ResolvedEntity,
     ResolvedFilters,
-    ResultView,
+    ResumeStage,
     Scope,
     SearchMode,
     SearchPlan,
     SearchRequest,
     SearchResponse,
     SearchStrategy,
-    SemanticResult,
-    SemanticRetrievalError,
     ShortCircuit,
     ShortCircuitReason,
     SortOrder,
-    assemble_list,
-    assemble_ranked,
-    fuse,
-    rerank,
 )
 from rosalind.application.search.dates import resolve_timezone, to_utc_bounds
 from rosalind.application.search.plan import (
@@ -76,9 +71,12 @@ from rosalind.application.search.ports import (
     SearchScopePort,
     SemanticRetrieverPort,
     ThreadResolverPort,
+    TraceRecorderPort,
 )
 from rosalind.application.search.query import normalize_semantic_text, parse_keywords
 from rosalind.application.search.tags import canonicalize_language, canonicalize_tag
+from rosalind.application.search.trace import SearchTrace, TraceLevel
+from rosalind.application.services.search_pipeline import SearchPipeline
 from rosalind.domain.search import TokenCounter
 
 _SELF = "me"
@@ -130,6 +128,7 @@ class SearchService:
         token_counter: TokenCounter,
         result_data: SearchResultDataPort,
         list_retriever: MessageListPort,
+        trace_recorder: TraceRecorderPort | None = None,
     ):
         self._scope = scope
         self._metadata = metadata
@@ -147,6 +146,19 @@ class SearchService:
         self._token_counter = token_counter
         self._result_data = result_data
         self._list = list_retriever
+        self._pipeline = SearchPipeline(
+            lexical=lexical,
+            semantic=semantic,
+            chunk_text=chunk_text,
+            codec=codec,
+            result_data=result_data,
+            list_retriever=list_retriever,
+            snippet_max_chars=config.snippet_max_chars,
+            reranker=reranker,
+            rerank_config=rerank_config,
+            token_counter=token_counter,
+            trace_recorder=trace_recorder,
+        )
 
     async def prepare(
         self,
@@ -405,70 +417,31 @@ class SearchService:
 
     # -- execution (steps 2-5) -------------------------------------------
 
-    async def search(self, plan: SearchPlan) -> SearchResponse:
-        """Run retrieval, fusion, reranking, and assembly for a prepared plan."""
-        if plan.strategy is SearchStrategy.LIST:
-            listed = await self._list.list(plan)
-            return assemble_list(
-                plan,
-                listed,
-                self._codec,
-                max_snippet_chars=self._config.snippet_max_chars,
-            )
-
-        lexical, semantic, retrieval_warnings = await self._retrieve(plan)
-        fused = fuse(plan, lexical, semantic)
-        reranked = await rerank(
-            plan,
-            fused,
-            texts=self._chunk_text,
-            reranker=self._reranker,
-            token_counter=self._token_counter,
-            config=self._rerank_config,
-        )
-
-        window = reranked.ranked[: plan.budgets.window_k]
-        chunk_ids = tuple(hit.chunk_id for hit in window)
-        data = await self._result_data.get_results(
-            plan,
-            chunk_ids,
-            include_text=plan.presentation.view is ResultView.SNIPPET,
-        )
-        return assemble_ranked(
-            plan,
-            reranked,
-            data,
-            self._codec,
-            max_snippet_chars=self._config.snippet_max_chars,
-            extra_warnings=retrieval_warnings,
-        )
-
-    async def _retrieve(
+    async def run(
         self,
         plan: SearchPlan,
-    ) -> tuple[LexicalResult | None, SemanticResult | None, tuple[PlanWarning, ...]]:
-        """Run lexical and semantic retrieval in parallel, degrading semantic to
-        lexical when a hybrid search loses its vector branch."""
-        needs_lexical = plan.query.lexical is not None
-        needs_semantic = plan.query.vector is not None
+        *,
+        trace_level: TraceLevel = "minimal",
+        resume_from: ResumeStage | None = None,
+        cached: PipelineCache | None = None,
+        overrides: PipelineOverrides | None = None,
+    ) -> SearchTrace:
+        """Run steps 2–5 for a prepared plan and return the full trace.
 
-        if needs_lexical and needs_semantic:
-            lexical_task = asyncio.create_task(self._lexical.retrieve(plan))
-            semantic_task = asyncio.create_task(self._semantic.retrieve(plan))
-            lexical = await lexical_task
-            try:
-                semantic = await semantic_task
-            except SemanticRetrievalError:
-                return lexical, None, (_semantic_degraded_warning(),)
-            return lexical, semantic, ()
+        ``resume_from``/``cached``/``overrides`` are internal controls for
+        evaluation; the MCP/REST adapters call ``run(plan)`` with defaults.
+        """
+        return await self._pipeline.run(
+            plan,
+            trace_level=trace_level,
+            resume_from=resume_from,
+            cached=cached,
+            overrides=overrides,
+        )
 
-        if needs_lexical:
-            return await self._lexical.retrieve(plan), None, ()
-
-        if needs_semantic:
-            return None, await self._semantic.retrieve(plan), ()
-
-        raise ValueError("ranked plan has neither a lexical nor a semantic query")
+    async def search(self, plan: SearchPlan) -> SearchResponse:
+        """Run retrieval, fusion, reranking, and assembly for a prepared plan."""
+        return (await self.run(plan)).response
 
     # -- validation -------------------------------------------------------
 
@@ -882,13 +855,6 @@ def _unseen_warnings(unseen: frozenset[str]) -> list[PlanWarning]:
         )
         for handle in sorted(unseen)
     ]
-
-
-def _semantic_degraded_warning() -> PlanWarning:
-    return PlanWarning(
-        code=WarningCode.RETRIEVAL_DEGRADED,
-        message="semantic retrieval unavailable; results are lexical-only",
-    )
 
 
 def _audit_event(
