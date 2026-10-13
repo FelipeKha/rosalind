@@ -43,6 +43,9 @@ jobs:
       - name: Install e2e dependencies
         run: uv sync --directory e2e --locked
 
+      - name: Install eval dependencies
+        run: uv sync --directory rosalind-eval --locked
+
       - name: Run quality checks
         run: just ci
 

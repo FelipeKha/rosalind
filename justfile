@@ -103,6 +103,35 @@ cli-run *ARGS:
 
 
 # ==============================================================================
+# Eval (rosalind-eval)
+# ==============================================================================
+
+eval-install:
+    cd rosalind-eval && uv sync
+
+eval-format:
+    cd rosalind-eval && just format
+
+eval-lint:
+    cd rosalind-eval && just lint
+
+eval-typecheck:
+    cd rosalind-eval && just typecheck
+
+eval-test:
+    cd rosalind-eval && just test
+
+eval-security:
+    cd rosalind-eval && just security
+
+eval-check:
+    cd rosalind-eval && just check
+
+eval-run *ARGS:
+    cd rosalind-eval && just run {{ARGS}}
+
+
+# ==============================================================================
 # End-to-end tests
 # ==============================================================================
 
@@ -159,6 +188,8 @@ check:
     just backend-check
     just cli-format
     just cli-check
+    just eval-format
+    just eval-check
     just shellcheck
     just shfmt
     just containers
@@ -168,6 +199,7 @@ check:
 ci:
     just backend-check
     just cli-check
+    just eval-check
     just e2e-test
     just shellcheck
     just shfmt

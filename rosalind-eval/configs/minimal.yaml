@@ -1,0 +1,4 @@
+# Minimal no-op experiment: name + dataset only, all defaults.
+name: baseline
+dataset: ../e2e/gold/email_rag_cases.yaml
+description: Baseline hybrid search with default pipeline settings.
