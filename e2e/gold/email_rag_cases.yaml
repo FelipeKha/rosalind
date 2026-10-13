@@ -1,0 +1,113 @@
+version: 1
+corpus:
+  fixture: e2e/fixtures/google/takeout/Mail/rosalind_synthetic_emails.mbox
+  message_count: 18
+  self_email: felipe@example.test
+  embedding_space: bge_m3_v1
+
+cases:
+  - id: R01
+    query: "What is the invoice number?"
+    behavior: single-source exact retrieval
+    evidence:
+      - message_id: "msg-004@example.test"
+    any_of: false
+    min_rank: 5
+    required_facts:
+      - "INV-2048"
+
+  - id: R02
+    query: "How much was the invoice, and when was payment due?"
+    behavior: single-source amount and date retrieval
+    evidence:
+      - message_id: "msg-004@example.test"
+    any_of: false
+    min_rank: 5
+    required_facts:
+      - "EUR 1,275.40"
+      - "20 March"
+
+  - id: R03
+    query: "When is the Atlas project kickoff?"
+    behavior: multi-source retrieval (any valid kickoff source)
+    evidence:
+      - message_id: "msg-001@example.test"
+      - message_id: "msg-009@example.test"
+      - message_id: "msg-010@example.test"
+    any_of: true
+    min_rank: 10
+    required_facts:
+      - "12 March"
+
+  - id: R04
+    query: "What did Alice add to the kickoff agenda?"
+    behavior: single-source retrieval distinguishing sender from request
+    evidence:
+      - message_id: "msg-003@example.test"
+    any_of: false
+    min_rank: 10
+    required_facts:
+      - "launch timeline"
+
+  - id: R05
+    query: "When is the follow-up meeting with Claire?"
+    behavior: multi-source retrieval (French + English confirmation)
+    evidence:
+      - message_id: "msg-006@example.test"
+      - message_id: "msg-007@example.test"
+    any_of: true
+    min_rank: 10
+    required_facts:
+      - "21 March"
+      - "14:00"
+
+  - id: R06
+    query: "Who owns database validation and application smoke tests?"
+    behavior: both ownership facts must be retrieved
+    evidence:
+      - message_id: "msg-005@example.test"
+      - message_id: "msg-012@example.test"
+    any_of: true
+    min_rank: 10
+    required_facts:
+      - "database validation"
+      - "smoke tests"
+
+  - id: R07
+    query: "What is the approved travel budget?"
+    behavior: budget in body text (attachment extraction is out of scope)
+    evidence:
+      - message_id: "msg-008@example.test"
+    any_of: false
+    min_rank: 10
+    required_facts:
+      - "4,200"
+
+  - id: R08
+    query: "What is the exact configuration key and its value?"
+    behavior: exact identifier retrieval (underscored token)
+    evidence:
+      - message_id: "msg-018@example.test"
+    any_of: false
+    min_rank: 10
+    required_facts:
+      - "migration.validation.max_retries"
+      - "value 4"
+
+  - id: R09
+    query: "What is the deployment date?"
+    behavior: HTML body retrieval
+    evidence:
+      - message_id: "msg-015@example.test"
+    any_of: false
+    min_rank: 10
+    required_facts:
+      - "25 March"
+
+  - id: R10
+    query: "What is the invoice number for the Atlas project?"
+    behavior: no single message links invoice to the Atlas project (abstain)
+    answerable: false
+    evidence: []
+    any_of: false
+    required_facts: []

@@ -5,8 +5,11 @@ description = "End-to-end tests for the Rosalind CLI import pipeline"
 requires-python = ">=3.14"
 dependencies = [
     "boto3>=1.35.0",
+    "docker>=7.0.0",
     "httpx>=0.28.0",
+    "psycopg[binary]>=3.2.0",
     "pytest>=9.1.1",
+    "pyyaml>=6.0.2",
     "testcontainers>=4.10.0",
 ]
 
@@ -19,3 +22,8 @@ package = false
 
 [dependency-groups]
 dev = []
+
+[tool.pytest.ini_options]
+markers = [
+    "rag: full email-RAG suite (real Postgres + SeaweedFS + BGE-M3 via FlagEmbedding/MPS)",
+]

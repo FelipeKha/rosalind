@@ -39,8 +39,46 @@ just backend-serve      # starts uvicorn at http://localhost:8000
 Or bring everything up in one command:
 
 ```bash
-just dev                # up + migrate + serve
+just dev                # up + install embedding deps + migrate + serve
 ```
+
+## Local embeddings (BGE-M3)
+
+By default the backend embeds in-process via [FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding)
+on Apple's MPS GPU — no separate serving container. This needs the optional
+`ml` dependency group (PyTorch + FlagEmbedding):
+
+```bash
+just backend-install-ml   # one-time (also done by `just dev`)
+uv run --directory backend python -c \
+  "import torch; print('MPS:', torch.backends.mps.is_available())"
+```
+
+The first embedding run downloads the `BAAI/bge-m3` weights (~2.2 GB) to the
+Hugging Face cache. Configuration knobs (all `ROSALIND_`-prefixed):
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `ROSALIND_EMBEDDER_BACKEND` | `flagembedding` | `flagembedding` (in-process) or `tei` (remote server via `ROSALIND_EMBEDDER_URL`) |
+| `ROSALIND_EMBEDDER_DEVICE` | `auto` | `auto` (MPS if available), `mps`, or `cpu` |
+| `ROSALIND_EMBEDDER_USE_FP16` | `false` | FP32 baseline; set `true` for FP16 |
+| `ROSALIND_EMBEDDER_BATCH_SIZE` | `8` | Inference batch size |
+| `ROSALIND_EMBEDDER_MAX_LENGTH` | `512` | Max token length (chunks are capped at 480) |
+
+## Reranking (bge-reranker-v2-m3)
+
+Reranking is opt-in: set `ROSALIND_SEARCH_RERANKER=bge-reranker-v2-m3/v1` to
+enable the cross-encoder reorder step. It runs in-process via FlagEmbedding on
+MPS by default (the same `ml` group as above), and downloads `BAAI/bge-reranker-v2-m3`
+(~1.1 GB) on first use.
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `ROSALIND_SEARCH_RERANKER` | *(unset)* | Version stamp that enables reranking (e.g. `bge-reranker-v2-m3/v1`) |
+| `ROSALIND_SEARCH_RERANKER_BACKEND` | `flagembedding` | `flagembedding` (in-process) or `tei` (remote server via `ROSALIND_SEARCH_RERANKER_URL`) |
+| `ROSALIND_SEARCH_RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | Model id for the in-process backend |
+| `ROSALIND_SEARCH_RERANKER_DEVICE` | `auto` | `auto` (MPS if available), `mps`, or `cpu` |
+| `ROSALIND_SEARCH_RERANKER_USE_FP16` | `false` | FP32 baseline; set `true` for FP16 |
 
 ## Run the CLI client
 

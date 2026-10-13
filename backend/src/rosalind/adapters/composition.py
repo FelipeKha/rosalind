@@ -8,6 +8,7 @@ adapters (and tests) build their service graph from here.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import logging
 from collections.abc import Callable, Iterator
 
@@ -28,12 +29,18 @@ from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from rosalind.adapters.outbound.search.audit import LoggingAudit
 from rosalind.adapters.outbound.search.chunk_text import PostgresChunkTextRepository
+from rosalind.adapters.outbound.search.embedder_flagembedding import (
+    FlagEmbeddingEmbedder,
+)
 from rosalind.adapters.outbound.search.embedder_tei import TeiEmbedder
 from rosalind.adapters.outbound.search.lexical import ParadeDbLexicalRetriever
 from rosalind.adapters.outbound.search.list_retriever import (
     PostgresMessageListRetriever,
 )
 from rosalind.adapters.outbound.search.query_embedder import NullEmbedder, QueryEmbedder
+from rosalind.adapters.outbound.search.reranker_flagembedding import (
+    FlagEmbeddingReranker,
+)
 from rosalind.adapters.outbound.search.reranker_tei import TeiReranker
 from rosalind.adapters.outbound.search.result_data import (
     PostgresSearchResultDataRepository,
@@ -48,12 +55,18 @@ from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
 )
 from rosalind.application.canonicalization.person import CanonicalizationService
+from rosalind.application.ports.embedding import Embedder
 from rosalind.application.ports.identity import TokenVerifier
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.search import Budgets, FusionConfig, FusionStrategy
 from rosalind.application.search.cursor import HmacCursorCodec
-from rosalind.application.search.ports import RerankConfig, RerankTextMode, SearchConfig
+from rosalind.application.search.ports import (
+    RerankConfig,
+    RerankerPort,
+    RerankTextMode,
+    SearchConfig,
+)
 from rosalind.application.services.accounts import AccountService
 from rosalind.application.services.attachment_extraction import (
     AttachmentExtractionService,
@@ -71,7 +84,7 @@ from rosalind.application.services.processing import ProcessingService
 from rosalind.application.services.search import SearchService
 from rosalind.application.services.sources import SourceService
 from rosalind.config import settings
-from rosalind.domain.search import ChunkingParams
+from rosalind.domain.search import ChunkingParams, EmbeddingSpace
 
 
 def _cursor_signing_key() -> bytes:
@@ -87,7 +100,7 @@ def _cursor_signing_key() -> bytes:
 
 
 def _search_config() -> SearchConfig:
-    if settings.embedder_url:
+    if _embedder is not None:
         space = embedding_space(settings.embedding_space)
         embedding_model = space.model_id
         embedding_version = space.revision or space.name
@@ -102,7 +115,7 @@ def _search_config() -> SearchConfig:
         index_version=settings.search_index_version,
         embedding_model=embedding_model,
         embedding_version=embedding_version,
-        reranker=settings.search_reranker,
+        reranker=settings.search_reranker if _search_reranker is not None else None,
         budgets=Budgets(
             lexical_k=settings.search_lexical_k,
             semantic_k=settings.search_semantic_k,
@@ -125,15 +138,22 @@ def _search_config() -> SearchConfig:
 
 
 def _rerank_config() -> RerankConfig | None:
-    """Build the rerank configuration, failing fast on a misconfigured reranker.
+    """Build the rerank configuration, or ``None`` when reranking is off.
 
     ``search_reranker`` gates reranking (it is the ``IndexVersions.reranker``
-    stamp, revision-qualified), so it must be paired with a reachable URL.
+    stamp, revision-qualified). The ``flagembedding`` backend is disabled with a
+    warning when the optional ``ml`` dependency group is absent, so reranking is
+    skipped rather than crashing a non-ml environment.
     """
     if not settings.search_reranker:
         return None
-    if not settings.search_reranker_url:
-        raise ValueError("search_reranker is set but search_reranker_url is empty")
+    backend = settings.search_reranker_backend.strip().lower()
+    if backend == "flagembedding" and importlib.util.find_spec("FlagEmbedding") is None:
+        logging.getLogger(__name__).warning(
+            "search_reranker_backend=flagembedding but FlagEmbedding is not "
+            "installed; reranking disabled (run `uv sync --group ml`)"
+        )
+        return None
     try:
         text_mode = RerankTextMode(settings.search_reranker_text_mode)
     except ValueError as exc:
@@ -147,6 +167,77 @@ def _rerank_config() -> RerankConfig | None:
         concurrency=settings.search_reranker_max_concurrent_requests,
         timeout_ms=settings.search_reranker_timeout_ms,
         deadline_ms=settings.search_reranker_deadline_ms,
+    )
+
+
+def _build_reranker(config: RerankConfig) -> RerankerPort:
+    """Build the reranking backend selected by ``search_reranker_backend``.
+
+    ``flagembedding`` (default) runs the cross-encoder in-process on MPS;
+    ``tei`` targets a remote HTTP server via ``search_reranker_url``.
+    """
+    backend = settings.search_reranker_backend.strip().lower()
+    if backend == "flagembedding":
+        return FlagEmbeddingReranker(
+            settings.search_reranker_model,
+            device=settings.search_reranker_device,
+            use_fp16=settings.search_reranker_use_fp16,
+            batch_size=config.max_batch_size,
+            max_length=config.max_input_tokens,
+        )
+    if backend == "tei":
+        if not settings.search_reranker_url:
+            raise ValueError("search_reranker_backend=tei requires search_reranker_url")
+        return TeiReranker(
+            settings.search_reranker_url,
+            timeout_s=config.timeout_ms / 1000,
+            max_batch_size=config.max_batch_size,
+            concurrency=config.concurrency,
+            retries=config.retries,
+        )
+    raise ValueError(
+        f"unsupported search_reranker_backend {settings.search_reranker_backend!r}; "
+        "expected 'flagembedding' or 'tei'"
+    )
+
+
+def _build_embedder(space: EmbeddingSpace) -> Embedder | None:
+    """Build the embedding backend selected by ``embedder_backend``.
+
+    ``flagembedding`` (default) runs BGE-M3 in-process, using MPS on Apple
+    Silicon; ``tei`` targets a remote HTTP server via ``embedder_url``. When
+    FlagEmbedding is requested but not installed (the ``ml`` dependency group is
+    optional), embedding is disabled with a warning rather than crashing the
+    process, so non-embedding workflows keep working without torch.
+    """
+    backend = settings.embedder_backend.strip().lower()
+    if backend == "flagembedding":
+        if importlib.util.find_spec("FlagEmbedding") is None:
+            logging.getLogger(__name__).warning(
+                "embedder_backend=flagembedding but FlagEmbedding is not "
+                "installed; embedding disabled (run `uv sync --group ml`)"
+            )
+            return None
+        return FlagEmbeddingEmbedder(
+            space,
+            device=settings.embedder_device,
+            use_fp16=settings.embedder_use_fp16,
+            batch_size=settings.embedder_batch_size,
+            max_length=settings.embedder_max_length,
+        )
+    if backend == "tei":
+        if not settings.embedder_url:
+            raise ValueError("embedder_backend=tei requires embedder_url")
+        return TeiEmbedder(
+            settings.embedder_url,
+            space,
+            timeout=settings.embed_timeout,
+            concurrency=settings.embed_concurrency,
+            retries=settings.embed_retries,
+        )
+    raise ValueError(
+        f"unsupported embedder_backend {settings.embedder_backend!r}; "
+        "expected 'flagembedding' or 'tei'"
     )
 
 
@@ -167,17 +258,13 @@ _search_cursor_codec = HmacCursorCodec(_cursor_signing_key())
 
 _search_embedder: NullEmbedder | QueryEmbedder = NullEmbedder()
 
+_embedder: Embedder | None = None
+
 _search_rerank_config = _rerank_config()
 
-_search_reranker: TeiReranker | None = None
+_search_reranker: RerankerPort | None = None
 if _search_rerank_config is not None:
-    _search_reranker = TeiReranker(
-        settings.search_reranker_url,
-        timeout_s=_search_rerank_config.timeout_ms / 1000,
-        max_batch_size=_search_rerank_config.max_batch_size,
-        concurrency=_search_rerank_config.concurrency,
-        retries=_search_rerank_config.retries,
-    )
+    _search_reranker = _build_reranker(_search_rerank_config)
 
 _google_person_parser = GooglePersonParser()
 
@@ -225,17 +312,10 @@ _token_counter = BgeM3TokenCounter(
 )
 
 embedding_service: EmailEmbeddingService | None = None
-if settings.embedder_url:
-    space = embedding_space(settings.embedding_space)
-    embedder = TeiEmbedder(
-        settings.embedder_url,
-        space,
-        timeout=settings.embed_timeout,
-        concurrency=settings.embed_concurrency,
-        retries=settings.embed_retries,
-    )
+_embedder = _build_embedder(embedding_space(settings.embedding_space))
+if _embedder is not None:
     embedding_service = EmailEmbeddingService(
-        embedder,
+        _embedder,
         _token_counter,
         embed_quotes=settings.embed_quotes,
         embed_trash_spam=settings.embed_trash_spam,
@@ -243,7 +323,7 @@ if settings.embedder_url:
         window=settings.embed_window,
         batch_tokens=settings.embed_batch_tokens,
     )
-    _search_embedder = QueryEmbedder(embedder)
+    _search_embedder = QueryEmbedder(_embedder)
 
 search_config = _search_config()
 

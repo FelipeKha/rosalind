@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     chunk_tokenizer_sha256: str | None = None
 
     embedding_space: str = "bge_m3_v1"
+    embedder_backend: str = "flagembedding"
+    embedder_device: str = "auto"
+    embedder_use_fp16: bool = False
+    embedder_batch_size: int = 8
+    embedder_max_length: int = 512
     embedder_url: str = ""
     embed_window: int = 2048
     embed_batch_tokens: int = 4096
@@ -84,6 +89,10 @@ class Settings(BaseSettings):
     # agent never chooses them.
     search_index_version: str = "v1"
     search_reranker: str | None = None
+    search_reranker_backend: str = "flagembedding"
+    search_reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    search_reranker_device: str = "auto"
+    search_reranker_use_fp16: bool = False
     search_reranker_url: str = ""
     search_reranker_timeout_ms: int = 20000
     search_reranker_max_input_tokens: int = 512

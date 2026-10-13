@@ -7,6 +7,7 @@ from rosalind.adapters.inbound.http.routes import (
     imports,
     me,
     people,
+    search,
     sources,
 )
 from rosalind.application.errors import (
@@ -20,6 +21,7 @@ from rosalind.application.errors import (
     TokenNotFoundError,
     UnsupportedImportTypeError,
 )
+from rosalind.application.search import InvalidSearchRequest
 from rosalind.security import SecurityError
 
 app = FastAPI(title="Rosalind")
@@ -30,6 +32,7 @@ app.include_router(imports.router)
 app.include_router(sources.router)
 app.include_router(auth.router)
 app.include_router(people.router)
+app.include_router(search.router)
 
 
 @app.exception_handler(ImportNotFoundError)
@@ -84,3 +87,17 @@ async def _security_error(_: Request, exc: SecurityError) -> JSONResponse:
 @app.exception_handler(SelfPersonError)
 async def _self_person_error(_: Request, exc: SelfPersonError) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(InvalidSearchRequest)
+async def _invalid_search_request(
+    _: Request, exc: InvalidSearchRequest
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.message,
+            "field": exc.field_name,
+            "hint": exc.hint,
+        },
+    )
