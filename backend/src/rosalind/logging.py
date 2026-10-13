@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -71,7 +71,7 @@ _STANDARD_ATTRS = frozenset(
 
 
 @contextmanager
-def log_context(**fields: str | None) -> Iterator[None]:
+def log_context(**fields: str | None) -> Generator[None]:
     """Bind correlation fields for the duration of the block.
 
     Unknown keys are ignored, so callers can pass ``stage=...`` or ``run_id=...``
