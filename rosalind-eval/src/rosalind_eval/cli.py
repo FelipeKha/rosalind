@@ -1,13 +1,16 @@
 """``rosalind-eval`` command-line interface.
 
-Commands: ``run`` and ``compare`` (execution lands in Phase 4), ``validate-dataset``
-(schema + cross-record + corpus existence checks), and ``generate-questions``
-(draft questions from the fixture mailbox via a local Ollama model).
+``run`` executes an experiment against a populated eval database and writes a
+run under ``runs/<run_id>/``; ``compare`` reports metric deltas with confidence
+intervals between two runs; ``validate-dataset`` and ``generate-questions``
+support the dataset workflow.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from pathlib import Path
 
 import typer
@@ -17,8 +20,11 @@ from rich.table import Table
 
 from rosalind_eval import corpus, generate, validate
 from rosalind_eval import dataset as dataset_mod
+from rosalind_eval.compare import compare_runs, load_run
 from rosalind_eval.config import ExperimentConfig, load_config
+from rosalind_eval.executor import LiveSearchExecutor
 from rosalind_eval.llm import make_ollama_llm
+from rosalind_eval.runner import RunOutcome, run_experiment
 from rosalind_eval.validate import ValidationIssue
 
 app = typer.Typer(
@@ -59,6 +65,17 @@ _KNOWN_IDS_OPTION = typer.Option(
     readable=True,
     help='JSON list (or {"item_ids": [...]}) of item ids in the corpus.',
 )
+_DATABASE_URL_OPTION = typer.Option(
+    None,
+    "--database-url",
+    help="Postgres URL of the eval corpus (default: $ROSALIND_DATABASE_URL).",
+)
+_ACCOUNT_ID_OPTION = typer.Option(
+    None, "--account-id", help="Account UUID that owns the eval corpus."
+)
+_RUNS_DIR_OPTION = typer.Option(
+    Path("runs"), "--runs-dir", help="Where runs are written."
+)
 _GEN_MAILBOX_OPTION = typer.Option(
     None,
     "--mailbox",
@@ -72,9 +89,7 @@ _OUTPUT_OPTION = typer.Option(
 )
 _MODEL_OPTION = typer.Option("llama3.1", "--model", help="Ollama model name.")
 _BASE_URL_OPTION = typer.Option(
-    "http://localhost:11434/v1",
-    "--base-url",
-    help="Ollama OpenAI-compatible base URL.",
+    "http://localhost:11434/v1", "--base-url", help="Ollama OpenAI-compatible base URL."
 )
 _LIMIT_OPTION = typer.Option(
     None, "--limit", min=1, help="Only generate for the first N passages."
@@ -87,13 +102,41 @@ def main() -> None:
 
 
 @app.command()
-def run(config: Path = _CONFIG_OPTION) -> None:
-    """Run an experiment defined by a YAML config."""
+def run(
+    config: Path = _CONFIG_OPTION,
+    database_url: str | None = _DATABASE_URL_OPTION,
+    account_id: str | None = _ACCOUNT_ID_OPTION,
+    runs_dir: Path = _RUNS_DIR_OPTION,
+    mailbox: Path | None = _MAILBOX_OPTION,
+    known_item_ids: Path | None = _KNOWN_IDS_OPTION,
+) -> None:
+    """Run an experiment defined by a YAML config against the eval corpus."""
     experiment = _load_config(config)
-    _print_experiment(experiment)
-    console.print(
-        "[yellow]run: execution lands in Phase 4; config validated only.[/yellow]"
+    resolved_url = database_url or os.environ.get("ROSALIND_DATABASE_URL")
+    if not resolved_url or not account_id:
+        error_console.print(
+            "[red]run needs --database-url (or $ROSALIND_DATABASE_URL) and "
+            "--account-id for a populated eval corpus.[/red]"
+        )
+        raise typer.Exit(code=2)
+    try:
+        account = uuid.UUID(account_id)
+    except ValueError as exc:
+        error_console.print(f"[red]--account-id is not a UUID: {account_id}[/red]")
+        raise typer.Exit(code=2) from exc
+
+    overrides = experiment.overrides.to_pipeline_overrides()
+    executor = LiveSearchExecutor.from_database_url(
+        resolved_url, account, overrides=overrides, mode=experiment.overrides.mode
     )
+    known = _resolve_known_item_ids(mailbox, known_item_ids)
+    try:
+        outcome = run_experiment(
+            experiment, executor=executor, runs_dir=runs_dir, known_item_ids=known
+        )
+    finally:
+        executor.close()
+    _print_run(outcome)
 
 
 @app.command()
@@ -102,10 +145,34 @@ def compare(
     run_b: Path = _RUN_DIR_ARG,
 ) -> None:
     """Compare two runs and report metric deltas with confidence intervals."""
-    console.print(f"comparing [bold]{run_a}[/bold] and [bold]{run_b}[/bold]")
-    console.print(
-        "[yellow]compare: execution lands in Phase 4; nothing computed.[/yellow]"
+    summary_a = load_run(run_a)
+    summary_b = load_run(run_b)
+    deltas = compare_runs(summary_a, summary_b)
+    if not deltas:
+        error_console.print("[yellow]no comparable per-question metrics[/yellow]")
+        raise typer.Exit(code=2)
+
+    table = Table(
+        title=f"{summary_a.manifest['run_id']}  vs  {summary_b.manifest['run_id']}"
     )
+    for column in ("metric", "A", "B", "delta", "95% CI", "p"):
+        table.add_column(column)
+    for delta in deltas:
+        ci = (
+            f"[{delta.ci_low:.3f}, {delta.ci_high:.3f}]"
+            if delta.ci_low is not None and delta.ci_high is not None
+            else "-"
+        )
+        p = f"{delta.p_value:.3f}" if delta.p_value is not None else "-"
+        table.add_row(
+            delta.metric,
+            f"{delta.a:.3f}",
+            f"{delta.b:.3f}",
+            f"{delta.delta:+.3f}",
+            ci,
+            p,
+        )
+    console.print(table)
 
 
 @app.command("validate-dataset")
@@ -199,6 +266,31 @@ def _read_known_item_ids(path: Path) -> frozenset[str]:
     return frozenset(str(item) for item in raw)
 
 
+def _print_run(outcome: RunOutcome) -> None:
+    overall = outcome.metrics.get("overall", {})
+    console.print(
+        f"[green]run[/green] {outcome.manifest['run_id']} -> {outcome.paths.root}"
+    )
+    table = Table(title="overall metrics")
+    table.add_column("metric")
+    table.add_column("value")
+    for key, value in overall.items():
+        table.add_row(key, f"{value:.3f}" if isinstance(value, float) else str(value))
+    console.print(table)
+
+    funnel = outcome.metrics.get("funnel", {})
+    if funnel:
+        funnel_table = Table(title="failure funnel")
+        funnel_table.add_column("label")
+        funnel_table.add_column("count")
+        for label, count in funnel.items():
+            funnel_table.add_row(label, str(count))
+        console.print(funnel_table)
+
+    for warning in outcome.warnings:
+        console.print(f"[yellow]warning[/yellow] {warning}")
+
+
 def _print_issues(issues: list[ValidationIssue]) -> None:
     if not issues:
         return
@@ -215,32 +307,4 @@ def _print_issues(issues: list[ValidationIssue]) -> None:
             issue.question_id or "-",
             issue.message,
         )
-    console.print(table)
-
-
-def _print_experiment(experiment: ExperimentConfig) -> None:
-    table = Table(title=experiment.name, show_header=False)
-    table.add_column("field", style="cyan")
-    table.add_column("value")
-    table.add_row("dataset", str(experiment.dataset))
-    if experiment.description:
-        table.add_row("description", experiment.description)
-    overrides = experiment.overrides
-    for field_name in (
-        "mode",
-        "lexical_k",
-        "semantic_k",
-        "fused_k",
-        "rerank_k",
-        "window_k",
-        "reranker",
-        "disable_reranker",
-        "chunk_prefix",
-    ):
-        value = getattr(overrides, field_name)
-        if value is not None:
-            table.add_row(field_name, str(value))
-    if overrides.fusion is not None:
-        table.add_row("fusion.strategy", overrides.fusion.strategy)
-        table.add_row("fusion.rrf_k", str(overrides.fusion.rrf_k))
     console.print(table)

@@ -20,12 +20,11 @@ def test_help_lists_commands() -> None:
         assert command in result.output
 
 
-def test_run_validates_a_minimal_config(tmp_path: Path) -> None:
+def test_run_requires_database_and_account(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text("name: baseline\ndataset: data.jsonl\n")
     result = runner.invoke(app, ["run", "--config", str(path)])
-    assert result.exit_code == 0
-    assert "baseline" in result.output
+    assert result.exit_code == 2
 
 
 def test_run_rejects_an_invalid_config(tmp_path: Path) -> None:
