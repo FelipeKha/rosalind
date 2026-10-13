@@ -1,10 +1,87 @@
-"""Backend configuration loaded from environment variables."""
+"""Backend configuration loaded from environment variables and an optional YAML file.
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+Precedence: explicit init args > environment variables > YAML file > defaults.
+The YAML file is named by ``ROSALIND_CONFIG`` (default ``rosalind.yaml``); if it
+does not exist the app behaves exactly as before (env-only). Nested settings
+(such as ``eval``) may be set in YAML or via ``ROSALIND_<SECTION>__<FIELD>``.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import BaseModel
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+
+class EvalSettings(BaseModel):
+    """Evaluation subsystem settings. Disabled unless explicitly enabled."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = False
+    runs_dir: Path = Path("runs")
+
+
+class YamlConfigSettingsSource(PydanticBaseSettingsSource):
+    """Load settings from the YAML file named by ``ROSALIND_CONFIG``.
+
+    A missing file is not an error; a malformed or non-mapping file is.
+    """
+
+    def __init__(self, settings_cls: type[BaseSettings]) -> None:
+        super().__init__(settings_cls)
+        path = os.environ.get("ROSALIND_CONFIG", "rosalind.yaml")
+        config_path = Path(path)
+        if not config_path.is_file():
+            self._data: dict[str, Any] = {}
+            return
+        loaded = yaml.safe_load(config_path.read_text())
+        if loaded is None:
+            self._data = {}
+        elif isinstance(loaded, dict):
+            self._data = loaded
+        else:
+            raise ValueError(f"config file must be a mapping: {config_path}")
+
+    def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
+        return self._data.get(field_name), field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return self._data
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ROSALIND_")
+    model_config = SettingsConfigDict(
+        env_prefix="ROSALIND_",
+        env_nested_delimiter="__",
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            YamlConfigSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
+    eval: EvalSettings = EvalSettings()
 
     database_url: str = "postgresql+psycopg://rosalind:rosalind@localhost:5432/rosalind"
     s3_bucket: str = "rosalind"

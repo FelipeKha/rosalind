@@ -1,6 +1,0 @@
-# Hybrid retrieval: BM25 + vector, fused (the production default).
-name: mode-hybrid
-dataset: fixtures/dataset.jsonl
-description: Hybrid retrieval, BM25 + vector, fused.
-overrides:
-  mode: hybrid

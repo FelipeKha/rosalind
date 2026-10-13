@@ -1,6 +1,0 @@
-name: cap-2
-dataset: fixtures/dataset.jsonl
-description: Two chunks per message after fusion (production default).
-overrides:
-  fusion:
-    max_chunks_per_item: 2

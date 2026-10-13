@@ -1,0 +1,17 @@
+# Example Rosalind configuration.
+#
+# Point ROSALIND_CONFIG at a file like this (default: rosalind.yaml).
+# Environment variables still override these values, e.g. ROSALIND_DATABASE_URL,
+# or ROSALIND_EVAL__ENABLED for the nested eval settings.
+
+database_url: postgresql+psycopg://rosalind:rosalind@localhost:5432/rosalind
+
+log_level: INFO
+log_format: console
+
+# Evaluation subsystem. Enable only against a throwaway test database
+# (ParadeDB + pgvector, migrated). Disabled by default; when disabled the
+# /eval routes do not exist and production never imports the eval code.
+eval:
+  enabled: false
+  runs_dir: runs

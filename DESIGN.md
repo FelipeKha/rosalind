@@ -15,6 +15,7 @@ docs/mcp.md                   ← MCP server design and tool contracts
 docs/auth.md                  ← authentication, account/identity model
 docs/providers/<name>.md      ← per-provider parsing pipelines
 docs/invariants.md            ← the full non-negotiable invariants checklist
+docs/eval.md                  ← search evaluation (eval mode, CLI, datasets)
 docs/roadmap.md               ← phased build plan
 ```
 
@@ -410,6 +411,17 @@ natural-language content only — structured facts like `birth_date` are
 never embedded). AI-derived data (summaries, classifications) is stored
 separately from canonical facts, tagged with model/timestamp/source-hash,
 and never silently overwrites a canonical value.
+
+### 10.1 Evaluation (eval mode)
+
+Search evaluation lives in the backend behind an **eval-mode gate** and is
+driven through the `rosalind` CLI (`rosalind eval …`). It reuses the production
+`SearchPipeline` — there is no separate evaluation application. Eval code is
+distributed across the normal layers (`application/eval`, `application/services/eval`,
+`adapters/{inbound/http/routes,outbound}/eval`) and is subject to a one-way rule:
+**production modules never import eval**; only the composition root and a gated
+router include reference it. Eval routes exist only when `eval.enabled` is set,
+and it is intended for throwaway test databases. See [`docs/eval.md`](docs/eval.md).
 
 ---
 

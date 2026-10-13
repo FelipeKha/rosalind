@@ -50,6 +50,13 @@ app.include_router(auth.router)
 app.include_router(people.router)
 app.include_router(search.router)
 
+if settings.eval.enabled:
+    # Eval routes exist only in eval mode; the eval subsystem is never imported
+    # by the rest of the app.
+    from rosalind.adapters.inbound.http.routes import eval as eval_routes
+
+    app.include_router(eval_routes.router)
+
 
 @app.exception_handler(ImportNotFoundError)
 async def _import_not_found(_: Request, exc: ImportNotFoundError) -> JSONResponse:

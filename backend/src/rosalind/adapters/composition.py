@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import logging
+import uuid
 from collections.abc import Callable, Iterator
 
 from sqlalchemy.orm import Session
@@ -399,6 +400,53 @@ def build_rerank_texts(
 ) -> PostgresChunkTextRepository:
     """Wire the rerank text fetcher with a request-scoped session factory."""
     return PostgresChunkTextRepository(session_factory)
+
+
+def build_eval_service(
+    account_id: uuid.UUID,
+    session_factory: Callable[[], Session] = SessionLocal,
+) -> object:
+    """Wire the eval service for one account.
+
+    Eval-only wiring: imports the eval adapters lazily so production/disabled
+    deployments never import them (they need the optional ``eval`` dependency
+    group). Returns an ``EvalService``.
+    """
+    from rosalind.adapters.outbound.eval.item_catalog import PostgresItemCatalog
+    from rosalind.adapters.outbound.eval.mailbox_source import MailboxPassageSource
+    from rosalind.adapters.outbound.eval.ollama import make_ollama_llm
+    from rosalind.adapters.outbound.eval.pipeline_executor import (
+        PipelineSearchExecutor,
+    )
+    from rosalind.adapters.outbound.eval.run_store import ParquetRunStore
+    from rosalind.adapters.outbound.eval.stage_cache import JsonStageCache
+    from rosalind.application.services.eval import EvalService
+
+    search_service = build_search_service(session_factory)
+    cache = JsonStageCache(settings.eval.runs_dir / "_cache")
+
+    def search_factory(*, overrides: object, mode: str | None):
+        return PipelineSearchExecutor(
+            search_service,
+            account_id,
+            overrides=overrides,
+            mode=mode,
+            cache=cache,
+        )
+
+    llm = None
+    try:
+        llm = make_ollama_llm()
+    except RuntimeError:
+        llm = None
+
+    return EvalService(
+        search_factory=search_factory,
+        run_store=ParquetRunStore(settings.eval.runs_dir),
+        item_catalog=PostgresItemCatalog(session_factory),
+        passage_source=MailboxPassageSource(),
+        llm=llm,
+    )
 
 
 def get_uow() -> Iterator[UnitOfWork]:

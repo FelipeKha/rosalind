@@ -33,6 +33,7 @@ clients include AI agents (via MCP) and web/native apps.
 | `docs/mcp.md` | adding/changing an MCP tool |
 | `docs/providers/<name>.md` | touching a provider parser/adapter |
 | `docs/auth.md` | touching authn, tokens, accounts, Keycloak, the CLI login flow, or adding a route/tool |
+| `docs/eval.md` | touching the eval subsystem (`rosalind eval`), eval mode, or datasets |
 | `docs/invariants.md` | anything ingestion- or canonicalization-related |
 
 ---
@@ -87,6 +88,14 @@ Auth boundaries (see `DESIGN.md` §6.4 and `docs/auth.md`):
 - Authentication is not authorization. Authenticated accounts are not yet
   scoped to their own data, so don't assume per-account isolation, and don't
   add write tools without an authorization model.
+
+Eval boundaries (see `docs/eval.md`):
+
+- The eval subsystem is **one-way**: production code (`domain`, `application`,
+  and non-eval `adapters`) must never import eval. Only the composition root
+  and the gated router include may reference it (enforced by a test).
+- Eval routes exist only when `eval.enabled` is set; eval targets throwaway test
+  databases and reuses the production `SearchPipeline` (never reimplements it).
 
 ---
 
