@@ -347,6 +347,10 @@ def _backend_env(
         "ROSALIND_AUTH_ENABLED": "false",
         "ROSALIND_EMBEDDER_BACKEND": "flagembedding",
         "ROSALIND_EMBEDDER_DEVICE": RAG_EMBEDDER_DEVICE,
+        "ROSALIND_SEARCH_RERANKER": "bge-reranker-v2-m3/v1",
+        "ROSALIND_SEARCH_RERANKER_BACKEND": "flagembedding",
+        "ROSALIND_SEARCH_RERANKER_MODEL": "BAAI/bge-reranker-v2-m3",
+        "ROSALIND_SEARCH_RERANKER_DEVICE": RAG_EMBEDDER_DEVICE,
         "ROSALIND_CHUNK_TOKENIZER_PATH": str(
             BACKEND_DIR / "assets" / "bge-m3" / "tokenizer.json"
         ),

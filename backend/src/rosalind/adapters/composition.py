@@ -38,6 +38,9 @@ from rosalind.adapters.outbound.search.list_retriever import (
     PostgresMessageListRetriever,
 )
 from rosalind.adapters.outbound.search.query_embedder import NullEmbedder, QueryEmbedder
+from rosalind.adapters.outbound.search.reranker_flagembedding import (
+    FlagEmbeddingReranker,
+)
 from rosalind.adapters.outbound.search.reranker_tei import TeiReranker
 from rosalind.adapters.outbound.search.result_data import (
     PostgresSearchResultDataRepository,
@@ -58,7 +61,12 @@ from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.search import Budgets, FusionConfig, FusionStrategy
 from rosalind.application.search.cursor import HmacCursorCodec
-from rosalind.application.search.ports import RerankConfig, RerankTextMode, SearchConfig
+from rosalind.application.search.ports import (
+    RerankConfig,
+    RerankerPort,
+    RerankTextMode,
+    SearchConfig,
+)
 from rosalind.application.services.accounts import AccountService
 from rosalind.application.services.attachment_extraction import (
     AttachmentExtractionService,
@@ -107,7 +115,7 @@ def _search_config() -> SearchConfig:
         index_version=settings.search_index_version,
         embedding_model=embedding_model,
         embedding_version=embedding_version,
-        reranker=settings.search_reranker,
+        reranker=settings.search_reranker if _search_reranker is not None else None,
         budgets=Budgets(
             lexical_k=settings.search_lexical_k,
             semantic_k=settings.search_semantic_k,
@@ -130,15 +138,22 @@ def _search_config() -> SearchConfig:
 
 
 def _rerank_config() -> RerankConfig | None:
-    """Build the rerank configuration, failing fast on a misconfigured reranker.
+    """Build the rerank configuration, or ``None`` when reranking is off.
 
     ``search_reranker`` gates reranking (it is the ``IndexVersions.reranker``
-    stamp, revision-qualified), so it must be paired with a reachable URL.
+    stamp, revision-qualified). The ``flagembedding`` backend is disabled with a
+    warning when the optional ``ml`` dependency group is absent, so reranking is
+    skipped rather than crashing a non-ml environment.
     """
     if not settings.search_reranker:
         return None
-    if not settings.search_reranker_url:
-        raise ValueError("search_reranker is set but search_reranker_url is empty")
+    backend = settings.search_reranker_backend.strip().lower()
+    if backend == "flagembedding" and importlib.util.find_spec("FlagEmbedding") is None:
+        logging.getLogger(__name__).warning(
+            "search_reranker_backend=flagembedding but FlagEmbedding is not "
+            "installed; reranking disabled (run `uv sync --group ml`)"
+        )
+        return None
     try:
         text_mode = RerankTextMode(settings.search_reranker_text_mode)
     except ValueError as exc:
@@ -152,6 +167,37 @@ def _rerank_config() -> RerankConfig | None:
         concurrency=settings.search_reranker_max_concurrent_requests,
         timeout_ms=settings.search_reranker_timeout_ms,
         deadline_ms=settings.search_reranker_deadline_ms,
+    )
+
+
+def _build_reranker(config: RerankConfig) -> RerankerPort:
+    """Build the reranking backend selected by ``search_reranker_backend``.
+
+    ``flagembedding`` (default) runs the cross-encoder in-process on MPS;
+    ``tei`` targets a remote HTTP server via ``search_reranker_url``.
+    """
+    backend = settings.search_reranker_backend.strip().lower()
+    if backend == "flagembedding":
+        return FlagEmbeddingReranker(
+            settings.search_reranker_model,
+            device=settings.search_reranker_device,
+            use_fp16=settings.search_reranker_use_fp16,
+            batch_size=config.max_batch_size,
+            max_length=config.max_input_tokens,
+        )
+    if backend == "tei":
+        if not settings.search_reranker_url:
+            raise ValueError("search_reranker_backend=tei requires search_reranker_url")
+        return TeiReranker(
+            settings.search_reranker_url,
+            timeout_s=config.timeout_ms / 1000,
+            max_batch_size=config.max_batch_size,
+            concurrency=config.concurrency,
+            retries=config.retries,
+        )
+    raise ValueError(
+        f"unsupported search_reranker_backend {settings.search_reranker_backend!r}; "
+        "expected 'flagembedding' or 'tei'"
     )
 
 
@@ -216,15 +262,9 @@ _embedder: Embedder | None = None
 
 _search_rerank_config = _rerank_config()
 
-_search_reranker: TeiReranker | None = None
+_search_reranker: RerankerPort | None = None
 if _search_rerank_config is not None:
-    _search_reranker = TeiReranker(
-        settings.search_reranker_url,
-        timeout_s=_search_rerank_config.timeout_ms / 1000,
-        max_batch_size=_search_rerank_config.max_batch_size,
-        concurrency=_search_rerank_config.concurrency,
-        retries=_search_rerank_config.retries,
-    )
+    _search_reranker = _build_reranker(_search_rerank_config)
 
 _google_person_parser = GooglePersonParser()
 

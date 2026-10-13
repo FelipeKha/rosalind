@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     # agent never chooses them.
     search_index_version: str = "v1"
     search_reranker: str | None = None
+    search_reranker_backend: str = "flagembedding"
+    search_reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    search_reranker_device: str = "auto"
+    search_reranker_use_fp16: bool = False
     search_reranker_url: str = ""
     search_reranker_timeout_ms: int = 20000
     search_reranker_max_input_tokens: int = 512

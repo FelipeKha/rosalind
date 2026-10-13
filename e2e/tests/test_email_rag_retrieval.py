@@ -142,6 +142,19 @@ def test_semantic_mode_returns_embedding_backed_results(rag_corpus) -> None:
     assert response["results"]
 
 
+def test_reranking_applied(rag_corpus) -> None:
+    # The cross-encoder loads lazily on the first ranked search; a cold load can
+    # exceed the deadline and degrade to fused order once, so retry a few times.
+    warnings: set[str] = set()
+    for _ in range(3):
+        response = _search(rag_corpus.base_url, "What is the invoice number?", "hybrid")
+        warnings = {w["code"] for w in response.get("warnings", [])}
+        if "rerank_skipped" not in warnings:
+            break
+    assert "rerank_skipped" not in warnings
+    assert response["results"]
+
+
 def _mode_summary(response: dict, id_to_message, relevant) -> dict:
     ranked = _ranked_message_ids(response, id_to_message)
     found = [mid for mid in ranked if mid in relevant]

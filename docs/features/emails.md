@@ -634,7 +634,10 @@ After scoring, three rules apply in order:
 ### 4. Rerank
 It reorders the top fused candidates with a cross-encoder. A cross-encoder reads the query and one chunk together and outputs a relevance score. It's more accurate than comparing separately computed embeddings, but it costs one model pass per candidate.
 
-It sits behind a Reranker port in application/ports, with a TEI adapter in adapters/outbound. It runs only for the ranked strategy, and only when versions.reranker is set.
+It sits behind a Reranker port in application/ports. Locally it runs in-process via
+FlagEmbedding (bge-reranker-v2-m3) on Apple's MPS backend; `search_reranker_backend=tei`
+targets a remote Text Embeddings Inference server for production. It runs only for the
+ranked strategy, and only when versions.reranker is set.
 
 Model choice: bge-reranker-v2-m3
 
