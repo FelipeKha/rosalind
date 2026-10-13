@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 
 from rosalind.application.search.assemble import (
     assemble_list,
@@ -49,7 +50,7 @@ from rosalind.application.search.ports import (
     TraceRecorderPort,
 )
 from rosalind.application.search.request import ResultView
-from rosalind.application.search.rerank import RerankResult, rerank
+from rosalind.application.search.rerank import RerankResult, RerankTextMode, rerank
 from rosalind.application.search.retrieve import LexicalResult
 from rosalind.application.search.semantic import (
     SemanticResult,
@@ -102,8 +103,10 @@ class SearchPipeline:
     ) -> SearchTrace:
         """Run the pipeline for a prepared plan and return its trace."""
         started = time.perf_counter()
+        rerank_text_mode = None
         if overrides is not None:
             plan = overrides.apply(plan)
+            rerank_text_mode = overrides.rerank_text_mode
         cache = cached if cached is not None else PipelineCache()
         timings: dict[str, float] = {}
 
@@ -114,7 +117,7 @@ class SearchPipeline:
 
         stage = resume_from if resume_from is not None else ResumeStage.LEXICAL
         lexical, semantic, fused, reranked, retrieval_warnings = await self._run_stages(
-            plan, stage, cache, timings
+            plan, stage, cache, timings, rerank_text_mode
         )
 
         results_started = time.perf_counter()
@@ -195,6 +198,7 @@ class SearchPipeline:
         stage: ResumeStage,
         cache: PipelineCache,
         timings: dict[str, float],
+        rerank_text_mode: RerankTextMode | None = None,
     ) -> tuple[
         LexicalResult | None,
         SemanticResult | None,
@@ -207,7 +211,9 @@ class SearchPipeline:
             plan, stage, cache, timings
         )
         fused = self._stage_fusion(plan, stage, cache, lexical, semantic)
-        reranked = await self._stage_rerank(plan, stage, cache, fused, timings)
+        reranked = await self._stage_rerank(
+            plan, stage, cache, fused, timings, rerank_text_mode
+        )
         return lexical, semantic, fused, reranked, retrieval_warnings
 
     async def _stage_retrieval(
@@ -263,6 +269,7 @@ class SearchPipeline:
         cache: PipelineCache,
         fused: FusedCandidates | None,
         timings: dict[str, float],
+        rerank_text_mode: RerankTextMode | None = None,
     ) -> RerankResult:
         if stage is ResumeStage.ASSEMBLE:
             if cache.reranked is None:
@@ -270,6 +277,9 @@ class SearchPipeline:
             return cache.reranked
         if fused is None:
             raise ValueError("reranking requires fused candidates")
+        config = self._rerank_config
+        if rerank_text_mode is not None and config is not None:
+            config = replace(config, text_mode=rerank_text_mode)
         started = time.perf_counter()
         reranked = await rerank(
             plan,
@@ -277,7 +287,7 @@ class SearchPipeline:
             texts=self._chunk_text,
             reranker=self._reranker,
             token_counter=self._token_counter,
-            config=self._rerank_config,
+            config=config,
         )
         timings["rerank_ms"] = (time.perf_counter() - started) * 1000
         return reranked

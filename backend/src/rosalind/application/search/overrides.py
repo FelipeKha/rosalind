@@ -18,7 +18,7 @@ from enum import StrEnum
 
 from rosalind.application.search.fusion import FusedCandidates
 from rosalind.application.search.plan import Budgets, FusionConfig, SearchPlan
-from rosalind.application.search.rerank import RerankResult
+from rosalind.application.search.rerank import RerankResult, RerankTextMode
 from rosalind.application.search.retrieve import LexicalResult
 from rosalind.application.search.semantic import SemanticResult
 
@@ -62,6 +62,7 @@ class PipelineOverrides:
 
     reranker: str | None = None
     disable_reranker: bool = False
+    rerank_text_mode: RerankTextMode | None = None
 
     lexical_k: int | None = None
     semantic_k: int | None = None

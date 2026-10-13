@@ -64,6 +64,9 @@ class QuestionRun:
     lexical_used: bool = False
     semantic_used: bool = False
     rerank_applied: bool = False
+    semantic_complete: bool | None = None
+    semantic_filter_path: str | None = None
+    semantic_scan_limit_hit: bool | None = None
     warnings: tuple[str, ...] = ()
     degraded: bool = False
     timings_ms: dict[str, float] = field(default_factory=dict)

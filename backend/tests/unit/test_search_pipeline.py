@@ -32,6 +32,7 @@ from rosalind.application.search import (
     Presentation,
     QueryVector,
     RequestContext,
+    RerankTextMode,
     ResolvedFilters,
     ResultView,
     ResumeStage,
@@ -195,9 +196,11 @@ class FakeSemantic:
 class FakeChunkText:
     def __init__(self) -> None:
         self.calls = 0
+        self.modes: list[object] = []
 
     async def get_rerank_texts(self, chunk_ids, mode) -> tuple[ChunkText, ...]:
         self.calls += 1
+        self.modes.append(mode)
         return tuple(
             ChunkText(chunk_id=cid, text=f"passage {i}")
             for i, cid in enumerate(chunk_ids)
@@ -526,6 +529,17 @@ def test_override_fusion_strategy_changes_fingerprint() -> None:
     overridden = PipelineOverrides(fusion=convex).apply(base)
     assert overridden.fusion.strategy is FusionStrategy.CONVEX
     assert overridden.fingerprint != base.fingerprint
+
+
+def test_override_rerank_text_mode_reaches_chunk_text() -> None:
+    pipeline, fakes = make_pipeline(reranker=True)
+    run(
+        pipeline.run(
+            _plan(mode=SearchMode.LEXICAL, reranker="bge-reranker-v2-m3/v1"),
+            overrides=PipelineOverrides(rerank_text_mode=RerankTextMode.DISPLAY),
+        )
+    )
+    assert fakes.chunk_text.modes == [RerankTextMode.DISPLAY]
 
 
 # ---------------------------------------------------------------------------

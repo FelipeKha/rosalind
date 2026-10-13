@@ -95,6 +95,7 @@ class OverridesSettings(BaseModel):
         return PipelineOverrides(
             reranker=self.reranker,
             disable_reranker=self.disable_reranker,
+            rerank_text_mode=self.to_rerank_text_mode(),
             lexical_k=self.lexical_k,
             semantic_k=self.semantic_k,
             fused_k=self.fused_k,

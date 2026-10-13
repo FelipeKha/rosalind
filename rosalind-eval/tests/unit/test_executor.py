@@ -41,7 +41,10 @@ def _trace() -> SimpleNamespace:
             hits=[SimpleNamespace(chunk_id=C1, email_id=I1, rank=1, score=5.0)]
         ),
         semantic=SimpleNamespace(
-            hits=[SimpleNamespace(chunk_id=C2, email_id=I2, rank=1, distance=0.2)]
+            hits=[SimpleNamespace(chunk_id=C2, email_id=I2, rank=1, distance=0.2)],
+            complete=False,
+            filter_path="ann_iterative",
+            scan_limit_hit=True,
         ),
         fused=SimpleNamespace(
             candidates=[
@@ -92,6 +95,9 @@ def test_maps_trace_to_run() -> None:
     assert run.dropped_by_item_cap == 3
     assert run.lexical_used and run.semantic_used
     assert run.rerank_applied is True
+    assert run.semantic_complete is False
+    assert run.semantic_filter_path == "ann_iterative"
+    assert run.semantic_scan_limit_hit is True
     assert run.warnings == ("rerank_skipped",)
     assert run.degraded is True
     assert run.timings_ms == {"total_ms": 12.5}

@@ -1,0 +1,10 @@
+# Fusion alternative: convex combination of min-max normalized BM25 and cosine.
+# convex_alpha weights the semantic side in [0, 1]. Tune it on the dev split and
+# judge by recall@fused_k (the reranker reorders the candidates anyway).
+name: fusion-convex-a0.5
+dataset: fixtures/dataset.jsonl
+description: Convex fusion, 50/50 lexical and semantic.
+overrides:
+  fusion:
+    strategy: convex
+    convex_alpha: 0.5

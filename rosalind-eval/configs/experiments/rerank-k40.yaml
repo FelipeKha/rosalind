@@ -1,0 +1,6 @@
+name: rerank-k40
+dataset: fixtures/dataset.jsonl
+description: Cross-encoder over the top 40 fused candidates.
+overrides:
+  reranker: bge-reranker-v2-m3/v1
+  rerank_k: 40

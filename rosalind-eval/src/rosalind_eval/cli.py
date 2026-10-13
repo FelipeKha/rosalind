@@ -20,6 +20,7 @@ from rich.table import Table
 
 from rosalind_eval import corpus, generate, validate
 from rosalind_eval import dataset as dataset_mod
+from rosalind_eval.cache import StageCache
 from rosalind_eval.compare import compare_runs, load_run
 from rosalind_eval.config import ExperimentConfig, load_config
 from rosalind_eval.executor import LiveSearchExecutor
@@ -76,6 +77,12 @@ _ACCOUNT_ID_OPTION = typer.Option(
 _RUNS_DIR_OPTION = typer.Option(
     Path("runs"), "--runs-dir", help="Where runs are written."
 )
+_CACHE_DIR_OPTION = typer.Option(
+    None,
+    "--cache-dir",
+    file_okay=False,
+    help="Reuse cached upstream stage results across runs (experiments).",
+)
 _GEN_MAILBOX_OPTION = typer.Option(
     None,
     "--mailbox",
@@ -107,6 +114,7 @@ def run(
     database_url: str | None = _DATABASE_URL_OPTION,
     account_id: str | None = _ACCOUNT_ID_OPTION,
     runs_dir: Path = _RUNS_DIR_OPTION,
+    cache_dir: Path | None = _CACHE_DIR_OPTION,
     mailbox: Path | None = _MAILBOX_OPTION,
     known_item_ids: Path | None = _KNOWN_IDS_OPTION,
 ) -> None:
@@ -126,8 +134,13 @@ def run(
         raise typer.Exit(code=2) from exc
 
     overrides = experiment.overrides.to_pipeline_overrides()
+    cache = StageCache(cache_dir) if cache_dir is not None else None
     executor = LiveSearchExecutor.from_database_url(
-        resolved_url, account, overrides=overrides, mode=experiment.overrides.mode
+        resolved_url,
+        account,
+        overrides=overrides,
+        mode=experiment.overrides.mode,
+        cache=cache,
     )
     known = _resolve_known_item_ids(mailbox, known_item_ids)
     try:

@@ -12,6 +12,7 @@ import asyncio
 import uuid
 from typing import Any, Protocol
 
+from rosalind_eval.cache import StageCache, cached_run
 from rosalind_eval.dataset import QuestionRecord
 from rosalind_eval.results import FinalResult, QuestionRun, StageCandidate
 
@@ -42,6 +43,7 @@ class LiveSearchExecutor:
         limit: int = 10,
         client_id: str = "rosalind-eval",
         engine: Any | None = None,
+        cache: StageCache | None = None,
     ) -> None:
         self._service = service
         self._account_id = account_id
@@ -50,6 +52,7 @@ class LiveSearchExecutor:
         self._limit = limit
         self._client_id = client_id
         self._engine = engine
+        self._cache = cache
 
     @classmethod
     def from_database_url(
@@ -60,6 +63,7 @@ class LiveSearchExecutor:
         overrides: Any | None = None,
         mode: str | None = None,
         limit: int = 10,
+        cache: StageCache | None = None,
     ) -> LiveSearchExecutor:
         """Wire the app's search service from a database URL."""
         from rosalind.adapters import composition
@@ -76,6 +80,7 @@ class LiveSearchExecutor:
             mode=mode,
             limit=limit,
             engine=engine,
+            cache=cache,
         )
 
     def execute(self, question: QuestionRecord) -> QuestionRun:
@@ -104,6 +109,16 @@ class LiveSearchExecutor:
         prepared = asyncio.run(self._service.prepare(context, request))
         if isinstance(prepared, ShortCircuit):
             return _from_short_circuit(question, prepared)
+        if self._cache is not None:
+            trace, _ = asyncio.run(
+                cached_run(
+                    self._service.run,
+                    prepared,
+                    self._cache,
+                    overrides=self._overrides,
+                )
+            )
+            return question_run_from_trace(question, trace)
         trace = asyncio.run(
             self._service.run(prepared, trace_level="full", overrides=self._overrides)
         )
@@ -149,6 +164,7 @@ def question_run_from_trace(question: QuestionRecord, trace: Any) -> QuestionRun
         for record in trace.response.results
     )
     versions = plan.versions
+    semantic_result = trace.semantic
     return QuestionRun(
         question_id=question.id,
         question_type=question.type,
@@ -179,6 +195,15 @@ def question_run_from_trace(question: QuestionRecord, trace: Any) -> QuestionRun
         lexical_used=bool(trace.fused and trace.fused.lexical_used),
         semantic_used=bool(trace.fused and trace.fused.semantic_used),
         rerank_applied=bool(trace.reranked and trace.reranked.applied),
+        semantic_complete=(
+            semantic_result.complete if semantic_result is not None else None
+        ),
+        semantic_filter_path=(
+            semantic_result.filter_path if semantic_result is not None else None
+        ),
+        semantic_scan_limit_hit=(
+            semantic_result.scan_limit_hit if semantic_result is not None else None
+        ),
         warnings=warning_codes,
         degraded=any(code in _DEGRADED_CODES for code in warning_codes),
         timings_ms=dict(trace.timings_ms),
