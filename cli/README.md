@@ -41,6 +41,7 @@ credentials, e.g. `--profile eval`.
 - [rosalind process](#rosalind-process)
 - [rosalind index](#rosalind-index)
 - [rosalind query](#rosalind-query)
+- [rosalind search](#rosalind-search)
 
 ### Exit codes
 
@@ -598,6 +599,76 @@ Person id.
 
 ### See also
 
+- [rosalind query](#rosalind-query)
+
+## rosalind search
+
+Search indexed email. The query is natural language; `--keywords` adds exact
+terms. Results are ranked, and `--cursor` pages through them.
+
+```
+rosalind search [query] [flags]
+```
+
+### Options
+
+`--keywords <string>`, `-k <string>`
+
+Exact-match terms for keyword search (names, amounts). Supports quoted phrases.
+
+`--sender <string>`, `-s <string>`
+
+Sender address or entity id. Repeat for more than one (OR).
+
+`--since <date>`
+
+Inclusive lower date bound (`YYYY-MM-DD`).
+
+`--before <date>`
+
+Exclusive upper date bound (`YYYY-MM-DD`).
+
+`--has-attachment` / `--no-attachment`
+
+Restrict to messages with (or without) attachments.
+
+`--mode <hybrid|lexical|semantic>` (default: `hybrid`)
+
+Retrieval mode.
+
+`--limit <int>`, `-n <int>` (default: `10`)
+
+Maximum number of results (1–25).
+
+`--cursor <string>`
+
+Opaque pagination cursor from a previous search.
+
+### Arguments
+
+`query`
+
+Natural-language query. Optional when filters are given.
+
+### Examples
+
+```bash
+# Natural-language search
+$ rosalind search "roofer invoice"
+
+# Exact terms, scoped to a sender and a date range
+$ rosalind search --keywords '"market report"' --sender boss@example.com --since 2024-01-01
+
+# Only messages with attachments
+$ rosalind search "contract" --has-attachment
+
+# Page through results
+$ rosalind search "invoice" --limit 25 --cursor <token>
+```
+
+### See also
+
+- [rosalind index](#rosalind-index)
 - [rosalind query](#rosalind-query)
 
 ## Configuration

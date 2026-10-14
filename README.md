@@ -154,3 +154,6 @@ Sign in:
 Create import:
 `rosalind import create e2e/fixtures/google/takeout/Mail/rosalind_synthetic_emails.mbox`
 
+Index import:
+`rosalind index 80eddc3e-0154-4b5b-913d-9470a18ffff8`
+

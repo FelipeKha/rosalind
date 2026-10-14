@@ -1,6 +1,6 @@
 import typer
 
-from cli.commands import index, status
+from cli.commands import index, search, status
 from cli.commands.auth import auth_app
 from cli.commands.eval import eval_app
 from cli.commands.import_ import import_app
@@ -16,5 +16,6 @@ def register(app: typer.Typer) -> None:
     app.add_typer(import_app, name="import")
     app.add_typer(process_app, name="process")
     app.command("index")(index.index)
+    app.command("search")(search.search)
     app.add_typer(query_app, name="query")
     app.add_typer(eval_app, name="eval")
