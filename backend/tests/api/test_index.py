@@ -157,6 +157,29 @@ def test_index_with_self_email_canonicalizes(
     assert "alice@example.com" not in json.dumps(events)
 
 
+def test_index_fatal_stage_failure_streams_error_event(
+    api_client: TestClient, monkeypatch
+) -> None:
+    import_id = _create_import(api_client)
+    _fake_storage(monkeypatch)
+
+    def boom(uow: object, source_account_id: object) -> None:
+        raise RuntimeError("tokenizer asset missing")
+
+    monkeypatch.setattr(composition.chunking_service, "chunk", boom)
+
+    events = _run(api_client, import_id, self_email="alice@example.com")
+
+    # The stream is well-formed NDJSON (no mid-write connection abort) and ends
+    # with a terminal error event naming the failing stage.
+    assert any(
+        event["stage"] == "split" and event["phase"] == "done" for event in events
+    )
+    assert events[-1]["stage"] == "chunk"
+    assert events[-1]["phase"] == "error"
+    assert "chunk" in events[-1]["message"]
+
+
 def test_index_invalid_self_email_422(api_client: TestClient) -> None:
     import_id = _create_import(api_client)
     response = api_client.post(

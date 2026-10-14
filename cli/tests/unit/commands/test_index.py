@@ -72,6 +72,24 @@ def test_index_failed_exits_nonzero(monkeypatch) -> None:
     assert result.exit_code == 1
 
 
+def test_index_error_event_exits_nonzero(monkeypatch) -> None:
+    events = [
+        {"stage": "chunk", "phase": "start"},
+        {
+            "stage": "chunk",
+            "phase": "error",
+            "message": "indexing failed during stage chunk; see server logs",
+        },
+    ]
+    _no_prompt(monkeypatch)
+    _patch_stream(monkeypatch, events)
+
+    result = runner.invoke(app, ["index", "imp-1"])
+
+    assert result.exit_code == 1
+    assert "Index error:" in result.stderr
+
+
 def test_index_api_error(monkeypatch) -> None:
     def boom(import_id: str, stage=None, self_email=None):
         raise index.ApiClientError("boom")

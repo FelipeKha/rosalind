@@ -20,6 +20,13 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+# Absolute path to the bundled bge-m3 tokenizer asset. Anchored to the backend
+# project root (``backend/``) rather than the process CWD, which varies: the
+# ``just serve`` recipes run uvicorn with CWD=``backend/``.
+_DEFAULT_CHUNK_TOKENIZER_PATH = str(
+    Path(__file__).resolve().parents[2] / "assets" / "bge-m3" / "tokenizer.json"
+)
+
 
 class EvalSettings(BaseModel):
     """Evaluation subsystem settings. Disabled unless explicitly enabled."""
@@ -148,7 +155,7 @@ class Settings(BaseSettings):
     chunk_max_chunks_per_attachment: int = 20
     chunk_include_signature: bool = True
     chunk_batch_size: int = 500
-    chunk_tokenizer_path: str = "backend/assets/bge-m3/tokenizer.json"
+    chunk_tokenizer_path: str = _DEFAULT_CHUNK_TOKENIZER_PATH
     chunk_tokenizer_sha256: str | None = None
 
     embedding_space: str = "bge_m3_v1"

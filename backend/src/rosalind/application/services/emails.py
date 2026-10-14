@@ -295,14 +295,39 @@ class EmailProcessingService:
         Yields the same progress events as before; the logging wrapper observes
         them (ok/skipped_unchanged/failed counts) without changing the stream.
         ``self_email`` is an optional per-run address used to compute message
-        direction; it is never persisted or logged.
+        direction; it is never persisted and never logged. If a stage raises an
+        unexpected exception, a terminal ``PHASE_ERROR`` event is yielded (with
+        the traceback logged server-side) so streaming clients fail cleanly.
         """
         started = time.perf_counter()
         summary: dict[str, tuple[int, int, int]] = {}
+        last_stage: str | None = None
         try:
             for event in self._run(uow, prepared, stages=stages, self_email=self_email):
+                last_stage = event.stage
                 _record_event(event, summary, started)
                 yield event
+        except Exception:
+            # A fatal, unexpected failure (an exception, not a yielded
+            # ``PHASE_ERROR``). The response headers are already sent by the
+            # time the pipeline runs, so we cannot turn this into an HTTP error;
+            # instead we emit a terminal event so streaming clients fail cleanly
+            # rather than seeing a truncated body. The traceback stays in the
+            # logs; the event carries no internal detail.
+            logger.exception(
+                "ingestion_run_failed",
+                extra={
+                    "import_id": str(prepared.import_id),
+                    "stage": last_stage,
+                    "elapsed_ms": (time.perf_counter() - started) * 1000,
+                },
+            )
+            stage = last_stage or "unknown"
+            yield PipelineEvent(
+                stage=stage,
+                phase=PHASE_ERROR,
+                message=f"indexing failed during stage {stage}; see server logs",
+            )
         finally:
             logger.info(
                 "ingestion_run_summary",
