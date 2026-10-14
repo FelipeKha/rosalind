@@ -1,4 +1,4 @@
-"""`rosalind pipeline ...` commands.
+"""`rosalind index` command.
 
 The offline pipeline turns raw archive files into searchable data. It currently
 runs only the record-split stage; later stages (parse, canonicalize, enrich,
@@ -17,29 +17,26 @@ from cli.client import ApiClientError
 from cli.client import processing as client
 from cli.commands import _format
 
-pipeline_app = typer.Typer(help="Run the offline data pipeline.")
 
-
-@pipeline_app.command("run")
-def run(
+def index(
     import_id: str,
     stage: str | None = typer.Option(
         None,
         "--stage",
-        help="Run a single pipeline stage (split, canonicalize, reconcile, enrich, attachments, chunk, embed).",
+        help="Run a single index stage (split, canonicalize, reconcile, enrich, attachments, chunk, embed).",
     ),
 ) -> None:
-    """Run the offline pipeline for an import."""
+    """Build the searchable index for an import."""
     failed = 0
     last: dict[str, Any] | None = None
     try:
-        events = client.stream_pipeline(import_id, stage=stage)
+        events = client.stream_index(import_id, stage=stage)
         for event in events:
             last = event
             failed = int(event.get("failed", failed))
             _render_event(event)
     except ApiClientError as exc:
-        typer.echo(f"Failed to run pipeline: {exc}", err=True)
+        typer.echo(f"Failed to run index: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     if last is None:
@@ -49,11 +46,11 @@ def run(
         return
 
     if last.get("stage") == "error":
-        typer.echo(f"Pipeline error: {last.get('message')}", err=True)
+        typer.echo(f"Index error: {last.get('message')}", err=True)
         raise typer.Exit(code=1)
 
     typer.echo("")
-    typer.echo("Pipeline complete")
+    typer.echo("Index complete")
     typer.echo(f"  Processed: {last.get('processed', 0)} messages")
     typer.echo(f"  Created:   {last.get('created', 0)}")
     typer.echo(f"  Reused:    {last.get('reused', 0)}")

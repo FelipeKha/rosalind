@@ -59,7 +59,7 @@ Typical run:
 just eval-dev
 rosalind auth login
 rosalind import create --source google /path/to/Mail
-rosalind pipeline run <import_id>
+rosalind index <import_id>
 rosalind eval items --import <import_id>            # key gold manually
 rosalind eval run --config backend/configs/eval/experiments/mode-hybrid.yaml
 rosalind eval compare <runA> <runB>
@@ -87,7 +87,7 @@ backend `eval` dependency group, which `dev` includes.
 
 1. **Run Rosalind in eval mode** (`just eval-dev`) against the throwaway eval DB.
 2. **Import data as normal** — no eval-specific importer:
-   `rosalind import create …` then `rosalind pipeline run <import_id>`
+   `rosalind import create …` then `rosalind index <import_id>`
    (including `embed` for semantic/hybrid).
 3. **Key gold manually.** List imported items and their ids, then write a JSONL
    dataset referencing those ids:

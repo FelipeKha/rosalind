@@ -560,15 +560,14 @@ def rag_corpus(
         assert imported.returncode == 0, imported.stderr
         import_id = _import_id_from_stdout(imported.stdout)
 
-        pipelined = subprocess.run(
+        indexed = subprocess.run(
             [
                 "uv",
                 "run",
                 "--directory",
                 str(CLI_DIR),
                 "rosalind",
-                "pipeline",
-                "run",
+                "index",
                 import_id,
             ],
             env=env,
@@ -576,7 +575,7 @@ def rag_corpus(
             text=True,
             check=False,
         )
-        assert pipelined.returncode == 0, pipelined.stdout + pipelined.stderr
+        assert indexed.returncode == 0, indexed.stdout + indexed.stderr
 
     yield RagCorpus(
         base_url=rag_backend_base_url,

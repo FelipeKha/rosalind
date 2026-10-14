@@ -148,6 +148,9 @@ Launch backend:
 `just cli-tool-install`     # install rosalind-cli
 
 Create eval run:
+Sign in:
+`rosalind auth sign-in`
+
 Create import:
 `rosalind import create e2e/fixtures/google/takeout/Mail/rosalind_synthetic_emails.mbox`
 

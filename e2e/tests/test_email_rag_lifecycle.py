@@ -34,7 +34,7 @@ def test_rerun_is_idempotent(rag_corpus, rag_run_rosalind) -> None:
         ),
     }
 
-    result = rag_run_rosalind(["pipeline", "run", import_id])
+    result = rag_run_rosalind(["index", import_id])
     assert result.returncode == 0, result.stderr
 
     assert _count(conn, "SELECT count(*) FROM core.email_message") == before["emails"]

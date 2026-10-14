@@ -39,6 +39,7 @@ credentials, e.g. `--profile eval`.
 - [rosalind source](#rosalind-source)
 - [rosalind import](#rosalind-import)
 - [rosalind process](#rosalind-process)
+- [rosalind index](#rosalind-index)
 - [rosalind query](#rosalind-query)
 
 ### Exit codes
@@ -483,6 +484,47 @@ Processing import completed
 ### See also
 
 - [rosalind process](#rosalind-process)
+
+## rosalind index
+
+Build the searchable index for an import: split raw archives, canonicalize,
+enrich, chunk, and embed. Running it twice is idempotent.
+
+```
+rosalind index <import-id> [--stage <stage>]
+```
+
+### Options
+
+`--stage <string>`
+
+Run a single stage (`split`, `canonicalize`, `reconcile`, `enrich`,
+`attachments`, `chunk`, `embed`) instead of all of them.
+
+### Arguments
+
+`<import-id>`
+
+Import id.
+
+### Examples
+
+```bash
+# Build the full index for an import
+$ rosalind index 42
+Index complete
+  Processed: 1842 messages
+  Created:   1842
+  Reused:    0
+  Failed:    0
+
+# Rebuild only the embeddings
+$ rosalind index 42 --stage embed
+```
+
+### See also
+
+- [rosalind import](#rosalind-import)
 
 ## rosalind query
 

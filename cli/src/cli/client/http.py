@@ -48,7 +48,7 @@ class ApiClient:
         return self._request("DELETE", path)
 
     def stream_post(self, path: str, *, json: Any = None) -> Iterator[str]:
-        """POST and stream newline-delimited lines (used by the offline pipeline).
+        """POST and stream newline-delimited lines (used by long-running commands).
 
         The access token is fetched up front and refreshed once if the server
         answers 401 before any body is streamed.
@@ -67,7 +67,7 @@ class ApiClient:
                     f"{self._base_url}{path}",
                     json=json,
                     headers=headers,
-                    timeout=None,  # nosec B113 - pipeline may stream for a very long time
+                    timeout=None,  # nosec B113 - indexing may stream for a very long time
                 ) as response:
                     if (
                         response.status_code == 401

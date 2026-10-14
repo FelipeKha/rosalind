@@ -35,9 +35,7 @@ UowDep = Annotated[UnitOfWork, Depends(get_uow)]
 ImportDep = Annotated[ImportService, Depends(get_import_service)]
 ProcessingDep = Annotated[ProcessingService, Depends(get_processing_service)]
 StorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]
-EmailPipelineDep = Annotated[
-    EmailProcessingService, Depends(get_email_processing_service)
-]
+EmailIndexDep = Annotated[EmailProcessingService, Depends(get_email_processing_service)]
 
 
 @router.get("", response_model=schemas.ImportListResponse)
@@ -123,15 +121,15 @@ def process_import(
     )
 
 
-@router.post("/{import_id}/pipeline")
-def run_pipeline(
+@router.post("/{import_id}/index")
+def run_index(
     import_id: uuid.UUID,
     uow: UowDep,
-    email_pipeline: EmailPipelineDep,
+    email_processing: EmailIndexDep,
     account: AccountDep,
     stage: str | None = None,
 ) -> StreamingResponse:
-    """Run the offline email pipeline.
+    """Run the offline email indexing.
 
     Streams newline-delimited JSON progress events. Errors that can be decided
     before any work starts (unknown import, not completed, no source) are raised
@@ -139,11 +137,11 @@ def run_pipeline(
     the stream rather than aborting the run. ``stage`` restricts the run to a
     single stage (e.g. ``chunk``) for rebuilds; omitting it runs all stages.
     """
-    prepared = email_pipeline.prepare(uow, account.id, import_id)
+    prepared = email_processing.prepare(uow, account.id, import_id)
     stages = {stage} if stage else None
 
     def generate() -> Iterator[str]:
-        for event in email_pipeline.run(uow, prepared, stages=stages):
+        for event in email_processing.run(uow, prepared, stages=stages):
             yield json.dumps(event.to_dict()) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")

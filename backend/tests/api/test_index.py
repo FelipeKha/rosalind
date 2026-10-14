@@ -62,12 +62,12 @@ def _fake_storage(monkeypatch, existing: set[str] | None = None) -> dict[str, by
 
 
 def _run(api_client: TestClient, import_id: str) -> list[dict]:
-    with api_client.stream("POST", f"/imports/{import_id}/pipeline") as response:
+    with api_client.stream("POST", f"/imports/{import_id}/index") as response:
         assert response.status_code == 200
         return [json.loads(line) for line in response.iter_lines() if line]
 
 
-def test_pipeline_splits_mbox(api_client: TestClient, monkeypatch) -> None:
+def test_index_splits_mbox(api_client: TestClient, monkeypatch) -> None:
     import_id = _create_import(api_client)
     puts = _fake_storage(monkeypatch)
 
@@ -83,7 +83,7 @@ def test_pipeline_splits_mbox(api_client: TestClient, monkeypatch) -> None:
     assert events[-1]["stage"] == "error"
 
 
-def test_pipeline_is_idempotent(api_client: TestClient, monkeypatch) -> None:
+def test_index_is_idempotent(api_client: TestClient, monkeypatch) -> None:
     import_id = _create_import(api_client)
     _fake_storage(monkeypatch)
 
@@ -104,12 +104,12 @@ def test_pipeline_is_idempotent(api_client: TestClient, monkeypatch) -> None:
     assert second_done["reused"] == 2
 
 
-def test_pipeline_unknown_import_404(api_client: TestClient) -> None:
-    response = api_client.post("/imports/00000000-0000-0000-0000-000000000000/pipeline")
+def test_index_unknown_import_404(api_client: TestClient) -> None:
+    response = api_client.post("/imports/00000000-0000-0000-0000-000000000000/index")
     assert response.status_code == 404
 
 
-def test_pipeline_incomplete_import_409(api_client: TestClient) -> None:
+def test_index_incomplete_import_409(api_client: TestClient) -> None:
     import_id = _create_import(api_client, complete=False)
-    response = api_client.post(f"/imports/{import_id}/pipeline")
+    response = api_client.post(f"/imports/{import_id}/index")
     assert response.status_code == 409
