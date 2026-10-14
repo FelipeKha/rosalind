@@ -124,6 +124,10 @@ backend-mcp-serve:
 cli-install:
     cd cli && uv sync
 
+# Install the CLI as an editable `uv` tool so `rosalind` is on PATH
+cli-tool-install:
+    uv tool install --editable ./cli
+
 cli-format:
     cd cli && just format
 
