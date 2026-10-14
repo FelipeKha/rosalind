@@ -7,6 +7,11 @@ import logging
 import time
 
 from rosalind.application.services.emails import (
+    PHASE_DONE,
+    PHASE_PROGRESS,
+    STAGE_CANONICALIZE,
+    STAGE_CHUNK,
+    STAGE_EMBED,
     PipelineEvent,
     _event_outcomes,
     _record_event,
@@ -45,13 +50,16 @@ def _capture(callback):
 
 
 def test_event_outcomes_split_and_canonicalize() -> None:
-    event = PipelineEvent(stage="canonicalized", created=3, reused=2, failed=1)
+    event = PipelineEvent(
+        stage=STAGE_CANONICALIZE, phase=PHASE_DONE, created=3, reused=2, failed=1
+    )
     assert _event_outcomes(event) == (3, 2, 1)
 
 
 def test_event_outcomes_chunk_details() -> None:
     event = PipelineEvent(
-        stage="chunked",
+        stage=STAGE_CHUNK,
+        phase=PHASE_DONE,
         details={"chunks_written": 4, "chunks_unchanged": 1, "failed": 0},
     )
     assert _event_outcomes(event) == (4, 1, 0)
@@ -59,7 +67,8 @@ def test_event_outcomes_chunk_details() -> None:
 
 def test_event_outcomes_embed_details() -> None:
     event = PipelineEvent(
-        stage="embedded",
+        stage=STAGE_EMBED,
+        phase=PHASE_DONE,
         details={"embedded": 5, "reused": 2, "failed": 1},
     )
     assert _event_outcomes(event) == (5, 2, 1)
@@ -70,9 +79,20 @@ def test_record_event_logs_counts_and_accumulates_terminal() -> None:
     started = time.perf_counter()
     events = [
         PipelineEvent(
-            stage="canonicalizing", processed=10, created=5, reused=3, failed=2
+            stage=STAGE_CANONICALIZE,
+            phase=PHASE_PROGRESS,
+            processed=10,
+            created=5,
+            reused=3,
+            failed=2,
         ),
-        PipelineEvent(stage="canonicalized", created=5, reused=3, failed=2),
+        PipelineEvent(
+            stage=STAGE_CANONICALIZE,
+            phase=PHASE_DONE,
+            created=5,
+            reused=3,
+            failed=2,
+        ),
     ]
 
     def _run() -> None:
@@ -82,9 +102,10 @@ def test_record_event_logs_counts_and_accumulates_terminal() -> None:
     records = _capture(_run)
 
     assert all(r["event"] == "ingestion_stage" for r in records)
-    # Only the terminal event contributes to the summary.
-    assert summary["canonicalized"] == (5, 3, 2)
-    terminal = next(r for r in records if r["stage"] == "canonicalized")
+    assert all(r["stage"] == "canonicalize" for r in records)
+    # Only the terminal event contributes to the summary, keyed by stage.
+    assert summary["canonicalize"] == (5, 3, 2)
+    terminal = next(r for r in records if r["phase"] == "done")
     assert terminal["ok"] == 5
     assert terminal["skipped_unchanged"] == 3
     assert terminal["failed"] == 2
@@ -92,8 +113,10 @@ def test_record_event_logs_counts_and_accumulates_terminal() -> None:
 
 def test_rerun_logs_skipped_unchanged() -> None:
     summary: dict[str, tuple[int, int, int]] = {}
-    event = PipelineEvent(stage="canonicalized", created=0, reused=7, failed=0)
+    event = PipelineEvent(
+        stage=STAGE_CANONICALIZE, phase=PHASE_DONE, created=0, reused=7, failed=0
+    )
     records = _capture(lambda: _record_event(event, summary, time.perf_counter()))
     assert records[0]["skipped_unchanged"] == 7
     assert records[0]["ok"] == 0
-    assert summary["canonicalized"] == (0, 7, 0)
+    assert summary["canonicalize"] == (0, 7, 0)

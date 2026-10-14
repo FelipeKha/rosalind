@@ -14,7 +14,15 @@ from rosalind.application.canonicalization.email_message import (
 from rosalind.application.services.email_reconciliation import (
     EmailReconciliationService,
 )
-from rosalind.application.services.emails import EmailProcessingService
+from rosalind.application.services.emails import (
+    PHASE_DONE,
+    PHASE_ERROR,
+    PHASE_START,
+    STAGE_CANONICALIZE,
+    STAGE_RECONCILE,
+    STAGE_SPLIT,
+    EmailProcessingService,
+)
 from tests._account import ensure_account
 
 SELF_EMAIL = "alex@example.com"
@@ -122,12 +130,18 @@ def test_split_and_canonicalize(uow: SqlAlchemyUnitOfWork, db_session) -> None:
 
     events = list(service.run(uow, service.prepare(uow, account_id, import_id)))
 
-    assert events[0].stage == "starting"
-    canonicalized = next(event for event in events if event.stage == "canonicalized")
+    assert events[0].stage == STAGE_SPLIT
+    assert events[0].phase == PHASE_START
+    canonicalized = next(
+        event
+        for event in events
+        if event.stage == STAGE_CANONICALIZE and event.phase == PHASE_DONE
+    )
     assert canonicalized.processed == 2
     assert canonicalized.created == 2
     assert canonicalized.failed == 0
-    assert events[-1].stage == "reconciled"
+    assert events[-1].stage == STAGE_RECONCILE
+    assert events[-1].phase == PHASE_DONE
 
     messages = db_session.scalars(select(models.EmailMessage)).all()
     assert {m.message_id for m in messages} == {"a@example.com", "b@example.com"}
@@ -158,7 +172,11 @@ def test_canonicalize_is_idempotent(uow: SqlAlchemyUnitOfWork, db_session) -> No
     puts_after_first = len(storage.puts)
 
     events = list(service.run(uow, service.prepare(uow, account_id, import_id)))
-    canonicalized = next(event for event in events if event.stage == "canonicalized")
+    canonicalized = next(
+        event
+        for event in events
+        if event.stage == STAGE_CANONICALIZE and event.phase == PHASE_DONE
+    )
     assert canonicalized.created == 0
     assert canonicalized.reused == 2
     assert len(storage.puts) == puts_after_first
@@ -290,7 +308,8 @@ def test_canonicalize_requires_self_handles(uow: SqlAlchemyUnitOfWork) -> None:
 
     events = list(service.run(uow, service.prepare(uow, account_id, import_id)))
 
-    assert events[-1].stage == "error"
+    assert events[-1].stage == STAGE_CANONICALIZE
+    assert events[-1].phase == PHASE_ERROR
     assert "self" in (events[-1].message or "")
 
 
@@ -306,9 +325,14 @@ def test_split_ignores_non_mbox_files(uow: SqlAlchemyUnitOfWork, db_session) -> 
     assert prepared.files == ()
 
     events = list(service.run(uow, prepared))
-    canonicalized = next(event for event in events if event.stage == "canonicalized")
+    canonicalized = next(
+        event
+        for event in events
+        if event.stage == STAGE_CANONICALIZE and event.phase == PHASE_DONE
+    )
     assert canonicalized.processed == 0
-    assert events[-1].stage == "reconciled"
+    assert events[-1].stage == STAGE_RECONCILE
+    assert events[-1].phase == PHASE_DONE
     assert uow.source_records.list_for_import(import_id) == []
 
 
@@ -351,7 +375,8 @@ def test_reconcile_heals_truncated_references(
 
     events = list(service.run(uow, service.prepare(uow, account_id, import_id)))
 
-    assert events[-1].stage == "reconciled"
+    assert events[-1].stage == STAGE_RECONCILE
+    assert events[-1].phase == PHASE_DONE
     assert events[-1].details == {
         "threads_created": 0,
         "threads_removed": 1,
@@ -432,10 +457,12 @@ def test_reconcile_is_idempotent(uow: SqlAlchemyUnitOfWork, db_session) -> None:
     service = _service(storage)
 
     first = list(service.run(uow, service.prepare(uow, account_id, import_id)))
-    assert first[-1].stage == "reconciled"
+    assert first[-1].stage == STAGE_RECONCILE
+    assert first[-1].phase == PHASE_DONE
 
     second = list(service.run(uow, service.prepare(uow, account_id, import_id)))
-    assert second[-1].stage == "reconciled"
+    assert second[-1].stage == STAGE_RECONCILE
+    assert second[-1].phase == PHASE_DONE
     assert second[-1].details == {
         "threads_created": 0,
         "threads_removed": 0,

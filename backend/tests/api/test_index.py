@@ -73,14 +73,20 @@ def test_index_splits_mbox(api_client: TestClient, monkeypatch) -> None:
 
     events = _run(api_client, import_id)
 
-    assert events[0]["stage"] == "starting"
-    done = next(event for event in events if event["stage"] == "done")
+    assert events[0]["stage"] == "split"
+    assert events[0]["phase"] == "start"
+    done = next(
+        event
+        for event in events
+        if event["stage"] == "split" and event["phase"] == "done"
+    )
     assert done["processed"] == 2
     assert done["created"] == 2
     assert done["failed"] == 0
     assert len(puts) == 2
     # Canonicalize runs after split; without a self person it reports an error.
-    assert events[-1]["stage"] == "error"
+    assert events[-1]["stage"] == "canonicalize"
+    assert events[-1]["phase"] == "error"
 
 
 def test_index_is_idempotent(api_client: TestClient, monkeypatch) -> None:
@@ -88,7 +94,11 @@ def test_index_is_idempotent(api_client: TestClient, monkeypatch) -> None:
     _fake_storage(monkeypatch)
 
     first = _run(api_client, import_id)
-    first_done = next(event for event in first if event["stage"] == "done")
+    first_done = next(
+        event
+        for event in first
+        if event["stage"] == "split" and event["phase"] == "done"
+    )
     assert first_done["created"] == 2
 
     monkeypatch.setattr(
@@ -99,7 +109,11 @@ def test_index_is_idempotent(api_client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(composition.object_storage, "exists", lambda key: True)
 
     second = _run(api_client, import_id)
-    second_done = next(event for event in second if event["stage"] == "done")
+    second_done = next(
+        event
+        for event in second
+        if event["stage"] == "split" and event["phase"] == "done"
+    )
     assert second_done["created"] == 0
     assert second_done["reused"] == 2
 

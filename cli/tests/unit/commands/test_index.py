@@ -8,9 +8,10 @@ runner = CliRunner()
 
 def test_index_success(monkeypatch) -> None:
     events = [
-        {"stage": "starting", "total_files": 1, "total_bytes": 100},
+        {"stage": "split", "phase": "start", "total_files": 1, "total_bytes": 100},
         {
-            "stage": "splitting",
+            "stage": "split",
+            "phase": "progress",
             "file": "Mail/All Mail.mbox",
             "processed": 2,
             "created": 2,
@@ -18,7 +19,14 @@ def test_index_success(monkeypatch) -> None:
             "failed": 0,
             "processed_bytes": 100,
         },
-        {"stage": "done", "processed": 2, "created": 2, "reused": 0, "failed": 0},
+        {
+            "stage": "split",
+            "phase": "done",
+            "processed": 2,
+            "created": 2,
+            "reused": 0,
+            "failed": 0,
+        },
     ]
     monkeypatch.setattr(
         index.client, "stream_index", lambda import_id, stage=None: iter(events)
@@ -32,7 +40,16 @@ def test_index_success(monkeypatch) -> None:
 
 
 def test_index_failed_exits_nonzero(monkeypatch) -> None:
-    events = [{"stage": "done", "processed": 2, "created": 1, "reused": 0, "failed": 1}]
+    events = [
+        {
+            "stage": "split",
+            "phase": "done",
+            "processed": 2,
+            "created": 1,
+            "reused": 0,
+            "failed": 1,
+        }
+    ]
     monkeypatch.setattr(
         index.client, "stream_index", lambda import_id, stage=None: iter(events)
     )
@@ -55,7 +72,16 @@ def test_index_api_error(monkeypatch) -> None:
 
 
 def test_index_json_mode(monkeypatch) -> None:
-    events = [{"stage": "done", "processed": 1, "created": 1, "reused": 0, "failed": 0}]
+    events = [
+        {
+            "stage": "split",
+            "phase": "done",
+            "processed": 1,
+            "created": 1,
+            "reused": 0,
+            "failed": 0,
+        }
+    ]
     monkeypatch.setattr(
         index.client, "stream_index", lambda import_id, stage=None: iter(events)
     )

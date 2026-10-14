@@ -76,23 +76,19 @@ ALL_STAGES = frozenset(
     }
 )
 
-logger = logging.getLogger("rosalind.ingestion")
+# Every event carries a canonical ``stage`` (one of ALL_STAGES) plus a ``phase``
+# describing where in that stage it sits. ``start``/``progress`` events repeat
+# and are not accumulated; the terminal phases carry the final per-stage tallies
+# for a run.
+PHASE_START = "start"
+PHASE_PROGRESS = "progress"
+PHASE_DONE = "done"
+PHASE_ERROR = "error"
+PHASE_BLOCKED = "blocked"
 
-# Terminal events carry the final per-stage tallies for a run; progress events
-# (ending in -ing) repeat and must not be accumulated.
-_TERMINAL_STAGES = frozenset(
-    {
-        "done",
-        "canonicalized",
-        "reconciled",
-        "enriched",
-        "attachments_extracted",
-        "chunked",
-        "embedded",
-        "embed_blocked",
-        "error",
-    }
-)
+_TERMINAL_PHASES = frozenset({PHASE_DONE, PHASE_BLOCKED, PHASE_ERROR})
+
+logger = logging.getLogger("rosalind.ingestion")
 
 
 def _event_outcomes(event: PipelineEvent) -> tuple[int, int, int]:
@@ -124,6 +120,7 @@ def _record_event(
         "ingestion_stage",
         extra={
             "stage": event.stage,
+            "phase": event.phase,
             "processed": event.processed,
             "ok": ok,
             "skipped_unchanged": skipped,
@@ -131,7 +128,7 @@ def _record_event(
             "elapsed_ms": (time.perf_counter() - started) * 1000,
         },
     )
-    if event.stage in _TERMINAL_STAGES:
+    if event.phase in _TERMINAL_PHASES:
         previous = summary.get(event.stage, (0, 0, 0))
         summary[event.stage] = (
             previous[0] + ok,
@@ -142,9 +139,15 @@ def _record_event(
 
 @dataclass(frozen=True)
 class PipelineEvent:
-    """A progress event emitted while the pipeline runs."""
+    """A progress event emitted while the pipeline runs.
+
+    ``stage`` is the canonical stage id (one of ``ALL_STAGES``); ``phase`` says
+    where in that stage the event sits (``start``/``progress``/``done``/
+    ``error``/``blocked``).
+    """
 
     stage: str
+    phase: str
     file: str | None = None
     total_files: int = 0
     total_bytes: int = 0
@@ -159,6 +162,7 @@ class PipelineEvent:
     def to_dict(self) -> dict[str, object]:
         return {
             "stage": self.stage,
+            "phase": self.phase,
             "file": self.file,
             "total_files": self.total_files,
             "total_bytes": self.total_bytes,
@@ -324,7 +328,8 @@ class EmailProcessingService:
         counters = _Counters()
         if wants(STAGE_SPLIT):
             yield PipelineEvent(
-                stage="starting",
+                stage=STAGE_SPLIT,
+                phase=PHASE_START,
                 total_files=len(prepared.files),
                 total_bytes=prepared.total_bytes,
             )
@@ -333,7 +338,8 @@ class EmailProcessingService:
                 yield from self._split_file(uow, prepared, file, counters)
 
             yield PipelineEvent(
-                stage="done",
+                stage=STAGE_SPLIT,
+                phase=PHASE_DONE,
                 total_files=len(prepared.files),
                 total_bytes=prepared.total_bytes,
                 processed=counters.processed,
@@ -346,7 +352,7 @@ class EmailProcessingService:
         canonicalize_ok = True
         if wants(STAGE_CANONICALIZE):
             for event in self._canonicalize(uow, prepared):
-                if event.stage == "error":
+                if event.phase == PHASE_ERROR:
                     canonicalize_ok = False
                 yield event
 
@@ -379,14 +385,15 @@ class EmailProcessingService:
         extractor = self._attachment_extractor
         if extractor is None:
             return
-        yield PipelineEvent(stage="extracting_attachments")
+        yield PipelineEvent(stage=STAGE_ATTACHMENTS, phase=PHASE_START)
         outcome = extractor.extract(
             uow,
             prepared.source_account.id,
             budget_seconds=self._attachment_budget_seconds,
         )
         yield PipelineEvent(
-            stage="attachments_extracted",
+            stage=STAGE_ATTACHMENTS,
+            phase=PHASE_DONE,
             processed=outcome.processed,
             details={
                 "done": outcome.done,
@@ -407,10 +414,11 @@ class EmailProcessingService:
         chunker = self._chunker
         if chunker is None:
             return
-        yield PipelineEvent(stage="chunking")
+        yield PipelineEvent(stage=STAGE_CHUNK, phase=PHASE_START)
         outcome = chunker.chunk(uow, prepared.source_account.id)
         yield PipelineEvent(
-            stage="chunked",
+            stage=STAGE_CHUNK,
+            phase=PHASE_DONE,
             processed=outcome.emails_synced,
             details={
                 "chunks_written": outcome.chunks_written,
@@ -431,7 +439,7 @@ class EmailProcessingService:
         embedder = self._embedder
         if embedder is None:
             return
-        yield PipelineEvent(stage="embedding")
+        yield PipelineEvent(stage=STAGE_EMBED, phase=PHASE_START)
         outcome = embedder.embed(
             uow,
             prepared.source_account.id,
@@ -439,12 +447,14 @@ class EmailProcessingService:
         )
         if outcome.blocked_reason:
             yield PipelineEvent(
-                stage="embed_blocked",
+                stage=STAGE_EMBED,
+                phase=PHASE_BLOCKED,
                 message=outcome.blocked_reason,
             )
             return
         yield PipelineEvent(
-            stage="embedded",
+            stage=STAGE_EMBED,
+            phase=PHASE_DONE,
             processed=outcome.embedded + outcome.reused,
             details={
                 "embedded": outcome.embedded,
@@ -462,7 +472,7 @@ class EmailProcessingService:
         enricher = self._enricher
         if enricher is None:
             return
-        yield PipelineEvent(stage="enriching")
+        yield PipelineEvent(stage=STAGE_ENRICH, phase=PHASE_START)
         outcome = enricher.enrich(
             uow,
             prepared.source_account.id,
@@ -470,7 +480,8 @@ class EmailProcessingService:
             limit=self._enrich_batch_size,
         )
         yield PipelineEvent(
-            stage="enriched",
+            stage=STAGE_ENRICH,
+            phase=PHASE_DONE,
             processed=outcome.processed,
             details={
                 "done": outcome.done,
@@ -484,10 +495,11 @@ class EmailProcessingService:
         self, uow: UnitOfWork, prepared: PreparedSplit
     ) -> Iterator[PipelineEvent]:
         """Reconcile thread membership across the whole source account."""
-        yield PipelineEvent(stage="reconciling")
+        yield PipelineEvent(stage=STAGE_RECONCILE, phase=PHASE_START)
         result = self._reconciler.reconcile(uow, prepared.source_account.id)
         yield PipelineEvent(
-            stage="reconciled",
+            stage=STAGE_RECONCILE,
+            phase=PHASE_DONE,
             details={
                 "threads_created": result.threads_created,
                 "threads_removed": result.threads_removed,
@@ -504,10 +516,13 @@ class EmailProcessingService:
         depends on a self person existing. Missing self-handles emit a clear
         error event rather than discarding any raw evidence.
         """
+        yield PipelineEvent(stage=STAGE_CANONICALIZE, phase=PHASE_START)
+
         self_handles = self._canonicalizer.self_handles(uow, prepared.account_id)
         if not self_handles:
             yield PipelineEvent(
-                stage="error",
+                stage=STAGE_CANONICALIZE,
+                phase=PHASE_ERROR,
                 message=(
                     "cannot compute message direction: the account has no self "
                     "person with an email address; set it via the self-person "
@@ -566,7 +581,8 @@ class EmailProcessingService:
         self, counters: _Counters, *, final: bool = False
     ) -> PipelineEvent:
         return PipelineEvent(
-            stage="canonicalized" if final else "canonicalizing",
+            stage=STAGE_CANONICALIZE,
+            phase=PHASE_DONE if final else PHASE_PROGRESS,
             processed=counters.processed,
             created=counters.created,
             reused=counters.reused,
@@ -623,7 +639,8 @@ class EmailProcessingService:
 
     def _event(self, file: ImportFile, counters: _Counters) -> PipelineEvent:
         return PipelineEvent(
-            stage="splitting",
+            stage=STAGE_SPLIT,
+            phase=PHASE_PROGRESS,
             file=file.path,
             processed=counters.processed,
             created=counters.created,
