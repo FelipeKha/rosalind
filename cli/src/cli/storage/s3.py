@@ -1,14 +1,18 @@
 """S3-compatible object storage implementation backed by boto3."""
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
-from mypy_boto3_s3.client import S3Client
 
 from cli import config
+
+if TYPE_CHECKING:
+    from mypy_boto3_s3.client import S3Client
 
 MULTIPART_THRESHOLD = 64 * 1024 * 1024
 MULTIPART_CHUNK_SIZE = 16 * 1024 * 1024
@@ -21,7 +25,7 @@ class S3ObjectStorage:
     @staticmethod
     def _build_client() -> S3Client:
         return cast(
-            S3Client,
+            "S3Client",
             boto3.client(
                 "s3",
                 endpoint_url=config.s3_endpoint(),
