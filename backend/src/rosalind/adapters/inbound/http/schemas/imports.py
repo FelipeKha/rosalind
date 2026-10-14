@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FileEntryRequest(BaseModel):
@@ -19,6 +19,22 @@ class FileEntryRequest(BaseModel):
 
 class ManifestRequest(BaseModel):
     files: list[FileEntryRequest]
+
+
+class IndexRequest(BaseModel):
+    """Optional per-run email used to compute message direction."""
+
+    self_email: str | None = None
+
+    @field_validator("self_email")
+    @classmethod
+    def _validate_self_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned or "@" not in cleaned:
+            raise ValueError("self_email must be an email address")
+        return cleaned
 
 
 class ImportCreateRequest(BaseModel):

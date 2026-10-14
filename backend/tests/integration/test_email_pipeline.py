@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections.abc import Sequence
 from typing import BinaryIO
@@ -311,6 +312,54 @@ def test_canonicalize_requires_self_handles(uow: SqlAlchemyUnitOfWork) -> None:
     assert events[-1].stage == STAGE_CANONICALIZE
     assert events[-1].phase == PHASE_ERROR
     assert "self" in (events[-1].message or "")
+
+
+def test_self_email_override_replaces_self_person(
+    uow: SqlAlchemyUnitOfWork, db_session
+) -> None:
+    account_id, import_id = _setup(uow)
+    storage = _FakeStorage(MBOX)
+    service = _service(storage)
+
+    events = list(
+        service.run(
+            uow,
+            service.prepare(uow, account_id, import_id),
+            self_email=SELF_EMAIL,
+        )
+    )
+
+    canonicalized = next(
+        event
+        for event in events
+        if event.stage == STAGE_CANONICALIZE and event.phase == PHASE_DONE
+    )
+    assert canonicalized.created == 2
+    messages = db_session.scalars(select(models.EmailMessage)).all()
+    assert {m.message_id for m in messages} == {"a@example.com", "b@example.com"}
+    assert all(m.direction == "received" for m in messages)
+
+
+def test_self_email_override_is_not_logged(
+    uow: SqlAlchemyUnitOfWork, db_session, caplog
+) -> None:
+    account_id, import_id = _setup(uow)
+    storage = _FakeStorage(MBOX)
+    service = _service(storage)
+    secret = "hidden-self@example.com"
+
+    with caplog.at_level(logging.INFO, logger="rosalind.ingestion"):
+        list(
+            service.run(
+                uow,
+                service.prepare(uow, account_id, import_id),
+                self_email=secret,
+            )
+        )
+
+    # Prove capture worked, then that the address never reached the logs.
+    assert "ingestion_run_summary" in caplog.text
+    assert secret not in caplog.text
 
 
 def test_split_ignores_non_mbox_files(uow: SqlAlchemyUnitOfWork, db_session) -> None:

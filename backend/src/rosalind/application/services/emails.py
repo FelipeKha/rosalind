@@ -25,12 +25,16 @@ from datetime import UTC, datetime
 
 from rosalind.adapters.inbound.ingestion.email import parse_email
 from rosalind.adapters.inbound.ingestion.mbox import iter_messages
+from rosalind.application.canonicalization.email import normalize_email
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
     blob_key,
     build_canonical_email,
 )
-from rosalind.application.errors import ImportNotFoundError, InvalidImportStateError
+from rosalind.application.errors import (
+    ImportNotFoundError,
+    InvalidImportStateError,
+)
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.attachment_extraction import (
@@ -284,16 +288,19 @@ class EmailProcessingService:
         prepared: PreparedSplit,
         *,
         stages: set[str] | None = None,
+        self_email: str | None = None,
     ) -> Iterator[PipelineEvent]:
         """Run the pipeline, logging a content-free event per stage plus a summary.
 
         Yields the same progress events as before; the logging wrapper observes
         them (ok/skipped_unchanged/failed counts) without changing the stream.
+        ``self_email`` is an optional per-run address used to compute message
+        direction; it is never persisted or logged.
         """
         started = time.perf_counter()
         summary: dict[str, tuple[int, int, int]] = {}
         try:
-            for event in self._run(uow, prepared, stages=stages):
+            for event in self._run(uow, prepared, stages=stages, self_email=self_email):
                 _record_event(event, summary, started)
                 yield event
         finally:
@@ -312,6 +319,7 @@ class EmailProcessingService:
         prepared: PreparedSplit,
         *,
         stages: set[str] | None = None,
+        self_email: str | None = None,
     ) -> Iterator[PipelineEvent]:
         """Run the selected pipeline stages over the prepared import.
 
@@ -351,7 +359,7 @@ class EmailProcessingService:
 
         canonicalize_ok = True
         if wants(STAGE_CANONICALIZE):
-            for event in self._canonicalize(uow, prepared):
+            for event in self._canonicalize(uow, prepared, self_email=self_email):
                 if event.phase == PHASE_ERROR:
                     canonicalize_ok = False
                 yield event
@@ -508,17 +516,26 @@ class EmailProcessingService:
         )
 
     def _canonicalize(
-        self, uow: UnitOfWork, prepared: PreparedSplit
+        self,
+        uow: UnitOfWork,
+        prepared: PreparedSplit,
+        *,
+        self_email: str | None = None,
     ) -> Iterator[PipelineEvent]:
         """Parse and canonicalize each split record into ``core.email_*``.
 
         Self-handles are resolved *after* the split so raw persistence never
-        depends on a self person existing. Missing self-handles emit a clear
-        error event rather than discarding any raw evidence.
+        depends on a self person existing. A per-run ``self_email`` override
+        (never persisted) wins; otherwise the account's self person is used.
+        Missing self-handles emit a clear error event rather than discarding
+        any raw evidence.
         """
         yield PipelineEvent(stage=STAGE_CANONICALIZE, phase=PHASE_START)
 
-        self_handles = self._canonicalizer.self_handles(uow, prepared.account_id)
+        if self_email is not None:
+            self_handles = {normalize_email(self_email)}
+        else:
+            self_handles = self._canonicalizer.self_handles(uow, prepared.account_id)
         if not self_handles:
             yield PipelineEvent(
                 stage=STAGE_CANONICALIZE,

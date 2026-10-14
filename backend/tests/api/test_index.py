@@ -61,8 +61,18 @@ def _fake_storage(monkeypatch, existing: set[str] | None = None) -> dict[str, by
     return puts
 
 
-def _run(api_client: TestClient, import_id: str) -> list[dict]:
-    with api_client.stream("POST", f"/imports/{import_id}/index") as response:
+def _run(
+    api_client: TestClient,
+    import_id: str,
+    *,
+    stage: str | None = None,
+    self_email: str | None = None,
+) -> list[dict]:
+    path = f"/imports/{import_id}/index"
+    if stage:
+        path = f"{path}?stage={stage}"
+    body = {"self_email": self_email} if self_email else None
+    with api_client.stream("POST", path, json=body) as response:
         assert response.status_code == 200
         return [json.loads(line) for line in response.iter_lines() if line]
 
@@ -116,6 +126,43 @@ def test_index_is_idempotent(api_client: TestClient, monkeypatch) -> None:
     )
     assert second_done["created"] == 0
     assert second_done["reused"] == 2
+
+
+def test_index_with_self_email_canonicalizes(
+    api_client: TestClient, monkeypatch
+) -> None:
+    import_id = _create_import(api_client)
+    _fake_storage(monkeypatch)
+
+    # First run splits the mbox; canonicalize then fails without a self identity.
+    _run(api_client, import_id)
+
+    events = _run(
+        api_client,
+        import_id,
+        stage="canonicalize",
+        self_email="alice@example.com",
+    )
+
+    # With a self email the canonicalize stage runs to completion instead of
+    # erroring on a missing self person.
+    assert not any(event["phase"] == "error" for event in events)
+    done = next(
+        event
+        for event in events
+        if event["stage"] == "canonicalize" and event["phase"] == "done"
+    )
+    assert done["processed"] == 2
+    # The per-run email is never echoed back in the event stream.
+    assert "alice@example.com" not in json.dumps(events)
+
+
+def test_index_invalid_self_email_422(api_client: TestClient) -> None:
+    import_id = _create_import(api_client)
+    response = api_client.post(
+        f"/imports/{import_id}/index", json={"self_email": "not-an-email"}
+    )
+    assert response.status_code == 422
 
 
 def test_index_unknown_import_404(api_client: TestClient) -> None:

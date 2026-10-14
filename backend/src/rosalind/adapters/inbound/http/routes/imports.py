@@ -128,6 +128,7 @@ def run_index(
     email_processing: EmailIndexDep,
     account: AccountDep,
     stage: str | None = None,
+    body: schemas.IndexRequest | None = None,
 ) -> StreamingResponse:
     """Run the offline email indexing.
 
@@ -136,12 +137,18 @@ def run_index(
     synchronously and mapped to HTTP errors; per-record failures are reported in
     the stream rather than aborting the run. ``stage`` restricts the run to a
     single stage (e.g. ``chunk``) for rebuilds; omitting it runs all stages.
+
+    ``self_email`` (body) is an optional per-run address used to compute message
+    direction; it is never persisted and never logged.
     """
     prepared = email_processing.prepare(uow, account.id, import_id)
     stages = {stage} if stage else None
+    self_email = body.self_email if body else None
 
     def generate() -> Iterator[str]:
-        for event in email_processing.run(uow, prepared, stages=stages):
+        for event in email_processing.run(
+            uow, prepared, stages=stages, self_email=self_email
+        ):
             yield json.dumps(event.to_dict()) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")

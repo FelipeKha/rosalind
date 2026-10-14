@@ -569,6 +569,8 @@ def rag_corpus(
                 "rosalind",
                 "index",
                 import_id,
+                "--self-email",
+                SELF_EMAIL,
             ],
             env=env,
             capture_output=True,

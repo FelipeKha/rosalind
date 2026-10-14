@@ -501,6 +501,13 @@ rosalind index <import-id> [--stage <stage>]
 Run a single stage (`split`, `canonicalize`, `reconcile`, `enrich`,
 `attachments`, `chunk`, `embed`) instead of all of them.
 
+`--self-email <string>`
+
+Email address to treat as yours when computing message direction. When
+indexing an mbox archive, `rosalind index` prompts for it (defaulting to the
+signed-in account's email). In a non-interactive run (piped input, no TTY, or
+`--json`), pass this flag explicitly.
+
 ### Arguments
 
 `<import-id>`
@@ -512,6 +519,7 @@ Import id.
 ```bash
 # Build the full index for an import
 $ rosalind index 42
+Email address to treat as yours [me@example.com]:
 Index complete
   Processed: 1842 messages
   Created:   1842
@@ -520,6 +528,9 @@ Index complete
 
 # Rebuild only the embeddings
 $ rosalind index 42 --stage embed
+
+# Non-interactive mbox import
+$ rosalind index 42 --self-email me@example.com
 ```
 
 ### See also
