@@ -7,8 +7,8 @@ from typing import Any
 from cli.client import http
 
 
-def create_import(source_name: str, type_: str) -> dict[str, Any]:
-    return http.api.post("/imports", json={"source_name": source_name, "type": type_})
+def create_import(source_name: str, via: str) -> dict[str, Any]:
+    return http.api.post("/imports", json={"source_name": source_name, "via": via})
 
 
 def complete_import(import_id: str, manifest: dict[str, Any]) -> dict[str, Any]:

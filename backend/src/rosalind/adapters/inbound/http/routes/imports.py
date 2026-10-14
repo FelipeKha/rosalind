@@ -62,12 +62,12 @@ def create_import(
     storage: StorageDep,
     account: AccountDep,
 ) -> schemas.ImportCreatedResponse:
-    import_ = import_service.create_import(uow, account.id, body.source_name, body.type)
+    import_ = import_service.create_import(uow, account.id, body.source_name, body.via)
     return schemas.ImportCreatedResponse(
         import_id=import_.id,
         source_id=import_.source_account_id,
         source_name=import_.source_name,
-        type=import_.type,
+        via=import_.via,
         bucket=storage.bucket,
         storage_prefix=manifest.storage_prefix(import_.id),
         ingestion_status=import_.ingestion_status,
@@ -185,7 +185,7 @@ def _to_summary(import_: Import) -> schemas.ImportSummaryResponse:
         import_id=import_.id,
         source_id=import_.source_account_id,
         source_name=import_.source_name,
-        type=import_.type,
+        via=import_.via,
         ingestion_status=import_.ingestion_status,
         processing_status=import_.processing_status,
         created_at=import_.created_at,

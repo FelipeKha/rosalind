@@ -846,13 +846,14 @@ callback round-trip).
 
 A discrete ingestion job/dataset bound to a source account. Tracks two
 independent dimensions: `ingestion_status` (was the data brought in?) and
-`processing_status` (has it been canonicalized?).
+`processing_status` (has it been canonicalized?). `via` records how the data
+entered Rosalind; the format of uploaded files lives on `import_files`.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
 | `id` | uuid | no | PK |
 | `source_account_id` | uuid | yes | FK → `source_account.id` `ON DELETE SET NULL`; indexed |
-| `type` | text | no | import type |
+| `via` | text | no | how data entered: `file` or `api` |
 | `ingestion_status` | text | no | |
 | `processing_status` | text | no | default `'pending'` |
 | `created_at` | timestamptz | no | |

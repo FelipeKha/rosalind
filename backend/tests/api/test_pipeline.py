@@ -1,5 +1,4 @@
 import json
-import uuid
 
 from fastapi.testclient import TestClient
 
@@ -22,12 +21,7 @@ MBOX = (
 
 
 def _create_import(api_client: TestClient, *, complete: bool = True) -> str:
-    name = f"google-{uuid.uuid4().hex[:8]}"
-    response = api_client.post("/sources", json={"provider": "google", "name": name})
-    assert response.status_code == 201
-    response = api_client.post(
-        "/imports", json={"source_name": name, "type": "takeout"}
-    )
+    response = api_client.post("/imports", json={"source_name": "none", "via": "file"})
     assert response.status_code == 201
     import_id = response.json()["import_id"]
     if complete:

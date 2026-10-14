@@ -75,7 +75,7 @@ def _setup(
         uow, account_id, provider="google", name="google-personal"
     )
     import_ = composition.import_service.create_import(
-        uow, account_id, "google-personal", "takeout"
+        uow, account_id, "google-personal", "file"
     )
     entry = manifest.FileEntry(
         path=path, sha256="a" * 64, size=len(mbox), format=format_
@@ -227,7 +227,7 @@ def test_second_observation_replaces_tags(
     # A later archive with the same Message-ID but changed labels.
     second_storage = _FakeStorage(second)
     second_import = composition.import_service.create_import(
-        uow, account_id, "google-personal", "takeout"
+        uow, account_id, "google-personal", "file"
     )
     entry = manifest.FileEntry(
         path="Mail/All Mail.mbox", sha256="b" * 64, size=len(second), format="mbox"

@@ -32,10 +32,10 @@ def test_get_builds_url(monkeypatch) -> None:
 def test_post_sends_json(monkeypatch) -> None:
     captured = _fake_request(monkeypatch, response_json={"import_id": "abc"})
 
-    result = http.api.post("/imports", json={"source_name": "s", "type": "takeout"})
+    result = http.api.post("/imports", json={"source_name": "s", "via": "file"})
 
     assert result == {"import_id": "abc"}
-    assert captured["json"] == {"source_name": "s", "type": "takeout"}
+    assert captured["json"] == {"source_name": "s", "via": "file"}
 
 
 def test_get_sends_params(monkeypatch) -> None:

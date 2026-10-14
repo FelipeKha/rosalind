@@ -9,8 +9,8 @@ runner = CliRunner()
 def _summary(import_id: str = "imp-1") -> dict[str, object]:
     return {
         "import_id": import_id,
-        "source_name": "google-personal",
-        "type": "takeout",
+        "source_name": "none",
+        "via": "file",
         "ingestion_status": "completed",
         "processing_status": "pending",
         "file_count": 2,

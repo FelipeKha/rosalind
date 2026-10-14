@@ -58,7 +58,7 @@ Typical run:
 ```bash
 just eval-dev
 rosalind auth login
-rosalind import create --source google --type takeout /path/to/Mail
+rosalind import create --source google /path/to/Mail
 rosalind pipeline run <import_id>
 rosalind eval items --import <import_id>            # key gold manually
 rosalind eval run --config backend/configs/eval/experiments/mode-hybrid.yaml

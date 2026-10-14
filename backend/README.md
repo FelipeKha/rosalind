@@ -44,7 +44,7 @@ just revision "msg"    # autogenerate a new migration
 | Method | Path                        | Description                                    |
 |--------|-----------------------------|------------------------------------------------|
 | GET    | `/health`                   | Process liveness check → `{"status": "ok"}`   |
-| POST   | `/imports/google/takeout`   | Create a Google Takeout import                 |
+| POST   | `/imports`                  | Create an import (`via=file` or `via=api`)      |
 | POST   | `/imports/{id}/complete`    | Submit the manifest and finalize an import     |
 | GET    | `/imports`                  | List all imports                               |
 | GET    | `/imports/{id}`             | Fetch an import and its files                  |

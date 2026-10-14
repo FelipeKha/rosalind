@@ -24,13 +24,13 @@ def _stub(monkeypatch, response=None):
     return fake
 
 
-def test_create_import_posts_source_and_type(monkeypatch) -> None:
+def test_create_import_posts_source_and_via(monkeypatch) -> None:
     fake = _stub(monkeypatch)
 
-    imports_client.create_import("google-personal", "takeout")
+    imports_client.create_import("google", "file")
 
     assert fake.calls == [
-        ("post", "/imports", {"source_name": "google-personal", "type": "takeout"})
+        ("post", "/imports", {"source_name": "google", "via": "file"})
     ]
 
 

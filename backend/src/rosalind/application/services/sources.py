@@ -40,6 +40,11 @@ STATUS_ALREADY_DISCONNECTED = "already_disconnected"
 SOURCE_CONNECTED = "connected"
 SOURCE_DISCONNECTED = "disconnected"
 
+# Sentinel source backing local (file/folder) imports that are not tied to a
+# connected provider account. It is real so canonical data stays source-scoped.
+LOCAL_SOURCE_NAME = "none"
+LOCAL_SOURCE_PROVIDER = "none"
+
 _AUTH_REQUEST_TTL = timedelta(minutes=10)
 
 
@@ -78,6 +83,19 @@ class SourceService:
         account = uow.source_accounts.get_by_name(account_id, name)
         if account is None:
             raise SourceNotFoundError(f"source {name!r} not found")
+        return account
+
+    def resolve_local_source(
+        self, uow: UnitOfWork, account_id: uuid.UUID
+    ) -> SourceAccount:
+        """Return the sentinel source for local imports, creating it on demand."""
+        account = uow.source_accounts.get_by_name(account_id, LOCAL_SOURCE_NAME)
+        if account is None:
+            account = uow.source_accounts.create(
+                account_id=account_id,
+                provider=LOCAL_SOURCE_PROVIDER,
+                name=LOCAL_SOURCE_NAME,
+            )
         return account
 
     def get_source(

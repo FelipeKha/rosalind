@@ -122,7 +122,7 @@ def test_delete_import_end_to_end(
     assert listing.get("KeyCount") == 0
 
 
-def test_process_takeout_import_unsupported(
+def test_process_file_import_unsupported(
     takeout_fixture: Path,
     run_cli: Callable[[Path], subprocess.CompletedProcess[str]],
     run_rosalind: Callable[[list[str]], subprocess.CompletedProcess[str]],

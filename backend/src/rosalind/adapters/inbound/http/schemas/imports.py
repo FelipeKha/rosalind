@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class FileEntryRequest(BaseModel):
@@ -21,15 +22,21 @@ class ManifestRequest(BaseModel):
 
 
 class ImportCreateRequest(BaseModel):
-    source_name: str
-    type: str
+    source_name: Literal["google", "none"] = "none"
+    via: Literal["file", "api"] = "file"
+
+    @model_validator(mode="after")
+    def _check_combination(self) -> Self:
+        if self.via == "api" and self.source_name != "google":
+            raise ValueError("via='api' requires source_name='google'")
+        return self
 
 
 class ImportCreatedResponse(BaseModel):
     import_id: uuid.UUID
     source_id: uuid.UUID | None = None
     source_name: str | None = None
-    type: str
+    via: str
     bucket: str
     storage_prefix: str
     ingestion_status: str
@@ -49,7 +56,7 @@ class ImportSummaryResponse(BaseModel):
     import_id: uuid.UUID
     source_id: uuid.UUID | None = None
     source_name: str | None = None
-    type: str
+    via: str
     ingestion_status: str
     processing_status: str
     created_at: datetime

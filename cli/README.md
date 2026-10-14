@@ -334,34 +334,40 @@ rosalind import [command]
 Create an import from a source.
 
 ```
-rosalind import create --source <name> --type <takeout|api> [<path>] [flags]
+rosalind import create [--source <google|none>] [--via <file|api>] [<path>]
 ```
 
 ### Options
 
-`--source <string>` (required)
+`--source <google|none>` (default: `none`)
 
-Source name (slug).
+Where the data comes from. `google` uses an existing connected source; `none`
+uses a built-in local source for file-based imports.
 
-`--type <string>` (required)
+`--via <file|api>` (default: `file`)
 
-Import type: `takeout` (a local provider export) or `api` (import all contacts
-directly from a connected provider).
+How the data enters Rosalind. `file` uploads a local file or folder; `api`
+pulls all contacts directly from a connected provider (requires
+`--source google`).
 
 ### Arguments
 
 `<path>`
 
-Path to a provider export. Required for `--type takeout`.
+A file or folder to upload. Required for `--via file`, and not accepted for
+`--via api`. The import format is inferred from each file's extension.
 
 ### Examples
 
 ```bash
-# Import a local Google Takeout export
-$ rosalind import create --source google --type takeout ~/Downloads/Takeout
+# Import a local Google Takeout export (a folder)
+$ rosalind import create --source google ~/Downloads/Takeout
+
+# Import a single mbox archive
+$ rosalind import create ~/Downloads/rosalind_synthetic_emails.mbox
 
 # Import all contacts directly from the Google People API
-$ rosalind import create --source google --type api
+$ rosalind import create --source google --via api
 ```
 
 ### See also
@@ -380,8 +386,8 @@ rosalind import list [flags]
 
 ```bash
 $ rosalind import list
-ID   SOURCE  TYPE      INGESTION   PROCESSING  FILES  SIZE
-42   google  takeout   completed   pending     1842   4.8 GB
+ID   SOURCE  VIA    INGESTION   PROCESSING  FILES  SIZE
+42   google  file   completed   pending     1842   4.8 GB
 ```
 
 ### See also

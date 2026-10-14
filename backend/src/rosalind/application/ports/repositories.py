@@ -268,7 +268,11 @@ class OAuthAuthRequestRepository(Protocol):
 
 class ImportRepository(Protocol):
     def create(
-        self, *, account_id: uuid.UUID, source_account_id: uuid.UUID, type_: str
+        self,
+        *,
+        account_id: uuid.UUID,
+        source_account_id: uuid.UUID | None,
+        via: str,
     ) -> Import: ...
 
     def get(self, import_id: uuid.UUID) -> Import | None: ...

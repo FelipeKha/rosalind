@@ -90,7 +90,7 @@ uv sync                 # once, if deps are not installed yet
 uv run rosalind --help
 uv run rosalind status
 uv run rosalind source create google --name google
-uv run rosalind import create --source google --type takeout ~/Downloads/Takeout
+uv run rosalind import create --source google ~/Downloads/Takeout
 uv run rosalind import list
 uv run rosalind process run <import-id>
 uv run rosalind query people
@@ -138,4 +138,16 @@ uv run rosalind source disconnect google   # revokes access, keeps imported data
 
 The Google authorization flow requests offline access so the backend can
 refresh the access token without further interaction.
+
+
+
+
+
+Launch backend:
+`just dev`                  # launch backend
+`just cli-tool-install`     # install rosalind-cli
+
+Create eval run:
+Create import:
+`rosalind import create e2e/fixtures/google/takeout/Mail/rosalind_synthetic_emails.mbox`
 

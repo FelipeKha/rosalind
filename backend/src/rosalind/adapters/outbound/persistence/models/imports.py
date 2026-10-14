@@ -24,7 +24,7 @@ class Import(Base):
         nullable=True,
         index=True,
     )
-    type: Mapped[str] = mapped_column(Text, nullable=False)
+    via: Mapped[str] = mapped_column(Text, nullable=False, default="file")
     ingestion_status: Mapped[str] = mapped_column(Text, nullable=False)
     processing_status: Mapped[str] = mapped_column(
         Text, nullable=False, default="pending"

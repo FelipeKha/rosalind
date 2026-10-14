@@ -22,7 +22,7 @@ from rosalind.application.errors import (
     SelfPersonError,
     SourceNotFoundError,
     TokenNotFoundError,
-    UnsupportedImportTypeError,
+    UnsupportedImportViaError,
 )
 from rosalind.application.search import InvalidSearchRequest
 from rosalind.config import settings
@@ -80,9 +80,9 @@ async def _invalid_manifest(_: Request, exc: InvalidManifestError) -> JSONRespon
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
-@app.exception_handler(UnsupportedImportTypeError)
-async def _unsupported_import_type(
-    _: Request, exc: UnsupportedImportTypeError
+@app.exception_handler(UnsupportedImportViaError)
+async def _unsupported_import_via(
+    _: Request, exc: UnsupportedImportViaError
 ) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 

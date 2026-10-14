@@ -70,7 +70,7 @@ def test_create_and_complete_import(uow: SqlAlchemyUnitOfWork) -> None:
     source = _source(uow)
     account_id = _account_id(uow)
     svc = _service()
-    imp = svc.create_import(uow, account_id, SOURCE_NAME, "takeout")
+    imp = svc.create_import(uow, account_id, SOURCE_NAME, "file")
     assert imp.ingestion_status == "uploading"
     assert imp.processing_status == "pending"
     assert imp.source_account_id == source.id
@@ -88,7 +88,7 @@ def test_get_import_returns_files(uow: SqlAlchemyUnitOfWork) -> None:
     _source(uow)
     account_id = _account_id(uow)
     svc = _service()
-    imp = svc.create_import(uow, account_id, SOURCE_NAME, "takeout")
+    imp = svc.create_import(uow, account_id, SOURCE_NAME, "file")
     svc.complete_import(
         uow, account_id, imp.id, [_entry("Contacts/contacts.json", "b" * 64, 42)]
     )
@@ -102,7 +102,7 @@ def test_complete_import_twice_is_rejected(uow: SqlAlchemyUnitOfWork) -> None:
     _source(uow)
     account_id = _account_id(uow)
     svc = _service()
-    imp = svc.create_import(uow, account_id, SOURCE_NAME, "takeout")
+    imp = svc.create_import(uow, account_id, SOURCE_NAME, "file")
     svc.complete_import(uow, account_id, imp.id, [_entry()])
 
     with pytest.raises(InvalidImportStateError):
@@ -120,7 +120,7 @@ def test_complete_import_rejects_duplicate_paths(uow: SqlAlchemyUnitOfWork) -> N
     _source(uow)
     account_id = _account_id(uow)
     svc = _service()
-    imp = svc.create_import(uow, account_id, SOURCE_NAME, "takeout")
+    imp = svc.create_import(uow, account_id, SOURCE_NAME, "file")
     with pytest.raises(InvalidManifestError):
         svc.complete_import(
             uow, account_id, imp.id, [_entry("a.json"), _entry("a.json")]
@@ -131,7 +131,7 @@ def test_complete_import_rejects_invalid_sha256(uow: SqlAlchemyUnitOfWork) -> No
     _source(uow)
     account_id = _account_id(uow)
     svc = _service()
-    imp = svc.create_import(uow, account_id, SOURCE_NAME, "takeout")
+    imp = svc.create_import(uow, account_id, SOURCE_NAME, "file")
     entry = manifest.FileEntry(path="a.json", sha256="bad", size=1)
     with pytest.raises(InvalidManifestError):
         svc.complete_import(uow, account_id, imp.id, [entry])
@@ -154,8 +154,8 @@ def test_list_imports_returns_all(uow: SqlAlchemyUnitOfWork) -> None:
     )
     svc = _service()
 
-    first = svc.create_import(uow, account_id, "google-personal", "takeout")
-    second = svc.create_import(uow, account_id, "apple-personal", "takeout")
+    first = svc.create_import(uow, account_id, "google-personal", "file")
+    second = svc.create_import(uow, account_id, "apple-personal", "file")
 
     result = svc.list_imports(uow, account_id)
 
@@ -172,7 +172,7 @@ def test_delete_import(uow: SqlAlchemyUnitOfWork) -> None:
     account_id = _account_id(uow)
     storage = _FakeStorage()
     svc = _service(storage)
-    imp = svc.create_import(uow, account_id, SOURCE_NAME, "takeout")
+    imp = svc.create_import(uow, account_id, SOURCE_NAME, "file")
     svc.complete_import(uow, account_id, imp.id, [_entry()])
 
     svc.delete_import(uow, account_id, imp.id)
@@ -193,7 +193,7 @@ def test_delete_import_deletes_objects_before_rows(uow: SqlAlchemyUnitOfWork) ->
     account_id = _account_id(uow)
     storage = _FakeStorage()
     svc = _service(storage)
-    imp = svc.create_import(uow, account_id, SOURCE_NAME, "takeout")
+    imp = svc.create_import(uow, account_id, SOURCE_NAME, "file")
     svc.complete_import(uow, account_id, imp.id, [_entry()])
 
     calls: list[str] = []
@@ -215,3 +215,26 @@ def test_create_import_requires_source(uow: SqlAlchemyUnitOfWork) -> None:
     account_id = _account_id(uow)
     with pytest.raises(SourceNotFoundError):
         composition.source_service.resolve_source(uow, account_id, "does-not-exist")
+
+
+def test_local_import_resolves_sentinel_source(uow: SqlAlchemyUnitOfWork) -> None:
+    account_id = _account_id(uow)
+    svc = _service()
+
+    imp = svc.create_import(uow, account_id, "none", "file")
+
+    assert imp.source_account_id is not None
+    assert imp.source_name == "none"
+    assert imp.via == "file"
+
+    again = svc.create_import(uow, account_id, "none", "file")
+    assert again.source_account_id == imp.source_account_id
+
+
+def test_create_import_rejects_unknown_via(uow: SqlAlchemyUnitOfWork) -> None:
+    from rosalind.application.errors import UnsupportedImportViaError
+
+    _source(uow)
+    account_id = _account_id(uow)
+    with pytest.raises(UnsupportedImportViaError):
+        _service().create_import(uow, account_id, SOURCE_NAME, "bogus")
