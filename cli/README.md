@@ -557,11 +557,14 @@ is ignored, but a missing profile file is an error. Stored credentials follow
 the profile (`<config_dir>/<profile>/credentials.json`, or
 `<config_dir>/credentials.json` for the default config).
 
+Config files are optional: the built-in defaults already target the local
+dev/eval endpoints. Use one only to point at another deployment:
+
 ```yaml
 # ~/.config/rosalind/rosalind.yaml
-api_url: http://localhost:8001
-s3_endpoint: http://localhost:8334
-keycloak_url: http://localhost:8081
+api_url: https://rosalind.example.com
+s3_endpoint: https://rosalind.example.com:8333
+keycloak_url: https://auth.example.com
 ```
 
 ### Environment variables

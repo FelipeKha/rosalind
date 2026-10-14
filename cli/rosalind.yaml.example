@@ -8,10 +8,11 @@
 #
 # Environment variables (e.g. ROSALIND_API_URL) always override these values.
 #
-# The values below point the CLI at the eval stack started by `just eval-dev`
-# (backend :8001, Keycloak :8081, S3 :8334), so `rosalind eval runs` works with
-# no extra flags. Use `--profile dev` (or a dev.yaml profile) for the dev stack.
+# The built-in defaults already target the local dev/eval endpoints
+# (backend :8000, Keycloak :8080, S3 :8333), so a config file is only needed to
+# point the CLI at a different deployment. The values below are an example of a
+# remote server; adjust or delete as needed.
 
-api_url: http://localhost:8001
-s3_endpoint: http://localhost:8334
-keycloak_url: http://localhost:8081
+api_url: https://rosalind.example.com
+s3_endpoint: https://rosalind.example.com:8333
+keycloak_url: https://auth.example.com

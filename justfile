@@ -43,10 +43,9 @@ dev-mcp:
 # ==============================================================================
 
 # Dedicated Compose project so eval volumes/network never touch the dev stack.
+# It binds the same host ports as dev, so the two stacks are mutually exclusive.
 eval_compose := "docker compose -p rosalind-eval -f docker-compose.eval.yml"
-eval_database_url := "postgresql+psycopg://rosalind:rosalind@localhost:5433/rosalind_eval"
-eval_s3_endpoint := "http://localhost:8334"
-eval_keycloak_url := "http://localhost:8081"
+eval_database_url := "postgresql+psycopg://rosalind:rosalind@localhost:5432/rosalind_eval"
 
 # Start the eval infrastructure
 eval-up:
@@ -68,14 +67,12 @@ eval-reset:
 eval-migrate:
     cd backend && ROSALIND_DATABASE_URL={{eval_database_url}} just migrate
 
-# Serve the backend in eval mode
+# Serve the backend in eval mode (same endpoints as dev: :8000)
 eval-serve:
     cd backend && \
         ROSALIND_EVAL__ENABLED=true \
         ROSALIND_DATABASE_URL={{eval_database_url}} \
-        ROSALIND_S3_ENDPOINT={{eval_s3_endpoint}} \
-        ROSALIND_KEYCLOAK_URL={{eval_keycloak_url}} \
-        uv run uvicorn rosalind.adapters.inbound.http.app:app --port 8001 --reload
+        uv run uvicorn rosalind.adapters.inbound.http.app:app --port 8000 --reload
 
 # One-shot: eval infra + ml deps + migrations + eval backend
 eval-dev:

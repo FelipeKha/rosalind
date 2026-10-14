@@ -5,8 +5,10 @@
 #
 #   docker compose -p rosalind-eval -f docker-compose.eval.yml up -d
 #
-# Ports are shifted so dev and eval stacks can run at the same time:
-#   Postgres 5433, SeaweedFS S3 8334, Keycloak 8081 (dev uses 5432/8333/8080).
+# Ports match the dev stack (docker-compose.yml) so the backend and CLI need no
+# environment-specific configuration. Because the host ports are identical, the
+# dev and eval stacks cannot run at the same time: stop one (just down /
+# just eval-down) before starting the other.
 
 services:
   postgres:
@@ -16,7 +18,7 @@ services:
       POSTGRES_PASSWORD: rosalind
       POSTGRES_DB: rosalind_eval
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - eval_postgres_data:/var/lib/postgresql
     healthcheck:
@@ -32,7 +34,7 @@ services:
       AWS_ACCESS_KEY_ID: rosalind
       AWS_SECRET_ACCESS_KEY: rosalind
     ports:
-      - "8334:8333"
+      - "8333:8333"
     volumes:
       - eval_seaweedfs_data:/data
     healthcheck:
@@ -65,13 +67,13 @@ services:
       KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: keycloak
-      # Keep the token issuer stable at the eval host port.
-      KC_HOSTNAME: http://localhost:8081
+      # Keep the token issuer stable at the host port (same as dev).
+      KC_HOSTNAME: http://localhost:8080
     depends_on:
       keycloak-db:
         condition: service_healthy
     ports:
-      - "8081:8080"
+      - "8080:8080"
     volumes:
       - ./keycloak/rosalind-realm.json:/opt/keycloak/data/import/rosalind-realm.json:ro
     healthcheck:
