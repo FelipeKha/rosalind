@@ -41,26 +41,37 @@ just eval-migrate   # apply migrations to the eval database
 just eval-dev       # eval-up + ml deps + eval-migrate + eval backend on :8001 (eval mode on)
 just eval-serve     # just the eval backend (ROSALIND_EVAL__ENABLED=true)
 just eval-logs      # tail eval infrastructure logs
-just eval-cli ...   # run the CLI against the eval backend/Keycloak
 just eval-down      # stop eval infrastructure (keep volumes)
 just eval-reset     # wipe only the eval project volumes (dev volumes untouched)
 ```
 
-`just eval-cli` points the CLI at `http://localhost:8001` /
-`http://localhost:8081` and uses `ROSALIND_CONFIG_DIR=~/.config/rosalind-eval`,
-so its Keycloak tokens are kept separate from dev. `eval-reset` is
+Point the CLI at the eval stack once by writing a config file, then call
+`rosalind` directly (see the CLI README's Configuration section). Install the
+CLI on your `PATH` with `uv tool install --editable ./cli`, or prefix commands
+with `uv run --directory cli`:
+
+```yaml
+# ~/.config/rosalind/rosalind.yaml
+api_url: http://localhost:8001
+s3_endpoint: http://localhost:8334
+keycloak_url: http://localhost:8081
+```
+
+Alternatively keep eval as a profile (`~/.config/rosalind/eval.yaml`) and run
+`rosalind --profile eval ...` or `export ROSALIND_PROFILE=eval`. Credentials are
+stored per profile, so eval tokens are kept separate from dev. `eval-reset` is
 project-scoped, so it never deletes dev raw evidence.
 
 Typical run:
 
 ```bash
 just eval-dev
-just eval-cli auth login
-just eval-cli import create --source google --type takeout /path/to/Mail
-just eval-cli pipeline run <import_id>
-just eval-cli eval items --import <import_id>       # key gold manually
-just eval-cli eval run --config backend/configs/eval/experiments/mode-hybrid.yaml
-just eval-cli eval compare <runA> <runB>
+rosalind auth login
+rosalind import create --source google --type takeout /path/to/Mail
+rosalind pipeline run <import_id>
+rosalind eval items --import <import_id>            # key gold manually
+rosalind eval run --config backend/configs/eval/experiments/mode-hybrid.yaml
+rosalind eval compare <runA> <runB>
 just eval-reset
 ```
 

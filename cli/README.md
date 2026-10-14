@@ -26,6 +26,12 @@ rosalind [command] [flags]
 
 Emit machine-readable JSON instead of human-readable output.
 
+`--profile <name>`
+
+Load the config profile `<config_dir>/<name>.yaml` on top of the base config
+(equivalent to setting `ROSALIND_PROFILE`). Profiles keep separate backends and
+credentials, e.g. `--profile eval`.
+
 ### Commands
 
 - [rosalind status](#rosalind-status)
@@ -537,8 +543,34 @@ Person id.
 
 ## Configuration
 
+The CLI reads settings from environment variables and an optional YAML file.
+Precedence, highest first:
+
+1. Environment variables (`ROSALIND_*`)
+2. The selected profile file `<config_dir>/<profile>.yaml`
+3. The base file (`ROSALIND_CONFIG`, or `<config_dir>/rosalind.yaml`)
+4. Built-in defaults
+
+`config_dir` is `ROSALIND_CONFIG_DIR` (default `~/.config/rosalind`). Profiles
+are selected with `--profile <name>` or `ROSALIND_PROFILE`; a missing base file
+is ignored, but a missing profile file is an error. Stored credentials follow
+the profile (`<config_dir>/<profile>/credentials.json`, or
+`<config_dir>/credentials.json` for the default config).
+
+```yaml
+# ~/.config/rosalind/rosalind.yaml
+api_url: http://localhost:8001
+s3_endpoint: http://localhost:8334
+keycloak_url: http://localhost:8081
+```
+
+### Environment variables
+
 | Variable                  | Default                  | Description                     |
 |---------------------------|--------------------------|---------------------------------|
+| `ROSALIND_CONFIG`         | `<config_dir>/rosalind.yaml` | Base config file path       |
+| `ROSALIND_CONFIG_DIR`     | `~/.config/rosalind`     | Config and credentials directory |
+| `ROSALIND_PROFILE`        | (none)                   | Profile layered over the base config |
 | `ROSALIND_API_URL`        | `http://localhost:8000`  | Base URL of the backend         |
 | `ROSALIND_S3_ENDPOINT`    | `http://localhost:8333`  | S3-compatible endpoint (SeaweedFS) |
 | `ROSALIND_S3_ACCESS_KEY`  | `rosalind`               | S3 access key                   |

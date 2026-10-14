@@ -1,0 +1,17 @@
+# Example Rosalind CLI configuration.
+#
+# Copy this to one of the locations the CLI reads:
+#
+#   $ROSALIND_CONFIG                    # explicit file path (highest priority)
+#   $ROSALIND_CONFIG_DIR/rosalind.yaml  # base config (default ~/.config/rosalind/rosalind.yaml)
+#   $ROSALIND_CONFIG_DIR/<profile>.yaml # layered on top when ROSALIND_PROFILE=<profile>
+#
+# Environment variables (e.g. ROSALIND_API_URL) always override these values.
+#
+# The values below point the CLI at the eval stack started by `just eval-dev`
+# (backend :8001, Keycloak :8081, S3 :8334), so `rosalind eval runs` works with
+# no extra flags. Use `--profile dev` (or a dev.yaml profile) for the dev stack.
+
+api_url: http://localhost:8001
+s3_endpoint: http://localhost:8334
+keycloak_url: http://localhost:8081

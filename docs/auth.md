@@ -121,7 +121,10 @@ rosalind auth whoami    → prints the authenticated account (id, email, name)
 ```
 
 Tokens live in `~/.config/rosalind/credentials.json` (mode `0600`) and are
-refreshed from the stored refresh token when expired or on a `401`.
+refreshed from the stored refresh token when expired or on a `401`. When a
+config profile is selected (`--profile` / `ROSALIND_PROFILE`), tokens are
+stored per profile at `~/.config/rosalind/<profile>/credentials.json`, so
+environment tokens stay separate.
 
 ## Authorization status
 

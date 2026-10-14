@@ -47,7 +47,6 @@ eval_compose := "docker compose -p rosalind-eval -f docker-compose.eval.yml"
 eval_database_url := "postgresql+psycopg://rosalind:rosalind@localhost:5433/rosalind_eval"
 eval_s3_endpoint := "http://localhost:8334"
 eval_keycloak_url := "http://localhost:8081"
-eval_api_url := "http://localhost:8001"
 
 # Start the eval infrastructure
 eval-up:
@@ -84,15 +83,6 @@ eval-dev:
     cd backend && uv sync --group ml
     just eval-migrate
     just eval-serve
-
-# Run the CLI against the eval backend and Keycloak, with isolated credentials
-eval-cli *ARGS:
-    cd cli && \
-        ROSALIND_API_URL={{eval_api_url}} \
-        ROSALIND_KEYCLOAK_URL={{eval_keycloak_url}} \
-        ROSALIND_S3_ENDPOINT={{eval_s3_endpoint}} \
-        ROSALIND_CONFIG_DIR=$HOME/.config/rosalind-eval \
-        uv run rosalind {{ARGS}}
 
 
 # ==============================================================================

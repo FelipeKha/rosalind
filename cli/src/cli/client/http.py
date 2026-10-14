@@ -26,8 +26,17 @@ class ApiClient:
         base_url: str | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self._base_url = (base_url or config.api_url()).rstrip("/")
+        self._explicit_base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout
+
+    @property
+    def _base_url(self) -> str:
+        """Backend base URL, resolved from config at request time.
+
+        Resolved lazily so a profile selected on the command line (after import)
+        is honoured, and a malformed config surfaces as a clean CLI error.
+        """
+        return self._explicit_base_url or config.api_url().rstrip("/")
 
     def get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
         return self._request("GET", path, params=params)
