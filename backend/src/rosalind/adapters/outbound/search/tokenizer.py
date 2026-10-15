@@ -29,12 +29,17 @@ class BgeM3TokenCounter:
             return
         data = self._path.read_bytes()
         digest = hashlib.sha256(data).hexdigest()
-        if self._expected_sha256 is not None and digest != self._expected_sha256:
+        if (
+            self._expected_sha256 is not None
+            and digest != self._expected_sha256
+        ):
             raise RuntimeError(
                 f"tokenizer file {self._path} sha256 {digest} does not match "
                 f"expected {self._expected_sha256}"
             )
-        from tokenizers import Tokenizer  # imported lazily so wiring needs no asset
+        from tokenizers import (
+            Tokenizer,
+        )  # imported lazily so wiring needs no asset
 
         tokenizer_cls: Any = Tokenizer
         self._tokenizer = tokenizer_cls.from_buffer(data)
@@ -45,7 +50,9 @@ class BgeM3TokenCounter:
         """Token counter identity for ``index_version`` (includes the file hash)."""
         self._ensure_loaded()
         sha = self._file_sha256
-        if sha is None:  # pragma: no cover - only possible if load failed silently
+        if (
+            sha is None
+        ):  # pragma: no cover - only possible if load failed silently
             raise RuntimeError("tokenizer file hash unavailable")
         return f"{_TOKENIZER_MODEL}/{sha[:16]}"
 

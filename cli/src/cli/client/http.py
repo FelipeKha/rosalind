@@ -81,6 +81,10 @@ class ApiClient:
                         and attempt == 0
                     ):
                         continue
+                    if response.is_error:
+                        # Buffer the body before raising so the error detail can
+                        # still be read once the streaming context closes.
+                        response.read()
                     response.raise_for_status()
                     for line in response.iter_lines():
                         if line:
@@ -162,7 +166,7 @@ class ApiClient:
 def _error_detail(response: httpx.Response) -> str:
     try:
         detail = response.json().get("detail")
-    except ValueError:
+    except ValueError, httpx.ResponseNotRead:
         return f"request failed ({response.status_code})"
     if isinstance(detail, str):
         return detail
