@@ -1,53 +1,22 @@
-"""Internal-only pipeline controls: stage overrides and resume caches.
+"""Internal-only pipeline controls: stage overrides.
 
 Layer: ``application``. These types exist so evaluation and experiments can
-perturb or replay the online search pipeline without touching the external MCP
-or REST tool surface. They are **never** accepted from a tool parameter.
+perturb the online search pipeline without touching the external MCP or REST
+tool surface. They are **never** accepted from a tool parameter.
 
 * ``PipelineOverrides`` mutates a validated ``SearchPlan`` (budgets, fusion
   settings, reranker version) via ``dataclasses.replace``, so the plan's own
   invariants still apply and the change is visible in ``plan.fingerprint``.
-* ``PipelineCache`` holds upstream stage results so ``SearchPipeline.run`` can
-  ``resume_from`` a downstream stage instead of recomputing everything.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from enum import StrEnum
 
-from rosalind.application.search.fusion import FusedCandidates
 from rosalind.application.search.plan import Budgets, FusionConfig, SearchPlan
-from rosalind.application.search.rerank import RerankResult, RerankTextMode
-from rosalind.application.search.retrieve import LexicalResult
-from rosalind.application.search.semantic import SemanticResult
+from rosalind.application.search.rerank import RerankTextMode
 
-__all__ = ["PipelineCache", "PipelineOverrides", "ResumeStage"]
-
-
-class ResumeStage(StrEnum):
-    """The stage a run starts from. Earlier stages must be supplied in a cache."""
-
-    LEXICAL = "lexical"
-    SEMANTIC = "semantic"
-    FUSE = "fuse"
-    RERANK = "rerank"
-    ASSEMBLE = "assemble"
-
-
-@dataclass(frozen=True, slots=True)
-class PipelineCache:
-    """Stored upstream results for a resumed run.
-
-    Which fields are required depends on ``ResumeStage``: resuming from
-    ``SEMANTIC`` needs ``lexical``; ``FUSE`` needs ``lexical`` and/or
-    ``semantic``; ``RERANK`` needs ``fused``; ``ASSEMBLE`` needs ``reranked``.
-    """
-
-    lexical: LexicalResult | None = None
-    semantic: SemanticResult | None = None
-    fused: FusedCandidates | None = None
-    reranked: RerankResult | None = None
+__all__ = ["PipelineOverrides"]
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,10 +1,9 @@
 """Unit tests for the ``SearchPipeline`` orchestrator and ``SearchTrace``.
 
 The stage ports are replaced by deterministic fakes, so these tests pin the
-orchestration (retrieval → fusion → rerank → assembly), the ``resume_from``
-cache contract for every stage, and the internal stage overrides — without a
-database or a model. They are the behaviour-preserving regression guard for the
-extraction of steps 2–5 out of ``SearchService``.
+orchestration (retrieval → fusion → rerank → assembly) and the internal stage
+overrides — without a database or a model. They are the behaviour-preserving
+regression guard for the extraction of steps 2–5 out of ``SearchService``.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from rosalind.application.search import (
     LexicalHit,
     LexicalQuery,
     LexicalResult,
-    PipelineCache,
     PipelineOverrides,
     PreparedQuery,
     Presentation,
@@ -35,7 +33,6 @@ from rosalind.application.search import (
     RerankTextMode,
     ResolvedFilters,
     ResultView,
-    ResumeStage,
     Scope,
     SearchMode,
     SearchPlan,
@@ -52,7 +49,6 @@ from rosalind.application.search.assemble import (
     SearchResultData,
 )
 from rosalind.application.search.cursor import HmacCursorCodec
-from rosalind.application.search.fusion import FusedCandidate, FusedCandidates
 from rosalind.application.search.ports import RerankConfig
 from rosalind.application.search.rerank import ChunkText
 from rosalind.application.services.search_pipeline import SearchPipeline
@@ -380,121 +376,6 @@ def test_rerank_disabled_by_default() -> None:
     trace = run(pipeline.run(_plan(mode=SearchMode.LEXICAL)))
     assert trace.reranked is not None and trace.reranked.applied is False
     assert fakes.reranker is None
-
-
-# ---------------------------------------------------------------------------
-# resume_from: one per stage
-# ---------------------------------------------------------------------------
-
-
-def test_resume_from_lexical_recomputes_everything() -> None:
-    pipeline, fakes = make_pipeline()
-    trace = run(
-        pipeline.run(_plan(mode=SearchMode.LEXICAL), resume_from=ResumeStage.LEXICAL)
-    )
-    assert fakes.lexical.calls == 1
-    assert fakes.semantic.calls == 0
-    assert trace.response.results
-
-
-def test_resume_from_semantic_reuses_cached_lexical() -> None:
-    pipeline, fakes = make_pipeline()
-    cached = PipelineCache(lexical=_lexical([(A1, 5.0)]))
-    trace = run(
-        pipeline.run(
-            _plan(mode=SearchMode.HYBRID),
-            resume_from=ResumeStage.SEMANTIC,
-            cached=cached,
-        )
-    )
-    assert fakes.lexical.calls == 0
-    assert fakes.semantic.calls == 1
-    assert trace.lexical is cached.lexical
-
-
-def test_resume_from_fuse_skips_both_retrievers() -> None:
-    pipeline, fakes = make_pipeline()
-    cached = PipelineCache(
-        lexical=_lexical([(A1, 5.0)]),
-        semantic=_semantic([(B1, 0.1)]),
-    )
-    trace = run(
-        pipeline.run(
-            _plan(mode=SearchMode.HYBRID),
-            resume_from=ResumeStage.FUSE,
-            cached=cached,
-        )
-    )
-    assert fakes.lexical.calls == 0
-    assert fakes.semantic.calls == 0
-    assert trace.fused is not None
-    assert {c.chunk_id for c in trace.fused.candidates} == {A1, B1}
-
-
-def test_resume_from_rerank_reuses_cached_fused() -> None:
-    pipeline, fakes = make_pipeline(reranker=True)
-    fused = FusedCandidates(
-        candidates=(
-            FusedCandidate(
-                chunk_id=A1,
-                email_id=EMAIL_A,
-                fused_score=0.5,
-                fused_rank=1,
-                lexical_rank=1,
-                lexical_score=5.0,
-                semantic_rank=None,
-                semantic_distance=None,
-            ),
-        ),
-        lexical_used=True,
-        semantic_used=False,
-        dropped_by_item_cap=0,
-    )
-    trace = run(
-        pipeline.run(
-            _plan(mode=SearchMode.LEXICAL, reranker="bge-reranker-v2-m3/v1"),
-            resume_from=ResumeStage.RERANK,
-            cached=PipelineCache(fused=fused),
-        )
-    )
-    assert fakes.lexical.calls == 0
-    assert fakes.reranker is not None and fakes.reranker.calls == 1
-    assert trace.fused is fused
-
-
-def test_resume_from_assemble_reuses_cached_rerank() -> None:
-    pipeline, _ = make_pipeline(reranker=True)
-    reranked = run(
-        pipeline.run(_plan(mode=SearchMode.LEXICAL, reranker="bge-reranker-v2-m3/v1"))
-    ).reranked
-    assert reranked is not None
-
-    pipeline2, fakes2 = make_pipeline(reranker=True)
-    trace = run(
-        pipeline2.run(
-            _plan(mode=SearchMode.LEXICAL, reranker="bge-reranker-v2-m3/v1"),
-            resume_from=ResumeStage.ASSEMBLE,
-            cached=PipelineCache(reranked=reranked),
-        )
-    )
-    assert fakes2.lexical.calls == 0
-    assert fakes2.reranker is not None and fakes2.reranker.calls == 0
-    assert trace.reranked is reranked
-
-
-@pytest.mark.parametrize(
-    "stage",
-    [
-        ResumeStage.SEMANTIC,
-        ResumeStage.FUSE,
-        ResumeStage.RERANK,
-        ResumeStage.ASSEMBLE,
-    ],
-)
-def test_resume_without_required_cache_raises(stage: ResumeStage) -> None:
-    pipeline = make_pipeline(reranker=True)[0]
-    with pytest.raises(ValueError):
-        run(pipeline.run(_plan(mode=SearchMode.LEXICAL), resume_from=stage))
 
 
 # ---------------------------------------------------------------------------

@@ -450,11 +450,9 @@ def build_eval_service(
         PipelineSearchExecutor,
     )
     from rosalind.adapters.outbound.eval.run_store import ParquetRunStore
-    from rosalind.adapters.outbound.eval.stage_cache import JsonStageCache
     from rosalind.application.services.eval import EvalService
 
     search_service = build_search_service(session_factory)
-    cache = JsonStageCache(settings.eval.runs_dir / "_cache")
 
     def search_factory(*, overrides: object, mode: str | None):
         return PipelineSearchExecutor(
@@ -462,7 +460,6 @@ def build_eval_service(
             account_id,
             overrides=overrides,
             mode=mode,
-            cache=cache,
         )
 
     llm = None

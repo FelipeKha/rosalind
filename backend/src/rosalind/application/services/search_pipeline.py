@@ -10,9 +10,8 @@ Every run returns a ``SearchTrace`` carrying the plan, each stage result, the
 final ``SearchResponse`` and per-stage timings. Callers that only need the
 response use ``SearchService.search``/``.run(...).response``.
 
-``resume_from`` + ``cached`` let evaluation re-run from a stage using stored
-upstream results; ``overrides`` perturb budgets/fusion/reranker. Both are
-internal APIs, never exposed as tool parameters.
+``overrides`` perturb budgets/fusion/reranker for experiments; it is an internal
+API, never exposed as a tool parameter.
 """
 
 from __future__ import annotations
@@ -27,11 +26,7 @@ from rosalind.application.search.assemble import (
     assemble_ranked,
 )
 from rosalind.application.search.fusion import FusedCandidates, fuse
-from rosalind.application.search.overrides import (
-    PipelineCache,
-    PipelineOverrides,
-    ResumeStage,
-)
+from rosalind.application.search.overrides import PipelineOverrides
 from rosalind.application.search.plan import (
     PlanWarning,
     SearchPlan,
@@ -97,8 +92,6 @@ class SearchPipeline:
         plan: SearchPlan,
         *,
         trace_level: TraceLevel = "minimal",
-        resume_from: ResumeStage | None = None,
-        cached: PipelineCache | None = None,
         overrides: PipelineOverrides | None = None,
     ) -> SearchTrace:
         """Run the pipeline for a prepared plan and return its trace."""
@@ -107,18 +100,16 @@ class SearchPipeline:
         if overrides is not None:
             plan = overrides.apply(plan)
             rerank_text_mode = overrides.rerank_text_mode
-        cache = cached if cached is not None else PipelineCache()
         timings: dict[str, float] = {}
 
         if plan.strategy is SearchStrategy.LIST:
-            if resume_from is not None or cached is not None:
-                raise ValueError("the list strategy does not support resume/cache")
             return await self._run_list(plan, trace_level, timings, started)
 
-        stage = resume_from if resume_from is not None else ResumeStage.LEXICAL
-        lexical, semantic, fused, reranked, retrieval_warnings = await self._run_stages(
-            plan, stage, cache, timings, rerank_text_mode
-        )
+        retrieve_started = time.perf_counter()
+        lexical, semantic, retrieval_warnings = await self._retrieve_all(plan)
+        timings["retrieve_ms"] = (time.perf_counter() - retrieve_started) * 1000
+        fused = fuse(plan, lexical, semantic)
+        reranked = await self._rerank(plan, fused, timings, rerank_text_mode)
 
         results_started = time.perf_counter()
         window = reranked.ranked[: plan.budgets.window_k]
@@ -192,91 +183,13 @@ class SearchPipeline:
                 "search_trace_record_failed", exc_info=True
             )
 
-    async def _run_stages(
+    async def _rerank(
         self,
         plan: SearchPlan,
-        stage: ResumeStage,
-        cache: PipelineCache,
-        timings: dict[str, float],
-        rerank_text_mode: RerankTextMode | None = None,
-    ) -> tuple[
-        LexicalResult | None,
-        SemanticResult | None,
-        FusedCandidates | None,
-        RerankResult,
-        tuple[PlanWarning, ...],
-    ]:
-        """Run (or restore) each stage from ``stage`` onward."""
-        lexical, semantic, retrieval_warnings = await self._stage_retrieval(
-            plan, stage, cache, timings
-        )
-        fused = self._stage_fusion(plan, stage, cache, lexical, semantic)
-        reranked = await self._stage_rerank(
-            plan, stage, cache, fused, timings, rerank_text_mode
-        )
-        return lexical, semantic, fused, reranked, retrieval_warnings
-
-    async def _stage_retrieval(
-        self,
-        plan: SearchPlan,
-        stage: ResumeStage,
-        cache: PipelineCache,
-        timings: dict[str, float],
-    ) -> tuple[LexicalResult | None, SemanticResult | None, tuple[PlanWarning, ...]]:
-        if stage is ResumeStage.LEXICAL:
-            started = time.perf_counter()
-            lexical, semantic, warnings = await self._retrieve_all(plan)
-            timings["retrieve_ms"] = (time.perf_counter() - started) * 1000
-            return lexical, semantic, warnings
-
-        if stage is ResumeStage.SEMANTIC:
-            if cache.lexical is None:
-                raise ValueError(
-                    "resume_from=semantic requires a cached lexical result"
-                )
-            started = time.perf_counter()
-            semantic, warnings = await self._retrieve_semantic(plan)
-            timings["retrieve_ms"] = (time.perf_counter() - started) * 1000
-            return cache.lexical, semantic, warnings
-
-        return cache.lexical, cache.semantic, ()
-
-    def _stage_fusion(
-        self,
-        plan: SearchPlan,
-        stage: ResumeStage,
-        cache: PipelineCache,
-        lexical: LexicalResult | None,
-        semantic: SemanticResult | None,
-    ) -> FusedCandidates | None:
-        if stage is ResumeStage.ASSEMBLE:
-            # Assembly only needs the cached rerank result; fusion is skipped.
-            return cache.fused
-        if stage in (ResumeStage.LEXICAL, ResumeStage.SEMANTIC, ResumeStage.FUSE):
-            if stage is ResumeStage.FUSE and lexical is None and semantic is None:
-                raise ValueError(
-                    "resume_from=fuse requires a cached lexical or semantic result"
-                )
-            return fuse(plan, lexical, semantic)
-        if cache.fused is None:
-            raise ValueError("resume_from=rerank requires a cached fused result")
-        return cache.fused
-
-    async def _stage_rerank(
-        self,
-        plan: SearchPlan,
-        stage: ResumeStage,
-        cache: PipelineCache,
-        fused: FusedCandidates | None,
+        fused: FusedCandidates,
         timings: dict[str, float],
         rerank_text_mode: RerankTextMode | None = None,
     ) -> RerankResult:
-        if stage is ResumeStage.ASSEMBLE:
-            if cache.reranked is None:
-                raise ValueError("resume_from=assemble requires a cached rerank result")
-            return cache.reranked
-        if fused is None:
-            raise ValueError("reranking requires fused candidates")
         config = self._rerank_config
         if rerank_text_mode is not None and config is not None:
             config = replace(config, text_mode=rerank_text_mode)
@@ -320,16 +233,6 @@ class SearchPipeline:
             return None, await self._semantic.retrieve(plan), ()
 
         raise ValueError("ranked plan has neither a lexical nor a semantic query")
-
-    async def _retrieve_semantic(
-        self, plan: SearchPlan
-    ) -> tuple[SemanticResult | None, tuple[PlanWarning, ...]]:
-        if plan.query.vector is None:
-            return None, ()
-        try:
-            return await self._semantic.retrieve(plan), ()
-        except SemanticRetrievalError:
-            return None, (_semantic_degraded_warning(),)
 
 
 def _semantic_degraded_warning() -> PlanWarning:

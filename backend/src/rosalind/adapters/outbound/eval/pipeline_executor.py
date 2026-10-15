@@ -11,14 +11,12 @@ import asyncio
 import uuid
 from typing import Any
 
-from rosalind.application.eval.cache import cached_run
 from rosalind.application.eval.dataset import QuestionRecord
 from rosalind.application.eval.mapping import (
     question_run_from_short_circuit,
     question_run_from_trace,
 )
 from rosalind.application.eval.models import QuestionRun
-from rosalind.application.eval.ports import StageCache
 
 __all__ = ["PipelineSearchExecutor"]
 
@@ -35,7 +33,6 @@ class PipelineSearchExecutor:
         mode: str | None = None,
         limit: int = 10,
         client_id: str = "rosalind-eval",
-        cache: StageCache | None = None,
     ) -> None:
         self._service = service
         self._account_id = account_id
@@ -43,7 +40,6 @@ class PipelineSearchExecutor:
         self._mode = mode
         self._limit = limit
         self._client_id = client_id
-        self._cache = cache
 
     def execute(self, question: QuestionRecord) -> QuestionRun:
         from rosalind.application.search import (
@@ -71,16 +67,6 @@ class PipelineSearchExecutor:
         prepared = asyncio.run(self._service.prepare(context, request))
         if isinstance(prepared, ShortCircuit):
             return question_run_from_short_circuit(question, prepared)
-        if self._cache is not None:
-            trace, _ = asyncio.run(
-                cached_run(
-                    self._service.run,
-                    prepared,
-                    self._cache,
-                    overrides=self._overrides,
-                )
-            )
-            return question_run_from_trace(question, trace)
         trace = asyncio.run(
             self._service.run(prepared, trace_level="full", overrides=self._overrides)
         )

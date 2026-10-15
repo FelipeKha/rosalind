@@ -45,12 +45,3 @@ the backend YAML/env before starting the server, not as plan overrides:
   path versus HNSW for filtered queries. Run the same dataset twice, then
   compare; per-question `semantic_filter_path` (`exact` / `ann_iterative`) and
   `semantic_scan_limit_hit` are stored in `questions.parquet`.
-
-## Caching (`--cache-dir`)
-
-Eval keeps a per-stage cache keyed by stage-specific inputs, so changing a
-downstream stage never recomputes upstream work: lexical depends on
-scope/filters/lexical query/`lexical_k`; semantic adds the query vector's
-model/version and `semantic_k`; fused adds the fusion config; reranked adds the
-reranker version, `rerank_k` and the rerank text mode. Set it via the backend
-eval config (`eval.runs_dir` holds `_cache/`).

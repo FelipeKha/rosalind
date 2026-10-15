@@ -14,11 +14,7 @@ from rosalind.application.search.assemble import (
     make_snippet,
 )
 from rosalind.application.search.fusion import FusedCandidate, FusedCandidates, fuse
-from rosalind.application.search.overrides import (
-    PipelineCache,
-    PipelineOverrides,
-    ResumeStage,
-)
+from rosalind.application.search.overrides import PipelineOverrides
 from rosalind.application.search.plan import (
     MAX_LIMIT,
     Budgets,
@@ -104,7 +100,6 @@ __all__ = [
     "ListPosition",
     "ListResult",
     "MatchedIn",
-    "PipelineCache",
     "PipelineOverrides",
     "PlanHints",
     "PlanWarning",
@@ -124,7 +119,6 @@ __all__ = [
     "ResolvedEntity",
     "ResolvedFilters",
     "ResultView",
-    "ResumeStage",
     "Scope",
     "SearchCitation",
     "SearchMode",

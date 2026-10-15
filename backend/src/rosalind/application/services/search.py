@@ -26,7 +26,6 @@ from rosalind.application.canonicalization.email import normalize_email
 from rosalind.application.search import (
     Cursor,
     InvalidSearchRequest,
-    PipelineCache,
     PipelineOverrides,
     PreparedQuery,
     PrepareTimings,
@@ -34,7 +33,6 @@ from rosalind.application.search import (
     RequestContext,
     ResolvedEntity,
     ResolvedFilters,
-    ResumeStage,
     Scope,
     SearchMode,
     SearchPlan,
@@ -422,20 +420,16 @@ class SearchService:
         plan: SearchPlan,
         *,
         trace_level: TraceLevel = "minimal",
-        resume_from: ResumeStage | None = None,
-        cached: PipelineCache | None = None,
         overrides: PipelineOverrides | None = None,
     ) -> SearchTrace:
         """Run steps 2–5 for a prepared plan and return the full trace.
 
-        ``resume_from``/``cached``/``overrides`` are internal controls for
-        evaluation; the MCP/REST adapters call ``run(plan)`` with defaults.
+        ``overrides`` is an internal control for evaluation; the MCP/REST
+        adapters call ``run(plan)`` with defaults.
         """
         return await self._pipeline.run(
             plan,
             trace_level=trace_level,
-            resume_from=resume_from,
-            cached=cached,
             overrides=overrides,
         )
 

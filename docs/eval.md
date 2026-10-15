@@ -62,7 +62,7 @@ rm -rf backend/runs                                  # clear local run artifacts
 Eval lives under the normal hexagonal layers — `application/eval/`
 (pure logic, models, config, ports), `application/services/eval.py` (use cases),
 `adapters/outbound/eval/` (search executor, Parquet run store, item catalog,
-Ollama, mailbox source, stage cache), and `adapters/inbound/http/routes/eval.py`
+Ollama, mailbox source), and `adapters/inbound/http/routes/eval.py`
 + `schemas/eval.py`. **No production module imports eval**; the only references
 are the composition root and the gated include in the app factory. Enforced by
 `tests/unit/test_eval_imports.py`.
