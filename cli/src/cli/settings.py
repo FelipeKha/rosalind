@@ -86,6 +86,7 @@ class CliSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ROSALIND_")
 
     api_url: str = "http://localhost:8000"
+    search_timeout: float = 60.0
     s3_endpoint: str = "http://localhost:8333"
     s3_access_key: str = "rosalind"
     s3_secret_key: str = "rosalind"  # nosec B105 - local dev default

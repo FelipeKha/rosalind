@@ -402,6 +402,37 @@ def build_rerank_texts(
     return PostgresChunkTextRepository(session_factory)
 
 
+def warm_search_models() -> None:
+    """Load in-process search models ahead of serving.
+
+    Cold-starting BGE-M3 (or the reranker) costs torch import, weight load, and
+    device init; doing it at startup keeps that latency off the first request.
+    Best-effort: a warm-up failure is logged and swallowed, because the lazy
+    load on first use still works and a transient download error must not stop
+    the process from starting. No-op when warm-up is disabled or no in-process
+    embedder is configured (e.g. the ``ml`` group is not installed).
+    """
+    if not settings.embedder_warmup:
+        return
+    logger = logging.getLogger(__name__)
+    if _embedder is not None:
+        try:
+            _embedder.warmup()
+        except Exception:
+            logger.warning(
+                "embedder warm-up failed; the first search may be slow",
+                exc_info=True,
+            )
+    if _search_reranker is not None:
+        try:
+            _search_reranker.warmup()
+        except Exception:
+            logger.warning(
+                "reranker warm-up failed; the first reranked search may be slow",
+                exc_info=True,
+            )
+
+
 def build_eval_service(
     account_id: uuid.UUID,
     session_factory: Callable[[], Session] = SessionLocal,

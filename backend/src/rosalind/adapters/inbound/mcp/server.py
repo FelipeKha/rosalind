@@ -214,6 +214,7 @@ def main() -> None:
         config.settings.log_format,
         log_query_text=config.settings.log_query_text,
     )
+    composition.warm_search_models()
     if config.settings.mcp_transport == "streamable-http":
         mcp.run(
             "streamable-http",

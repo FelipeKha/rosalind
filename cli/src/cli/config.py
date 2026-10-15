@@ -13,6 +13,10 @@ def api_url() -> str:
     return settings.get_settings().api_url
 
 
+def search_timeout() -> float:
+    return settings.get_settings().search_timeout
+
+
 def s3_endpoint() -> str:
     return settings.get_settings().s3_endpoint
 

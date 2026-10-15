@@ -155,6 +155,9 @@ class TeiReranker:
             raise RerankError("reranker returned scores for a subset of passages")
         return tuple(cast(float, score) for score in scores)
 
+    def warmup(self) -> None:
+        """No-op: the TEI server loads and serves its own model."""
+
     async def _run_batch(
         self, query: str, batch: list[tuple[int, str]]
     ) -> list[tuple[int, float]]:

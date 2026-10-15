@@ -263,6 +263,9 @@ class FakeReranker:
         # Highest score for the last passage, to force a reorder.
         return tuple(float(i) for i in range(len(passages)))
 
+    def warmup(self) -> None:
+        pass
+
 
 class FakeTokenCounter:
     @property

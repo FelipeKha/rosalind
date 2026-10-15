@@ -8,7 +8,15 @@ def _fake_request(monkeypatch, status_code=200, response_json=None):
     captured = {}
 
     def fake(method, url, params=None, json=None, headers=None, timeout=None):
-        captured.update({"method": method, "url": url, "params": params, "json": json})
+        captured.update(
+            {
+                "method": method,
+                "url": url,
+                "params": params,
+                "json": json,
+                "timeout": timeout,
+            }
+        )
         payload = response_json if response_json is not None else {}
         return httpx.Response(
             status_code,
@@ -36,6 +44,22 @@ def test_post_sends_json(monkeypatch) -> None:
 
     assert result == {"import_id": "abc"}
     assert captured["json"] == {"source_name": "s", "via": "file"}
+
+
+def test_post_uses_default_timeout(monkeypatch) -> None:
+    captured = _fake_request(monkeypatch)
+
+    http.api.post("/search", json={})
+
+    assert captured["timeout"] == http.DEFAULT_TIMEOUT_SECONDS
+
+
+def test_post_forwards_explicit_timeout(monkeypatch) -> None:
+    captured = _fake_request(monkeypatch)
+
+    http.api.post("/search", json={}, timeout=42.0)
+
+    assert captured["timeout"] == 42.0
 
 
 def test_get_sends_params(monkeypatch) -> None:

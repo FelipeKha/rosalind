@@ -705,6 +705,7 @@ keycloak_url: https://auth.example.com
 | `ROSALIND_CONFIG_DIR`     | `~/.config/rosalind`     | Config and credentials directory |
 | `ROSALIND_PROFILE`        | (none)                   | Profile layered over the base config |
 | `ROSALIND_API_URL`        | `http://localhost:8000`  | Base URL of the backend         |
+| `ROSALIND_SEARCH_TIMEOUT` | `60.0`                   | `rosalind search` request timeout, in seconds |
 | `ROSALIND_S3_ENDPOINT`    | `http://localhost:8333`  | S3-compatible endpoint (SeaweedFS) |
 | `ROSALIND_S3_ACCESS_KEY`  | `rosalind`               | S3 access key                   |
 | `ROSALIND_S3_SECRET_KEY`  | `rosalind`               | S3 secret key                   |

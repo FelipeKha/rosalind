@@ -105,6 +105,14 @@ class Embedder(Protocol):
     def embed_query(self, text: str) -> Vector:
         """Embed a single query text (retrieval phase; defined, unused for now)."""
 
+    def warmup(self) -> None:
+        """Load model state ahead of use (best-effort; may be a no-op).
+
+        Called at startup so an in-process model's cold start (weights, device
+        init) does not land on the first user request. A remote backend has
+        nothing to load locally and implements this as a no-op.
+        """
+
 
 class EmbeddingRepository(Protocol):
     """Write port for embeddings, failure rows, and run rows."""

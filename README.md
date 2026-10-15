@@ -157,3 +157,5 @@ Create import:
 Index import:
 `rosalind index 80eddc3e-0154-4b5b-913d-9470a18ffff8`
 
+Run search:
+`rosalind search "What is the invoice number?"`

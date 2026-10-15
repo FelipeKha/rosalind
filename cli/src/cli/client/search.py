@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
+from cli import config
 from cli.client import http
 
 
@@ -41,4 +42,4 @@ def search(
     if filters:
         payload["filters"] = filters
 
-    return http.api.post("/search", json=payload)
+    return http.api.post("/search", json=payload, timeout=config.search_timeout())

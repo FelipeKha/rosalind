@@ -150,6 +150,9 @@ class FakeReranker:
         self.calls += 1
         return tuple(float(i) for i in range(len(passages)))
 
+    def warmup(self) -> None:
+        pass
+
 
 class FakeTokenCounter:
     @property

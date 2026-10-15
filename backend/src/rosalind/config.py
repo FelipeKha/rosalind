@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     embed_trash_spam: bool = False
     allow_remote_embedding: bool = False
     embed_inline_budget_seconds: float = 60.0
+    # Load the in-process embedder (and reranker) at startup instead of on the
+    # first search, so cold-start latency does not land on a user request.
+    embedder_warmup: bool = True
 
     # Online search (Prepare step). Budgets and fusion settings are
     # configuration-controlled: they participate in the plan fingerprint, so the

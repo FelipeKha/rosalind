@@ -29,6 +29,7 @@ def test_defaults_when_no_config_file() -> None:
     assert resolved.api_url == "http://localhost:8000"
     assert resolved.keycloak_url == "http://localhost:8080"
     assert resolved.s3_endpoint == "http://localhost:8333"
+    assert resolved.search_timeout == 60.0
 
 
 def test_base_yaml_overrides_defaults(tmp_path: Path) -> None:
@@ -60,6 +61,13 @@ def test_env_overrides_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("ROSALIND_API_URL", "http://from-env:8001")
 
     assert settings.get_settings().api_url == "http://from-env:8001"
+
+
+def test_search_timeout_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ROSALIND_SEARCH_TIMEOUT", "12.5")
+
+    assert settings.get_settings().search_timeout == 12.5
+    assert config.search_timeout() == 12.5
 
 
 def test_config_env_var_selects_file(tmp_path: Path) -> None:

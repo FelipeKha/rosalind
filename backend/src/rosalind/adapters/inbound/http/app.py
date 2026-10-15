@@ -1,9 +1,11 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from rosalind.adapters import composition
 from rosalind.adapters.inbound.http.routes import (
     auth,
     health,
@@ -37,6 +39,7 @@ async def _lifespan(_: FastAPI) -> AsyncGenerator[None]:
         settings.log_format,
         log_query_text=settings.log_query_text,
     )
+    await asyncio.to_thread(composition.warm_search_models)
     yield
 
 

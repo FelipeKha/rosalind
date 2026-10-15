@@ -199,6 +199,14 @@ class RerankerPort(Protocol):
         that outlived retries and ``RerankError`` for a malformed response.
         """
 
+    def warmup(self) -> None:
+        """Load model state ahead of use (best-effort; may be a no-op).
+
+        Called at startup so an in-process cross-encoder's cold start does not
+        land on the first reranked search. A remote backend implements this as a
+        no-op.
+        """
+
 
 class ChunkTextPort(Protocol):
     async def get_rerank_texts(
