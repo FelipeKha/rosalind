@@ -2,16 +2,15 @@
 
 Run with ``uv run python scripts/build_eval_fixture.py`` from ``backend``. The
 outputs (``tests/fixtures/eval/mailbox.mbox`` and ``dataset.jsonl``) are
-committed so CI can run without private data. Item ids are computed with the
-app's ``message_uuid`` against the fixed fixture source account id, so gold
-labels are stable across imports.
+committed so CI can run without private data. Gold references the provider
+``message_id`` (not a canonical item id), so labels stay valid regardless of the
+source account an import happens to create; eval resolves them at run time.
 """
 
 from __future__ import annotations
 
 import hashlib
 import mailbox
-import uuid
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -21,17 +20,10 @@ from rosalind.application.eval.dataset import (
     QuestionRecord,
     write_dataset,
 )
-from rosalind.domain.email import message_uuid
-
-FIXTURE_SOURCE_ACCOUNT_ID = uuid.UUID("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")
 
 
 def fixture_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "eval"
-
-
-def item_id_for(message_id: str) -> str:
-    return str(message_uuid(FIXTURE_SOURCE_ACCOUNT_ID, message_id))
 
 
 MAILBOX = fixture_dir() / "mailbox.mbox"
@@ -418,7 +410,7 @@ def _filler_messages() -> list[EmailMessage]:
 
 def _build_dataset(quote_sha: str) -> list[QuestionRecord]:
     def gold(message_id: str, evidence: str | None = None) -> list[GoldEvidence]:
-        return [GoldEvidence(item_id=item_id_for(message_id), evidence=evidence)]
+        return [GoldEvidence(message_id=message_id, evidence=evidence)]
 
     def question(
         qid: str,
@@ -578,7 +570,6 @@ def main() -> None:
 
     print(f"wrote {len(messages)} messages to {MAILBOX}")
     print(f"wrote dataset to {DATASET}")
-    print(f"source_account_id={FIXTURE_SOURCE_ACCOUNT_ID}")
     print(f"quote_attachment_sha256={quote_sha}")
 
 

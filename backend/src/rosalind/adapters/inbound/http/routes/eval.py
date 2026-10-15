@@ -132,10 +132,9 @@ def generate_questions(
 @router.get("/items")
 def list_items(
     service: EvalServiceDep,
-    account: AccountDep,
     import_id: uuid.UUID | None = None,
 ) -> list[schemas.EvalItemResponse]:
-    items = service.list_items(account.id, import_id)
+    items = service.list_items(import_id)
     return [
         schemas.EvalItemResponse(
             item_id=item.item_id,

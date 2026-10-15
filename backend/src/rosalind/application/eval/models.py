@@ -87,7 +87,8 @@ class QuestionRun:
 
     @property
     def gold_item_ids(self) -> frozenset[str]:
-        return frozenset(item.item_id for item in self.gold)
+        """Resolved canonical gold ids; unresolved entries are excluded."""
+        return frozenset(item.item_id for item in self.gold if item.item_id is not None)
 
 
 @dataclass(frozen=True, slots=True)

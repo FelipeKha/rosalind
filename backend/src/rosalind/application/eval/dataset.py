@@ -1,7 +1,8 @@
 """Dataset format for rosalind-eval: JSONL, one record per question.
 
-A dataset is a git-versionable list of questions. Gold labels reference
-canonical ``item_id`` values (never ``chunk_id``, which changes when chunking
+A dataset is a git-versionable list of questions. Gold labels reference a
+provider ``message_id`` (resolved to the canonical ``item_id`` at run time) or a
+canonical ``item_id`` directly (never ``chunk_id``, which changes when chunking
 changes), optionally with a text-span or attachment-blob ``evidence`` hint.
 
 The file contains only identifiers, never email bodies or answers extracted
@@ -52,15 +53,33 @@ Status = Literal["draft", "reviewed", "too_easy", "bad"]
 class GoldEvidence(BaseModel):
     """One expected source item for a question.
 
-    ``item_id`` is the canonical message id. ``evidence`` is an optional hint:
-    ``attachment:<blob_sha256>`` names a specific attachment, ``span:<start>:<end>``
-    a character range. It is never required and never a ``chunk_id``.
+    Gold may reference an item two ways, and at least one is required:
+
+    * ``message_id`` — the provider Message-ID (normalized, no angle brackets).
+      Portable across imports, because the canonical ``email_message.id`` is
+      derived from ``(source_account_id, message_id)``; eval resolves it to the
+      account's real canonical id at run time.
+    * ``item_id`` — the canonical message id directly (manual authoring via
+      ``rosalind eval items``).
+
+    When both are present, ``message_id`` wins during resolution.
+
+    ``evidence`` is an optional hint: ``attachment:<blob_sha256>`` names a
+    specific attachment, ``span:<start>:<end>`` a character range. It is never
+    required and never a ``chunk_id``.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    item_id: str = Field(min_length=1)
+    item_id: str | None = Field(default=None, min_length=1)
+    message_id: str | None = Field(default=None, min_length=1)
     evidence: str | None = None
+
+    @model_validator(mode="after")
+    def _require_a_reference(self) -> GoldEvidence:
+        if self.item_id is None and self.message_id is None:
+            raise ValueError("gold entry needs item_id or message_id")
+        return self
 
 
 class DatasetFilters(BaseModel):

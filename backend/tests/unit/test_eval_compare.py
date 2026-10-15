@@ -7,17 +7,22 @@ from pathlib import Path
 from rosalind.adapters.outbound.eval.run_store import ParquetRunStore
 from rosalind.application.eval.compare import RunSummary, compare_runs
 from rosalind.application.eval.config import ExperimentConfig
-from rosalind.application.eval.dataset import load_dataset
 from rosalind.application.eval.runner import run_experiment
-from tests.eval_support import ScriptedExecutor, dataset_path, make_run
+from tests.eval_support import (
+    ScriptedExecutor,
+    dataset_path,
+    gold_ids,
+    make_run,
+    resolve_fixture_records,
+)
 
 
 def _run(tmp_path: Path, name: str, *, break_window_for: str | None) -> RunSummary:
     store = ParquetRunStore(tmp_path)
-    records = load_dataset(dataset_path())
+    records = resolve_fixture_records()
     runs = {}
     for record in records:
-        gold = [item.item_id for item in record.gold]
+        gold = gold_ids(record)
         attachment = any(
             item.evidence and item.evidence.startswith("attachment:")
             for item in record.gold

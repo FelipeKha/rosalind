@@ -70,6 +70,26 @@ class PostgresItemCatalog:
             for row in rows
         ]
 
+    def resolve_message_ids(
+        self, account_id: uuid.UUID, message_ids: frozenset[str]
+    ) -> dict[str, str]:
+        if not message_ids:
+            return {}
+        with self._session_factory() as session:
+            source_ids = self._source_account_ids(session, account_id, None)
+            if not source_ids:
+                return {}
+            rows = session.execute(
+                select(models.EmailMessage.message_id, models.EmailMessage.id).where(
+                    models.EmailMessage.source_account_id.in_(source_ids),
+                    models.EmailMessage.message_id.in_(message_ids),
+                )
+            ).all()
+        resolved: dict[str, str] = {}
+        for message_id, item_id in rows:
+            resolved.setdefault(str(message_id), str(item_id))
+        return resolved
+
     def existing_item_ids(
         self, account_id: uuid.UUID, item_ids: frozenset[str]
     ) -> frozenset[str]:

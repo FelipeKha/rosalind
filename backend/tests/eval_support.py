@@ -7,13 +7,15 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from rosalind.adapters.outbound.eval.mailbox_source import MailboxPassageSource
-from rosalind.application.eval.dataset import QuestionRecord
+from rosalind.application.eval.dataset import QuestionRecord, load_dataset
 from rosalind.application.eval.models import (
     FinalResult,
+    ItemSummary,
     Passage,
     QuestionRun,
     StageCandidate,
 )
+from rosalind.application.eval.resolve import resolve_gold
 from rosalind.domain.email import message_uuid
 
 FIXTURE_SOURCE_ACCOUNT_ID = uuid.UUID("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")
@@ -52,6 +54,52 @@ def iter_fixture_passages(*, include_trash_spam: bool = False) -> list[Passage]:
 
 def known_item_ids() -> frozenset[str]:
     return frozenset(p.item_id for p in iter_fixture_passages(include_trash_spam=True))
+
+
+class FixtureCatalog:
+    """In-memory ``ItemCatalog`` backed by the fixture mailbox (no DB)."""
+
+    def __init__(self) -> None:
+        self._by_message = {
+            p.message_id: p.item_id
+            for p in iter_fixture_passages(include_trash_spam=True)
+        }
+
+    def list_items(
+        self, account_id: uuid.UUID, import_id: uuid.UUID | None = None
+    ) -> list[ItemSummary]:
+        return []
+
+    def existing_item_ids(
+        self, account_id: uuid.UUID, item_ids: frozenset[str]
+    ) -> frozenset[str]:
+        return frozenset(set(item_ids) & set(self._by_message.values()))
+
+    def resolve_message_ids(
+        self, account_id: uuid.UUID, message_ids: frozenset[str]
+    ) -> dict[str, str]:
+        return {
+            message_id: self._by_message[message_id]
+            for message_id in message_ids
+            if message_id in self._by_message
+        }
+
+
+def resolve_fixture_records(
+    records: list[QuestionRecord] | None = None,
+) -> list[QuestionRecord]:
+    """Load the fixture dataset and resolve its ``message_id`` gold."""
+    resolved, _ = resolve_gold(
+        records if records is not None else load_dataset(dataset_path()),
+        account_id=FIXTURE_SOURCE_ACCOUNT_ID,
+        catalog=FixtureCatalog(),
+    )
+    return resolved
+
+
+def gold_ids(record: QuestionRecord) -> list[str]:
+    """Resolved gold item ids of a question (drops any unresolved entry)."""
+    return [gold.item_id for gold in record.gold if gold.item_id is not None]
 
 
 # ---------------------------------------------------------------------------

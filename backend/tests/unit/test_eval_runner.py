@@ -11,8 +11,10 @@ from rosalind.application.eval.runner import run_experiment
 from tests.eval_support import (
     ScriptedExecutor,
     dataset_path,
+    gold_ids,
     known_item_ids,
     make_run,
+    resolve_fixture_records,
 )
 
 
@@ -21,10 +23,10 @@ def _config(name: str) -> ExperimentConfig:
 
 
 def _perfect_executor() -> ScriptedExecutor:
-    records = load_dataset(dataset_path())
+    records = resolve_fixture_records()
     runs = {}
     for record in records:
-        gold = [item.item_id for item in record.gold]
+        gold = gold_ids(record)
         attachment = any(
             item.evidence and item.evidence.startswith("attachment:")
             for item in record.gold
@@ -43,7 +45,7 @@ def _perfect_executor() -> ScriptedExecutor:
 
 def _run(tmp_path: Path, name: str = "perfect"):
     store = ParquetRunStore(tmp_path)
-    records = load_dataset(dataset_path())
+    records = resolve_fixture_records()
     outcome = run_experiment(
         _config(name),
         records,
@@ -95,13 +97,13 @@ def test_run_storage_rows(tmp_path: Path) -> None:
 
 def test_missing_gold_produces_warnings_and_funnel(tmp_path: Path) -> None:
     store = ParquetRunStore(tmp_path)
-    records = load_dataset(dataset_path())
+    records = resolve_fixture_records()
     runs = {
         record.id: make_run(
             record,
-            lexical=[item.item_id for item in record.gold],
-            fused=[item.item_id for item in record.gold],
-            reranked=[item.item_id for item in record.gold],
+            lexical=gold_ids(record),
+            fused=gold_ids(record),
+            reranked=gold_ids(record),
             results=[],
         )
         for record in records

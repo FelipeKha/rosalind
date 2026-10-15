@@ -78,6 +78,15 @@ class ItemCatalog(Protocol):
     ) -> frozenset[str]:
         """The subset of ``item_ids`` that exist in this account's corpus."""
 
+    def resolve_message_ids(
+        self, account_id: uuid.UUID, message_ids: frozenset[str]
+    ) -> dict[str, str]:
+        """Map provider ``message_id`` values to canonical item ids.
+
+        Only message ids present in this account's corpus are returned; absent
+        ones are simply omitted so the caller can report them as missing.
+        """
+
 
 class QuestionLLM(Protocol):
     def generate(self, passage: Passage) -> DraftQuestion:

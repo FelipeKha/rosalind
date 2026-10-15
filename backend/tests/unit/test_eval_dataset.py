@@ -34,6 +34,26 @@ def test_valid_record() -> None:
     assert record.split == "dev"
 
 
+def test_gold_accepts_message_id_only() -> None:
+    record = QuestionRecord.model_validate(
+        _record(gold=[{"message_id": "msg-001@example.test"}])
+    )
+    assert record.gold == [GoldEvidence(message_id="msg-001@example.test")]
+
+
+def test_gold_accepts_both_ids() -> None:
+    record = QuestionRecord.model_validate(
+        _record(gold=[{"item_id": "e_1", "message_id": "m_1"}])
+    )
+    assert record.gold[0].item_id == "e_1"
+    assert record.gold[0].message_id == "m_1"
+
+
+def test_gold_requires_a_reference() -> None:
+    with pytest.raises(ValidationError):
+        QuestionRecord.model_validate(_record(gold=[{"evidence": "span:0:3"}]))
+
+
 def test_record_requires_a_query_keyword_or_filter() -> None:
     with pytest.raises(ValidationError):
         QuestionRecord.model_validate(

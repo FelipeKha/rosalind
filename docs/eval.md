@@ -77,16 +77,23 @@ backend `eval` dependency group, which `dev` includes.
    `rosalind import create …` then `rosalind index <import_id>`
    (including `embed` for semantic/hybrid).
 3. **Key gold manually.** List imported items and their ids, then write a JSONL
-   dataset referencing those ids:
+   dataset. Gold references either the canonical `item_id` (from `rosalind eval
+   items`) or the provider `message_id`; `message_id` is portable across imports
+   and resolved to the account's canonical ids at run time (`message_id` wins if
+   both are present). An optional attachment evidence hint may be added:
    ```bash
    rosalind eval items --import <import_id>
    ```
-   Dataset JSONL record (gold uses canonical `item_id`, optional attachment
-   evidence):
+   Dataset JSONL records:
    ```json
    {"id":"q_001","type":"amount_lookup","query":"how much did the roofer quote?",
-    "gold":[{"item_id":"<uuid>"}],"answer":"$8,400","split":"dev","status":"reviewed"}
+    "gold":[{"message_id":"<message-id>"}],"answer":"$8,400","split":"dev","status":"reviewed"}
+   {"id":"q_002","type":"attachment_only","query":"what is the total on the quote?",
+    "gold":[{"item_id":"<uuid>","evidence":"attachment:<sha256>"}],
+    "answer":"$8,400.00","split":"dev","status":"reviewed"}
    ```
+   A `message_id` that is not in the account's corpus is reported as a run
+   warning and a `missing_message` validation error.
 4. **Validate and run:**
    ```bash
    rosalind eval validate-dataset datasets/dev.jsonl --known-item-ids ids.json

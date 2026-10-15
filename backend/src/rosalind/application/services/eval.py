@@ -25,6 +25,7 @@ from rosalind.application.eval.ports import (
     SearchExecutor,
     SearchExecutorFactory,
 )
+from rosalind.application.eval.resolve import resolve_gold
 from rosalind.application.eval.runner import iter_experiment, run_experiment
 from rosalind.application.eval.validate import ValidationIssue, validate_dataset
 
@@ -40,12 +41,14 @@ class EvalService:
         search_factory: SearchExecutorFactory,
         run_store: EvalRunStore,
         item_catalog: ItemCatalog,
+        account_id: uuid.UUID,
         passage_source: PassageSource | None = None,
         llm: QuestionLLM | None = None,
     ) -> None:
         self._search_factory = search_factory
         self._run_store = run_store
         self._item_catalog = item_catalog
+        self._account_id = account_id
         self._passage_source = passage_source
         self._llm = llm
 
@@ -53,6 +56,13 @@ class EvalService:
         return self._search_factory(
             overrides=config.overrides.to_pipeline_overrides(),
             mode=config.overrides.mode,
+        )
+
+    def _resolve_gold(
+        self, records: list[QuestionRecord]
+    ) -> tuple[list[QuestionRecord], list[str]]:
+        return resolve_gold(
+            records, account_id=self._account_id, catalog=self._item_catalog
         )
 
     # -- runs ------------------------------------------------------------
@@ -65,14 +75,18 @@ class EvalService:
         known_item_ids: frozenset[str] | None = None,
         chunked_item_ids: frozenset[str] | None = None,
     ) -> RunOutcome:
-        return run_experiment(
+        resolved, missing = self._resolve_gold(records)
+        outcome = run_experiment(
             config,
-            records,
+            resolved,
             search=self._executor(config),
             run_store=self._run_store,
             known_item_ids=known_item_ids,
             chunked_item_ids=chunked_item_ids,
         )
+        if missing:
+            outcome.warnings = [*_missing_message_warnings(missing), *outcome.warnings]
+        return outcome
 
     def iter_run(
         self,
@@ -83,14 +97,19 @@ class EvalService:
         chunked_item_ids: frozenset[str] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Stream progress events (ending with ``run.complete``)."""
-        return iter_experiment(
+        resolved, missing = self._resolve_gold(records)
+        warnings = _missing_message_warnings(missing)
+        for event in iter_experiment(
             config,
-            records,
+            resolved,
             search=self._executor(config),
             run_store=self._run_store,
             known_item_ids=known_item_ids,
             chunked_item_ids=chunked_item_ids,
-        )
+        ):
+            if event.get("event") == "run.complete" and warnings:
+                event["warnings"] = [*warnings, *event.get("warnings", [])]
+            yield event
 
     def load_run(self, run_id: str) -> RunSummary:
         return RunSummary(
@@ -130,12 +149,20 @@ class EvalService:
         *,
         known_item_ids: frozenset[str] | None = None,
     ) -> list[ValidationIssue]:
-        return validate_dataset(records, known_item_ids=known_item_ids)
+        resolved, missing = self._resolve_gold(records)
+        issues = validate_dataset(resolved, known_item_ids=known_item_ids)
+        issues.extend(
+            ValidationIssue(
+                "error",
+                "missing_message",
+                f"gold message {message_id!r} is not in the corpus",
+            )
+            for message_id in missing
+        )
+        return issues
 
-    def list_items(
-        self, account_id: uuid.UUID, import_id: uuid.UUID | None = None
-    ) -> list[ItemSummary]:
-        return self._item_catalog.list_items(account_id, import_id)
+    def list_items(self, import_id: uuid.UUID | None = None) -> list[ItemSummary]:
+        return self._item_catalog.list_items(self._account_id, import_id)
 
     def existing_item_ids(
         self, account_id: uuid.UUID, item_ids: frozenset[str]
@@ -159,3 +186,9 @@ class EvalService:
             mailbox, include_trash_spam=include_trash_spam
         )
         return generate_questions(passages, self._llm, split=split)
+
+
+def _missing_message_warnings(missing: list[str]) -> list[str]:
+    return [
+        f"gold message missing from the corpus: {message_id}" for message_id in missing
+    ]

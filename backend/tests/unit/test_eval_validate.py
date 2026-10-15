@@ -10,16 +10,22 @@ def _q(
     qid: str,
     *,
     item: str | None = "e_1",
+    message: str | None = None,
     split: str = "dev",
     qtype: str = "factual",
     answerable: bool = True,
 ) -> QuestionRecord:
+    gold: dict[str, str] = {}
+    if item is not None:
+        gold["item_id"] = item
+    if message is not None:
+        gold["message_id"] = message
     return QuestionRecord.model_validate(
         {
             "id": qid,
             "type": qtype,
             "query": "q",
-            "gold": [{"item_id": item}] if item else [],
+            "gold": [gold] if gold else [],
             "answerable": answerable,
             "split": split,
         }
@@ -38,6 +44,16 @@ def test_duplicate_ids_are_errors() -> None:
 
 def test_split_leakage_is_an_error() -> None:
     issues = validate_dataset([_q("a", item="e_1"), _q("b", item="e_1", split="test")])
+    assert any(i.code == "split_leakage" for i in issues)
+
+
+def test_message_id_split_leakage_is_an_error() -> None:
+    issues = validate_dataset(
+        [
+            _q("a", item=None, message="m_1"),
+            _q("b", item=None, message="m_1", split="test"),
+        ]
+    )
     assert any(i.code == "split_leakage" for i in issues)
 
 

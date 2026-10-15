@@ -20,11 +20,21 @@ from tests.eval_support import ScriptedExecutor, make_run
 
 
 class _DummyCatalog:
+    def __init__(self, message_ids: dict[str, str] | None = None) -> None:
+        self._message_ids = message_ids or {}
+
     def list_items(self, account_id, import_id=None) -> list[Any]:
         return []
 
     def existing_item_ids(self, account_id, item_ids):
         return frozenset()
+
+    def resolve_message_ids(self, account_id, message_ids):
+        return {
+            message_id: item_id
+            for message_id, item_id in self._message_ids.items()
+            if message_id in message_ids
+        }
 
 
 def _dataset() -> list[dict[str, Any]]:
@@ -45,12 +55,7 @@ def _executor() -> ScriptedExecutor:
     return ScriptedExecutor(runs)
 
 
-def _client(tmp_path: Path) -> TestClient:
-    service = EvalService(
-        search_factory=lambda *, overrides, mode: _executor(),
-        run_store=ParquetRunStore(tmp_path),
-        item_catalog=_DummyCatalog(),
-    )
+def _client_with_service(service: EvalService) -> TestClient:
     app = FastAPI()
     app.include_router(eval_routes.router)
     app.dependency_overrides[dependencies.get_current_account] = lambda: (
@@ -58,6 +63,16 @@ def _client(tmp_path: Path) -> TestClient:
     )
     app.dependency_overrides[eval_routes.get_eval_service] = lambda: service
     return TestClient(app)
+
+
+def _client(tmp_path: Path, catalog: _DummyCatalog | None = None) -> TestClient:
+    service = EvalService(
+        search_factory=lambda *, overrides, mode: _executor(),
+        run_store=ParquetRunStore(tmp_path),
+        item_catalog=catalog or _DummyCatalog(),
+        account_id=uuid.uuid4(),
+    )
+    return _client_with_service(service)
 
 
 def _config() -> dict[str, Any]:
@@ -106,3 +121,53 @@ def test_run_rejects_invalid_dataset(tmp_path: Path) -> None:
         "/eval/run", json={"config": _config(), "dataset": [{"id": "bad"}]}
     )
     assert response.status_code == 422
+
+
+def test_run_resolves_message_id_gold(tmp_path: Path) -> None:
+    raw = {
+        "id": "q1",
+        "type": "factual",
+        "query": "a",
+        "gold": [{"message_id": "m1"}],
+    }
+    resolved = QuestionRecord.model_validate(
+        {"id": "q1", "type": "factual", "query": "a", "gold": [{"item_id": "e1"}]}
+    )
+    executor = ScriptedExecutor(
+        {
+            "q1": make_run(
+                resolved, lexical=["e1"], fused=["e1"], reranked=["e1"], results=["e1"]
+            )
+        }
+    )
+    service = EvalService(
+        search_factory=lambda *, overrides, mode: executor,
+        run_store=ParquetRunStore(tmp_path),
+        item_catalog=_DummyCatalog({"m1": "e1"}),
+        account_id=uuid.uuid4(),
+    )
+    client = _client_with_service(service)
+    response = client.post("/eval/run", json={"config": _config(), "dataset": [raw]})
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    complete = next(event for event in events if event["event"] == "run.complete")
+    assert complete["metrics"]["overall"]["recall_fused"] == 1.0
+
+
+def test_validate_reports_missing_message(tmp_path: Path) -> None:
+    client = _client(tmp_path, catalog=_DummyCatalog())
+    response = client.post(
+        "/eval/validate-dataset",
+        json={
+            "dataset": [
+                {
+                    "id": "q1",
+                    "type": "factual",
+                    "query": "a",
+                    "gold": [{"message_id": "unknown"}],
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert any(issue["code"] == "missing_message" for issue in response.json())

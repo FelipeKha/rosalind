@@ -472,6 +472,7 @@ def build_eval_service(
         search_factory=search_factory,
         run_store=ParquetRunStore(settings.eval.runs_dir),
         item_catalog=PostgresItemCatalog(session_factory),
+        account_id=account_id,
         passage_source=MailboxPassageSource(),
         llm=llm,
     )

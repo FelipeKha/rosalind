@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from rosalind.application.eval.dataset import QuestionRecord
+from rosalind.application.eval.dataset import GoldEvidence, QuestionRecord
 
 __all__ = ["ValidationIssue", "validate_dataset"]
 
@@ -60,7 +60,7 @@ def _check_unique_ids(records: list[QuestionRecord]) -> list[ValidationIssue]:
 def _check_split_leakage(records: list[QuestionRecord]) -> list[ValidationIssue]:
     by_split: dict[str, set[str]] = {"dev": set(), "test": set()}
     for record in records:
-        by_split[record.split].update(item.item_id for item in record.gold)
+        by_split[record.split].update(_gold_key(item) for item in record.gold)
     overlap = by_split["dev"] & by_split["test"]
     return [
         ValidationIssue(
@@ -78,16 +78,22 @@ def _check_items_exist(
     issues: list[ValidationIssue] = []
     for record in records:
         for gold in record.gold:
-            if gold.item_id not in known_item_ids:
-                issues.append(
-                    ValidationIssue(
-                        "error",
-                        "missing_item",
-                        f"gold item {gold.item_id!r} is not in the corpus",
-                        record.id,
-                    )
+            if gold.item_id is None or gold.item_id in known_item_ids:
+                continue
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "missing_item",
+                    f"gold item {gold.item_id!r} is not in the corpus",
+                    record.id,
                 )
+            )
     return issues
+
+
+def _gold_key(gold: GoldEvidence) -> str:
+    """Stable per-entry key for leakage checks, before or after resolution."""
+    return gold.item_id or gold.message_id or ""
 
 
 def _check_aggregation(records: list[QuestionRecord]) -> list[ValidationIssue]:

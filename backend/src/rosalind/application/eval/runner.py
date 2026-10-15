@@ -272,7 +272,7 @@ def _coverage_warnings(
     missing: set[str] = set()
     for record in records:
         for gold in record.gold:
-            if gold.item_id not in known_item_ids:
+            if gold.item_id is not None and gold.item_id not in known_item_ids:
                 missing.add(gold.item_id)
     return [
         f"gold item missing from the index: {item_id}" for item_id in sorted(missing)
