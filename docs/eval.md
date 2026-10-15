@@ -19,56 +19,43 @@ eval:
 Equivalent env: `ROSALIND_EVAL__ENABLED=true`, `ROSALIND_EVAL__RUNS_DIR=…`.
 
 When enabled, the backend mounts the `/eval` HTTP routes; when disabled they do
-not exist (the modules are never imported). **Enable eval only against a
-throwaway test database** (ParadeDB + pgvector, migrated).
+not exist (the modules are never imported). Dev enables it via `.env`
+(`ROSALIND_EVAL__ENABLED=true`); it is a **dev-only flag** and must never be
+enabled in production.
 
-## Eval stack
+## Running eval
 
-The justfile runs eval against its **own** Postgres, object storage, and
-Keycloak — a separate Compose project (`rosalind-eval`) with its own volumes —
-but on the **same host ports** as dev, so the backend and CLI need no
-environment-specific configuration. The two stacks are therefore mutually
-exclusive: stop one before starting the other.
+Eval has no separate stack. It runs against the **dev** environment: start the
+dev stack and backend with `just dev`, which mounts the `/eval` routes because
+`ROSALIND_EVAL__ENABLED=true` is set in `.env`.
 
 | Service | Endpoint |
 |---|---|
-| Postgres (ParadeDB) | `localhost:5432` (`rosalind_eval` DB) |
+| Postgres (ParadeDB) | `localhost:5432` (`rosalind` DB) |
 | SeaweedFS S3 | `http://localhost:8333` |
 | Keycloak | `http://localhost:8080` |
 | Backend API | `http://localhost:8000` |
 
-```bash
-just eval-up        # start eval Postgres + SeaweedFS + Keycloak (project rosalind-eval)
-just eval-migrate   # apply migrations to the eval database
-just eval-dev       # eval-up + ml deps + eval-migrate + eval backend on :8000 (eval mode on)
-just eval-serve     # just the eval backend (ROSALIND_EVAL__ENABLED=true)
-just eval-logs      # tail eval infrastructure logs
-just eval-down      # stop eval infrastructure (keep volumes)
-just eval-reset     # wipe only the eval project volumes (dev volumes untouched)
-```
+The CLI needs no configuration: `rosalind` defaults to these endpoints.
+(Optional: the CLI reads a YAML config file and `--profile` for pointing at
+other hosts — see the CLI README.)
 
-The CLI needs no configuration: `rosalind` defaults to these endpoints, so the
-same command works in dev and eval mode. (Optional: the CLI reads a YAML config
-file and `--profile` for pointing at other hosts — see the CLI README.) Stop the
-eval backend/infra (`just eval-down`) before starting the dev stack (`just dev`),
-and vice versa.
+Eval reads the same database as normal search, so benchmarking runs are not
+isolated from dev data. It only reads; run artifacts are written to
+`eval.runs_dir` (default `runs/`, i.e. `backend/runs/`), never the database.
 
 Typical run:
 
 ```bash
-just eval-dev
+just dev
 rosalind auth login
 rosalind import create --source google /path/to/Mail
 rosalind index <import_id>
 rosalind eval items --import <import_id>            # key gold manually
 rosalind eval run --config backend/configs/eval/experiments/mode-hybrid.yaml
 rosalind eval compare <runA> <runB>
-just eval-reset
+rm -rf backend/runs                                  # clear local run artifacts
 ```
-
-The eval Compose file is `docker-compose.eval.yml`; it reuses
-`keycloak/rosalind-realm.json` in a second Keycloak instance, so you may need to
-`rosalind auth login` again after switching between dev and eval.
 
 ## Dependency rule
 
@@ -85,7 +72,7 @@ backend `eval` dependency group, which `dev` includes.
 
 ## Workflow
 
-1. **Run Rosalind in eval mode** (`just eval-dev`) against the throwaway eval DB.
+1. **Run the dev stack** (`just dev`); eval is enabled via `.env`.
 2. **Import data as normal** — no eval-specific importer:
    `rosalind import create …` then `rosalind index <import_id>`
    (including `embed` for semantic/hybrid).

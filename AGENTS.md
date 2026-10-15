@@ -94,8 +94,9 @@ Eval boundaries (see `docs/eval.md`):
 - The eval subsystem is **one-way**: production code (`domain`, `application`,
   and non-eval `adapters`) must never import eval. Only the composition root
   and the gated router include may reference it (enforced by a test).
-- Eval routes exist only when `eval.enabled` is set; eval targets throwaway test
-  databases and reuses the production `SearchPipeline` (never reimplements it).
+- Eval routes exist only when `eval.enabled` is set; eval is a dev-only flag
+  (enabled via `.env`) that runs against the dev database and reuses the
+  production `SearchPipeline` (never reimplements it).
 
 ---
 

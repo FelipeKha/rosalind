@@ -420,8 +420,9 @@ driven through the `rosalind` CLI (`rosalind eval …`). It reuses the productio
 distributed across the normal layers (`application/eval`, `application/services/eval`,
 `adapters/{inbound/http/routes,outbound}/eval`) and is subject to a one-way rule:
 **production modules never import eval**; only the composition root and a gated
-router include reference it. Eval routes exist only when `eval.enabled` is set,
-and it is intended for throwaway test databases. See [`docs/eval.md`](docs/eval.md).
+router include reference it. Eval routes exist only when `eval.enabled` is set;
+it is a dev-only flag (enabled via `.env`) that must not be enabled in
+production. See [`docs/eval.md`](docs/eval.md).
 
 ---
 

@@ -6,7 +6,7 @@ Controlled experiments over the shared `SearchPipeline`, run through the
 Each experiment is a single YAML under `configs/eval/experiments/`:
 
 ```bash
-# server: ROSALIND_EVAL__ENABLED=true, pointed at a throwaway test DB
+# server: dev stack (`just dev`); eval enabled via ROSALIND_EVAL__ENABLED=true in .env
 rosalind eval run --config configs/eval/experiments/fusion-convex-a0.5.yaml
 ```
 
