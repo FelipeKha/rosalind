@@ -177,10 +177,20 @@ def list_imports() -> None:
         typer.echo("No imports found.")
         return
 
-    headers = ("ID", "SOURCE", "VIA", "INGESTION", "PROCESSING", "FILES", "SIZE")
+    headers = (
+        "ID",
+        "CREATED",
+        "SOURCE",
+        "VIA",
+        "INGESTION",
+        "PROCESSING",
+        "FILES",
+        "SIZE",
+    )
     rows = [
         (
             str(item["import_id"]),
+            _format.format_datetime(item["created_at"]),
             str(item["source_name"] or "-"),
             str(item["via"]),
             str(item["ingestion_status"]),
