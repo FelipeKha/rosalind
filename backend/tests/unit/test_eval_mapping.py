@@ -32,6 +32,14 @@ def _trace() -> SimpleNamespace:
             budgets=SimpleNamespace(
                 lexical_k=50, semantic_k=50, fused_k=40, rerank_k=30, window_k=25
             ),
+            fusion=SimpleNamespace(
+                strategy=SimpleNamespace(value="rrf"),
+                rrf_k=60,
+                lexical_weight=1.0,
+                semantic_weight=1.0,
+                convex_alpha=None,
+                max_chunks_per_item=2,
+            ),
         ),
         lexical=SimpleNamespace(
             hits=[SimpleNamespace(chunk_id=C1, email_id=I1, rank=1, score=5.0)]
@@ -76,6 +84,8 @@ def test_maps_trace_to_run() -> None:
     assert run.embedding_model == "bge-m3"
     assert run.reranker_version == "bge-reranker-v2-m3/v1"
     assert run.budgets["fused_k"] == 40
+    assert run.fusion["strategy"] == "rrf"
+    assert run.fusion["rrf_k"] == 60
     assert run.lexical[0].item_id == str(I1)
     assert run.semantic[0].score == 0.2
     assert run.fused[0].score == 0.5

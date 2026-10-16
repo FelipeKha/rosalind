@@ -134,7 +134,7 @@ backend `eval` dependency group, which `dev` includes.
 Each run is written under `eval.runs_dir/<run_id>/`:
 
 ```text
-manifest.json       run id, git commit, config, dataset hash, versions, times
+manifest.json       run id, git commit, requested config, effective config, dataset hash, times
 questions.parquet   per-question metrics, funnel, versions, timings
 stage_hits.parquet  per-stage candidates (chunk/item id, rank, score)
 metrics.json        overall + slices + funnel counts + latency percentiles

@@ -105,7 +105,7 @@ def iter_experiment(
         "compute_backend": _compute_backend(),
         "started_at": start.isoformat(),
         "finished_at": finish.isoformat(),
-        "versions": _versions(executed),
+        "effective_config": _effective_config(executed),
     }
     events.append({"event": "run.done", "run_id": run_id, "questions": len(records)})
 
@@ -251,16 +251,29 @@ def _percentile(values: list[float], p: float) -> float:
     return ordered[index]
 
 
-def _versions(executed: list[_Executed]) -> dict[str, Any]:
+def _effective_config(executed: list[_Executed]) -> dict[str, Any]:
+    """The resolved search config from the first question that ran the pipeline.
+
+    Defaults live in ``Settings``; this records what they resolved to (with the
+    experiment's overrides applied), so a changed default is visible in the
+    manifest rather than only in a ``plan_fingerprint``. Empty when every
+    question short-circuited and no plan ran.
+    """
     for item in executed:
         run = item.run
-        if run.index_version or run.embedding_model or run.reranker_version:
-            return {
+        if not run.budgets:
+            continue
+        return {
+            "budgets": dict(run.budgets),
+            "fusion": dict(run.fusion),
+            "versions": {
                 "index_version": run.index_version,
                 "embedding_model": run.embedding_model,
                 "embedding_version": run.embedding_version,
                 "reranker_version": run.reranker_version,
-            }
+            },
+            "mode_effective": run.mode_effective,
+        }
     return {}
 
 

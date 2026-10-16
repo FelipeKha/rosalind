@@ -28,6 +28,15 @@ BUDGETS = {
     "window_k": 25,
 }
 
+FUSION = {
+    "strategy": "rrf",
+    "rrf_k": 60,
+    "lexical_weight": 1.0,
+    "semantic_weight": 1.0,
+    "convex_alpha": None,
+    "max_chunks_per_item": 2,
+}
+
 
 def fixture_dir() -> Path:
     """The committed synthetic eval bundle (see ``eval/README.md``)."""
@@ -124,6 +133,7 @@ def make_run(
     reranked: Iterable[str] = (),
     results: Iterable[str] = (),
     budgets: dict[str, int] | None = None,
+    fusion: dict[str, object] | None = None,
     dropped_by_item_cap: int = 0,
     matched_in: str = "body",
     timings_ms: dict[str, float] | None = None,
@@ -136,6 +146,7 @@ def make_run(
         answerable=question.answerable,
         gold=tuple(question.gold),
         budgets=dict(budgets or BUDGETS),
+        fusion=dict(fusion or FUSION),
         lexical=_candidates(lexical),
         semantic=_candidates(semantic),
         fused=_candidates(fused),

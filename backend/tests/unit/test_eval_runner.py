@@ -9,6 +9,8 @@ from rosalind.application.eval.config import ExperimentConfig
 from rosalind.application.eval.dataset import load_dataset
 from rosalind.application.eval.runner import run_experiment
 from tests.eval_support import (
+    BUDGETS,
+    FUSION,
     ScriptedExecutor,
     dataset_path,
     gold_ids,
@@ -76,6 +78,37 @@ def test_run_manifest_fields(tmp_path: Path) -> None:
     assert len(manifest["dataset_hash"]) == 64
     assert manifest["compute_backend"] in {"cpu", "mps"}
     assert manifest["git_commit"] is None or len(manifest["git_commit"]) >= 7
+    assert manifest["effective_config"]["budgets"] == BUDGETS
+    assert manifest["effective_config"]["fusion"] == FUSION
+
+
+def test_run_manifest_records_overridden_effective_config(tmp_path: Path) -> None:
+    store = ParquetRunStore(tmp_path)
+    records = resolve_fixture_records()
+    budgets = {**BUDGETS, "fused_k": 7}
+    fusion = {**FUSION, "strategy": "convex", "convex_alpha": 0.5}
+    runs = {
+        record.id: make_run(
+            record,
+            lexical=gold_ids(record),
+            fused=gold_ids(record),
+            reranked=gold_ids(record),
+            results=gold_ids(record),
+            budgets=budgets,
+            fusion=fusion,
+        )
+        for record in records
+    }
+    outcome = run_experiment(
+        _config("overrides"),
+        records,
+        search=ScriptedExecutor(runs),
+        run_store=store,
+    )
+    manifest = store.read_manifest(outcome.run_id)
+    assert manifest["effective_config"]["budgets"]["fused_k"] == 7
+    assert manifest["effective_config"]["fusion"]["strategy"] == "convex"
+    assert manifest["effective_config"]["fusion"]["convex_alpha"] == 0.5
 
 
 def test_run_metrics_are_perfect(tmp_path: Path) -> None:

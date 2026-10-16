@@ -2,7 +2,7 @@
 
 A run lives in ``<root>/<run_id>/`` and never touches the production database:
 
-    manifest.json       run id, git commit, config, dataset hash, versions, times
+    manifest.json       run id, git commit, requested + effective config, dataset hash, times
     questions.parquet   one row per question (metrics, funnel, versions, timings)
     stage_hits.parquet  one row per (question, stage, candidate)
     metrics.json        aggregate metrics, slices, funnel counts, latency

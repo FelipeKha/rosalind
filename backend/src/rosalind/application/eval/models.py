@@ -66,6 +66,7 @@ class QuestionRun:
     embedding_version: str | None = None
     reranker_version: str | None = None
     budgets: dict[str, int] = field(default_factory=dict)
+    fusion: dict[str, Any] = field(default_factory=dict)
 
     lexical: tuple[StageCandidate, ...] = ()
     semantic: tuple[StageCandidate, ...] = ()
