@@ -1,6 +1,6 @@
 # Fusion baseline: reciprocal rank fusion, k = 60 (the zero-shot default).
 name: fusion-rrf-k60
-dataset: ../../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: RRF with the usual k=60 and equal branch weights.
 overrides:
   fusion:

@@ -1,6 +1,6 @@
 # Per-message chunk cap: at most 1 chunk per message before reranking.
 name: cap-1
-dataset: ../../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: One chunk per message after fusion.
 overrides:
   fusion:

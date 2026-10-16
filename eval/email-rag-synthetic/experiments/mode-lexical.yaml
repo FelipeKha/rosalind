@@ -1,6 +1,6 @@
 # Lexical-only retrieval: BM25 with no embedding branch.
 name: mode-lexical
-dataset: ../../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: Lexical-only retrieval (BM25), embeddings skipped.
 overrides:
   mode: lexical

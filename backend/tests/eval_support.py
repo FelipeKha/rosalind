@@ -30,11 +30,12 @@ BUDGETS = {
 
 
 def fixture_dir() -> Path:
-    return Path(__file__).resolve().parent / "fixtures" / "eval"
+    """The committed synthetic eval bundle (see ``eval/README.md``)."""
+    return Path(__file__).resolve().parents[2] / "eval" / "email-rag-synthetic"
 
 
 def mailbox_path() -> Path:
-    return fixture_dir() / "mailbox.mbox"
+    return fixture_dir() / "corpus.mbox"
 
 
 def dataset_path() -> Path:

@@ -52,10 +52,26 @@ rosalind auth login
 rosalind import create --source google /path/to/Mail
 rosalind index <import_id>
 rosalind eval items --import <import_id>            # key gold manually
-rosalind eval run --config backend/configs/eval/experiments/mode-hybrid.yaml
+rosalind eval run --config eval/email-rag-synthetic/experiments/mode-hybrid.yaml
 rosalind eval compare <runA> <runB>
 rm -rf backend/runs                                  # clear local run artifacts
 ```
+
+## Source layout
+
+Eval source files are grouped per **bundle** — one corpus with its gold and
+experiments — under the top-level `eval/` directory (see `eval/README.md`):
+
+```text
+eval/<bundle>/
+  corpus.mbox           # emails: import + generate-questions source
+  dataset.jsonl         # gold, message_id-keyed
+  experiments/*.yaml    # dataset: ../dataset.jsonl
+```
+
+Real corpora are private and gitignored; only bundles whose directory name ends
+in `-synthetic` are committed. The committed `email-rag-synthetic` bundle backs
+the eval tests.
 
 ## Dependency rule
 
@@ -97,7 +113,7 @@ backend `eval` dependency group, which `dev` includes.
 4. **Validate and run:**
    ```bash
    rosalind eval validate-dataset datasets/dev.jsonl --known-item-ids ids.json
-   rosalind eval run --config configs/eval/experiments/mode-hybrid.yaml
+   rosalind eval run --config eval/email-rag-synthetic/experiments/mode-hybrid.yaml
    rosalind eval runs
    rosalind eval compare <runA> <runB>
    ```

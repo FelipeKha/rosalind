@@ -1,5 +1,5 @@
 name: cap-2
-dataset: ../../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: Two chunks per message after fusion (production default).
 overrides:
   fusion:

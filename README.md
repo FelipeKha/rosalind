@@ -159,3 +159,6 @@ Index import:
 
 Run search:
 `rosalind search "What is the invoice number?"`
+
+Run eval on search:
+`rosalind eval run --config eval/email-rag-synthetic/experiments/cap-1.yaml`

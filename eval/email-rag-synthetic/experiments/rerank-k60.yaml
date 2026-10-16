@@ -1,5 +1,5 @@
 name: rerank-k60
-dataset: ../../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: Cross-encoder over the top 60 fused candidates.
 overrides:
   reranker: bge-reranker-v2-m3/v1

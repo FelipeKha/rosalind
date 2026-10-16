@@ -59,6 +59,11 @@ temp/
 # Local eval run artifacts (eval.runs_dir)
 backend/runs/
 
+# User-owned eval bundles: private by default. Only bundles whose directory
+# name ends in `-synthetic` are tracked (see eval/README.md).
+eval/*/
+!eval/*-synthetic/
+
 # Local databases / database dumps
 *.db
 *.sqlite

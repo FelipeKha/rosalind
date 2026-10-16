@@ -2,7 +2,7 @@
 # convex_alpha weights the semantic side in [0, 1]. Tune it on the dev split and
 # judge by recall@fused_k (the reranker reorders the candidates anyway).
 name: fusion-convex-a0.5
-dataset: ../../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: Convex fusion, 50/50 lexical and semantic.
 overrides:
   fusion:

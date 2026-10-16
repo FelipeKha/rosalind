@@ -1,7 +1,7 @@
 """Build the deterministic synthetic fixture mailbox and dataset.
 
 Run with ``uv run python scripts/build_eval_fixture.py`` from ``backend``. The
-outputs (``tests/fixtures/eval/mailbox.mbox`` and ``dataset.jsonl``) are
+outputs (``eval/email-rag-synthetic/corpus.mbox`` and ``dataset.jsonl``) are
 committed so CI can run without private data. Gold references the provider
 ``message_id`` (not a canonical item id), so labels stay valid regardless of the
 source account an import happens to create; eval resolves them at run time.
@@ -23,10 +23,10 @@ from rosalind.application.eval.dataset import (
 
 
 def fixture_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "eval"
+    return Path(__file__).resolve().parents[2] / "eval" / "email-rag-synthetic"
 
 
-MAILBOX = fixture_dir() / "mailbox.mbox"
+MAILBOX = fixture_dir() / "corpus.mbox"
 DATASET = fixture_dir() / "dataset.jsonl"
 
 SELF = "Alex Dupont <alex.dupont@gmail.com>"

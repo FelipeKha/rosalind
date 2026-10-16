@@ -9,7 +9,9 @@ from pydantic import ValidationError
 
 from rosalind.application.eval.config import load_config
 
-CONFIGS = Path(__file__).resolve().parents[2] / "configs" / "eval"
+CONFIGS = (
+    Path(__file__).resolve().parents[3] / "eval" / "email-rag-synthetic" / "experiments"
+)
 
 
 def _write(tmp_path: Path, body: str) -> Path:
@@ -111,11 +113,11 @@ def test_missing_file_is_rejected(tmp_path: Path) -> None:
 
 
 def test_repo_minimal_config_loads() -> None:
-    config = load_config(CONFIGS / "minimal.yaml")
+    config = load_config(CONFIGS / "baseline.yaml")
     assert config.name == "baseline"
 
 
 def test_repo_hybrid_config_loads() -> None:
-    config = load_config(CONFIGS / "hybrid-rrf.yaml")
+    config = load_config(CONFIGS / "rrf-rerank40.yaml")
     assert config.name == "rrf-rerank40"
     assert config.overrides.to_pipeline_overrides().rerank_k == 40

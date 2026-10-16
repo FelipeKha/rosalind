@@ -1,13 +1,15 @@
 # Experiments
 
-Controlled experiments over the shared `SearchPipeline`, run through the
+Controlled experiments over the shared `SearchPipeline` for the
+`email-rag-synthetic` bundle (`corpus.mbox` + `dataset.jsonl`), run through the
 `rosalind` CLI against a backend **in eval mode** (see `docs/eval.md`).
 
-Each experiment is a single YAML under `configs/eval/experiments/`:
+Each experiment is a single YAML under `eval/email-rag-synthetic/experiments/`
+and references the bundle's gold via `dataset: ../dataset.jsonl`:
 
 ```bash
 # server: dev stack (`just dev`); eval enabled via ROSALIND_EVAL__ENABLED=true in .env
-rosalind eval run --config configs/eval/experiments/fusion-convex-a0.5.yaml
+rosalind eval run --config eval/email-rag-synthetic/experiments/fusion-convex-a0.5.yaml
 ```
 
 Every run writes comparable artifacts under the eval `runs_dir`. Compare two

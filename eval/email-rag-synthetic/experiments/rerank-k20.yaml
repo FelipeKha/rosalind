@@ -1,6 +1,6 @@
 # Reranker on, 20 candidates scored. Compare with k=40/k=60: larger is rarely better.
 name: rerank-k20
-dataset: ../../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: Cross-encoder over the top 20 fused candidates.
 overrides:
   reranker: bge-reranker-v2-m3/v1

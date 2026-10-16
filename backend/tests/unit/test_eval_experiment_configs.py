@@ -8,7 +8,9 @@ from rosalind.application.eval.config import load_config
 from rosalind.application.search import FusionStrategy
 from rosalind.application.search.rerank import RerankTextMode
 
-CONFIGS = Path(__file__).resolve().parents[2] / "configs" / "eval" / "experiments"
+CONFIGS = (
+    Path(__file__).resolve().parents[3] / "eval" / "email-rag-synthetic" / "experiments"
+)
 
 
 def _load(name: str):

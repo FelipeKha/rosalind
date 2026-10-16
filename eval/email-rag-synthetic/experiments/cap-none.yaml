@@ -1,7 +1,7 @@
 # Cap effectively disabled. The app requires a positive cap, so a large value
 # stands in for "no cap".
 name: cap-none
-dataset: ../../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: No effective per-message chunk cap.
 overrides:
   fusion:

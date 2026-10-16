@@ -1,6 +1,6 @@
 # Example experiment: RRF with a smaller rerank window, illustrated fully.
 name: rrf-rerank40
-dataset: ../../tests/fixtures/eval/dataset.jsonl
+dataset: ../dataset.jsonl
 description: Hybrid RRF, rerank window of 40 candidates.
 overrides:
   mode: hybrid
