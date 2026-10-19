@@ -14,8 +14,11 @@ embedding path as local development.
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 import re
+import secrets
 import signal
 import socket
 import subprocess
@@ -23,7 +26,9 @@ import tempfile
 import time
 import uuid
 from collections.abc import Iterator
+from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
@@ -32,6 +37,7 @@ import httpx
 import psycopg
 import pytest
 from botocore.config import Config
+from psycopg import sql
 from testcontainers.community.postgres import PostgresContainer
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.image import DockerImage
@@ -56,6 +62,17 @@ S3_REGION = "us-east-1"
 BACKEND_IMAGE = "rosalind-e2e"
 
 SELF_EMAIL = "felipe@example.test"
+
+KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.7.4"
+KEYCLOAK_ADMIN_USER = "admin"
+KEYCLOAK_ADMIN_PASSWORD = "admin"  # nosec B105 - test-only bootstrap credential
+KEYCLOAK_REALM = "rosalind"
+KEYCLOAK_CLIENT_ID = "rosalind-cli"
+KEYCLOAK_INTERNAL_URL = "http://keycloak:8080"
+KEYCLOAK_REALM_FILE = REPO_ROOT / "keycloak" / "rosalind-realm.json"
+
+SPLIT_DB_PREFIX = "rosalind_split_"
+SPLIT_BUCKET_PREFIX = "rosalind-split-"
 
 # The RAG suite runs the backend natively with FlagEmbedding on MPS (Apple
 # Silicon). The device can be overridden (e.g. "cpu") for non-Mac hosts.
@@ -133,25 +150,30 @@ def s3_endpoint(network: Network) -> Iterator[str]:
         container.stop()
 
 
-def _start_backend_container(
-    network: Network,
-    postgres_container: PostgresContainer,
-    s3_endpoint: str,
-    *,
-    extra_env: dict[str, str] | None = None,
-) -> tuple[str, DockerContainer, DockerImage]:
+@pytest.fixture(scope="session")
+def backend_image() -> Iterator[DockerImage]:
     image = DockerImage(path=str(BACKEND_DIR), tag=BACKEND_IMAGE)
     image.build()
+    try:
+        yield image
+    finally:
+        image.remove()
 
-    database_url = (
-        f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-        f"@postgres:5432/{POSTGRES_DB}"
-    )
+
+def _start_backend_container(
+    network: Network,
+    image: DockerImage,
+    *,
+    database_url: str,
+    s3_bucket: str = S3_BUCKET,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[str, DockerContainer]:
     env = {
         "ROSALIND_DATABASE_URL": database_url,
         "ROSALIND_S3_ENDPOINT": "http://seaweedfs:8333",
         "ROSALIND_S3_ACCESS_KEY": S3_ACCESS_KEY,
         "ROSALIND_S3_SECRET_KEY": S3_SECRET_KEY,
+        "ROSALIND_S3_BUCKET": s3_bucket,
         "ROSALIND_S3_REGION": S3_REGION,
         "ROSALIND_AUTH_ENABLED": "false",
     }
@@ -173,23 +195,27 @@ def _start_backend_container(
     port = container.get_exposed_port(8000)
     base_url = f"http://{host}:{port}"
     _wait_for_health(base_url)
-    return base_url, container, image
+    return base_url, container
 
 
 @pytest.fixture(scope="session")
 def backend_base_url(
     network: Network,
+    backend_image: DockerImage,
     postgres_container: PostgresContainer,
     s3_endpoint: str,
 ) -> Iterator[str]:
-    base_url, container, image = _start_backend_container(
-        network, postgres_container, s3_endpoint
+    database_url = (
+        f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
+        f"@postgres:5432/{POSTGRES_DB}"
+    )
+    base_url, container = _start_backend_container(
+        network, backend_image, database_url=database_url
     )
     try:
         yield base_url
     finally:
         container.stop()
-        image.remove()
 
 
 @pytest.fixture(scope="session")
@@ -212,15 +238,24 @@ def cli_env(backend_base_url: str, s3_endpoint: str) -> dict[str, str]:
     return _cli_env(backend_base_url, s3_endpoint)
 
 
-def _cli_env(backend_base_url: str, s3_endpoint: str) -> dict[str, str]:
-    return {
+def _cli_env(
+    backend_base_url: str,
+    s3_endpoint: str,
+    *,
+    bucket: str = S3_BUCKET,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    env = {
         "ROSALIND_API_URL": backend_base_url,
         "ROSALIND_S3_ENDPOINT": s3_endpoint,
         "ROSALIND_S3_ACCESS_KEY": S3_ACCESS_KEY,
         "ROSALIND_S3_SECRET_KEY": S3_SECRET_KEY,
-        "ROSALIND_S3_BUCKET": S3_BUCKET,
+        "ROSALIND_S3_BUCKET": bucket,
         "ROSALIND_S3_REGION": S3_REGION,
     }
+    if extra:
+        env.update(extra)
+    return env
 
 
 @pytest.fixture(scope="session")
@@ -267,6 +302,343 @@ def run_cli(cli_env: dict[str, str]):
 def run_rosalind(cli_env: dict[str, str]):
     def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
         env = {**os.environ, **cli_env}
+        return subprocess.run(
+            ["uv", "run", "--directory", str(CLI_DIR), "rosalind", *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return _run
+
+
+# ---------------------------------------------------------------------------
+# Keycloak-backed index-split stack
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class KeycloakStack:
+    internal_url: str
+    host_url: str
+
+
+@dataclass(frozen=True)
+class SplitDatabase:
+    name: str
+    backend_url: str
+    host_url: str
+
+
+@dataclass(frozen=True)
+class SplitAccount:
+    subject: str
+    issuer: str
+    email: str
+    access_token: str
+    cli_env: dict[str, str]
+
+
+def _wait_for_keycloak(base_url: str, timeout: float = 180.0) -> None:
+    deadline = time.monotonic() + timeout
+    last_error: Exception | None = None
+    url = f"{base_url}/realms/{KEYCLOAK_REALM}/.well-known/openid-configuration"
+    while time.monotonic() < deadline:
+        try:
+            response = httpx.get(url, timeout=2.0)
+            if response.status_code == 200:
+                return
+        except httpx.HTTPError as exc:
+            last_error = exc
+        time.sleep(1.0)
+    raise RuntimeError(f"Keycloak did not become ready: {last_error}")
+
+
+def _disable_keycloak_ssl(container: DockerContainer) -> None:
+    """Allow plain HTTP to the ephemeral test Keycloak (both auth realms)."""
+    kcadm = "/opt/keycloak/bin/kcadm.sh"
+    for realm in ("master", KEYCLOAK_REALM):
+        result = container.get_wrapped_container().exec_run(
+            [
+                kcadm,
+                "update",
+                f"realms/{realm}",
+                "-s",
+                "sslRequired=none",
+                "--no-config",
+                "--server",
+                "http://localhost:8080",
+                "--realm",
+                "master",
+                "--user",
+                KEYCLOAK_ADMIN_USER,
+                "--password",
+                KEYCLOAK_ADMIN_PASSWORD,
+            ]
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(
+                f"failed to disable SSL on Keycloak realm {realm}: "
+                f"{result.output.decode(errors='replace')}"
+            )
+
+
+@pytest.fixture(scope="session")
+def keycloak_stack(network: Network) -> Iterator[KeycloakStack]:
+    if not KEYCLOAK_REALM_FILE.is_file():
+        pytest.fail(f"missing Keycloak realm file: {KEYCLOAK_REALM_FILE}")
+
+    try:
+        container = (
+            DockerContainer(KEYCLOAK_IMAGE)
+            .with_command("start-dev --import-realm")
+            .with_env("KC_BOOTSTRAP_ADMIN_USERNAME", KEYCLOAK_ADMIN_USER)
+            .with_env("KC_BOOTSTRAP_ADMIN_PASSWORD", KEYCLOAK_ADMIN_PASSWORD)
+            .with_env("KC_HEALTH_ENABLED", "true")
+            .with_env("KC_HOSTNAME", KEYCLOAK_INTERNAL_URL)
+            .with_env("KC_HOSTNAME_STRICT", "false")
+            .with_env("KC_HTTP_ENABLED", "true")
+            .with_network(network)
+            .with_network_aliases("keycloak")
+            .with_volume_mapping(
+                str(KEYCLOAK_REALM_FILE),
+                "/opt/keycloak/data/import/rosalind-realm.json",
+            )
+            .with_exposed_ports(8080)
+        )
+        container.start()
+    except Exception as exc:  # noqa: BLE001 - skip if Docker is unavailable
+        pytest.skip(f"Docker unavailable: {exc}")
+        return
+
+    try:
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(8080)
+        host_url = f"http://{host}:{port}"
+        _wait_for_keycloak(host_url)
+        _disable_keycloak_ssl(container)
+        yield KeycloakStack(
+            internal_url=KEYCLOAK_INTERNAL_URL,
+            host_url=host_url,
+        )
+    finally:
+        container.stop()
+
+
+def _keycloak_admin_token(host_url: str) -> str:
+    response = httpx.post(
+        f"{host_url}/realms/master/protocol/openid-connect/token",
+        data={
+            "client_id": "admin-cli",
+            "grant_type": "password",
+            "username": KEYCLOAK_ADMIN_USER,
+            "password": KEYCLOAK_ADMIN_PASSWORD,
+        },
+        timeout=30.0,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
+
+
+def _create_keycloak_user(host_url: str, email: str, password: str) -> str:
+    admin_token = _keycloak_admin_token(host_url)
+    response = httpx.post(
+        f"{host_url}/admin/realms/{KEYCLOAK_REALM}/users",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={
+            "username": email,
+            "email": email,
+            "firstName": "Split",
+            "lastName": "E2E",
+            "enabled": True,
+            "emailVerified": True,
+            "credentials": [
+                {"type": "password", "value": password, "temporary": False}
+            ],
+        },
+        timeout=30.0,
+    )
+    assert response.status_code == 201, response.text
+    location = response.headers.get("Location")
+    assert location, f"Keycloak did not return a user Location header: {response.text}"
+    return location.rstrip("/").rsplit("/", 1)[-1]
+
+
+def _keycloak_user_token(host_url: str, email: str, password: str) -> dict:
+    response = httpx.post(
+        f"{host_url}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token",
+        data={
+            "client_id": KEYCLOAK_CLIENT_ID,
+            "grant_type": "password",
+            "username": email,
+            "password": password,
+            "scope": "openid email profile rosalind-audience",
+        },
+        timeout=30.0,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _jwt_claims(token: str) -> dict:
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
+
+
+@pytest.fixture(scope="session")
+def split_database(
+    postgres_container: PostgresContainer,
+) -> Iterator[SplitDatabase]:
+    name = f"{SPLIT_DB_PREFIX}{uuid.uuid4().hex[:8]}"
+    admin_url = postgres_container.get_connection_url().replace("+psycopg", "")
+
+    conn = psycopg.connect(admin_url, autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    finally:
+        conn.close()
+
+    backend_url = (
+        f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}@postgres:5432/{name}"
+    )
+    host_url = admin_url.rsplit("/", 1)[0] + "/" + name
+    try:
+        yield SplitDatabase(name=name, backend_url=backend_url, host_url=host_url)
+    finally:
+        conn = psycopg.connect(admin_url, autocommit=True)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(
+                        sql.Identifier(name)
+                    )
+                )
+        finally:
+            conn.close()
+
+
+@pytest.fixture(scope="session")
+def split_bucket(s3_client) -> Iterator[str]:
+    name = f"{SPLIT_BUCKET_PREFIX}{uuid.uuid4().hex[:12]}"
+    s3_client.create_bucket(Bucket=name)
+    try:
+        yield name
+    finally:
+        with suppress(Exception):
+            paginator = s3_client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=name):
+                objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+                if objects:
+                    s3_client.delete_objects(Bucket=name, Delete={"Objects": objects})
+            s3_client.delete_bucket(Bucket=name)
+
+
+@pytest.fixture(scope="session")
+def split_backend_base_url(
+    network: Network,
+    backend_image: DockerImage,
+    split_database: SplitDatabase,
+    split_bucket: str,
+    s3_endpoint: str,
+    keycloak_stack: KeycloakStack,
+) -> Iterator[str]:
+    base_url, container = _start_backend_container(
+        network,
+        backend_image,
+        database_url=split_database.backend_url,
+        s3_bucket=split_bucket,
+        extra_env={
+            "ROSALIND_AUTH_ENABLED": "true",
+            "ROSALIND_KEYCLOAK_URL": keycloak_stack.internal_url,
+            "ROSALIND_KEYCLOAK_REALM": KEYCLOAK_REALM,
+            "ROSALIND_KEYCLOAK_AUDIENCE": KEYCLOAK_REALM,
+        },
+    )
+    try:
+        yield base_url
+    finally:
+        container.stop()
+
+
+@pytest.fixture(scope="session")
+def split_pg_conn(
+    split_database: SplitDatabase,
+) -> Iterator[psycopg.Connection]:
+    conn = psycopg.connect(split_database.host_url)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@pytest.fixture(scope="session")
+def split_account(
+    keycloak_stack: KeycloakStack,
+    split_backend_base_url: str,
+    split_bucket: str,
+    s3_endpoint: str,
+) -> Iterator[SplitAccount]:
+    email = f"split-e2e-{uuid.uuid4().hex[:12]}@example.test"
+    password = secrets.token_urlsafe(24)
+    user_id = _create_keycloak_user(keycloak_stack.host_url, email, password)
+    token_response = _keycloak_user_token(keycloak_stack.host_url, email, password)
+
+    access_token = token_response["access_token"]
+    claims = _jwt_claims(access_token)
+    issuer = f"{keycloak_stack.internal_url}/realms/{KEYCLOAK_REALM}"
+    assert claims["iss"] == issuer, claims
+    assert claims["sub"] == user_id, claims
+    audience = claims.get("aud")
+    audiences = audience if isinstance(audience, list) else [audience]
+    assert KEYCLOAK_REALM in audiences, claims
+
+    config_dir = tempfile.TemporaryDirectory(prefix="rosalind-split-cli-")
+    bootstrap = Path(config_dir.name) / "credentials.json"
+    expires_in = int(token_response.get("expires_in") or 300)
+    bootstrap.write_text(
+        json.dumps(
+            {
+                "access_token": access_token,
+                "refresh_token": token_response.get("refresh_token"),
+                "expires_at": (
+                    datetime.now(UTC) + timedelta(seconds=expires_in)
+                ).isoformat(),
+                "token_type": token_response.get("token_type", "Bearer"),
+            }
+        )
+    )
+    os.chmod(bootstrap, 0o600)
+
+    env = _cli_env(
+        split_backend_base_url,
+        s3_endpoint,
+        bucket=split_bucket,
+        extra={
+            "ROSALIND_CONFIG_DIR": config_dir.name,
+            "ROSALIND_KEYCLOAK_URL": keycloak_stack.host_url,
+            "ROSALIND_KEYCLOAK_REALM": KEYCLOAK_REALM,
+            "ROSALIND_KEYCLOAK_CLIENT_ID": KEYCLOAK_CLIENT_ID,
+        },
+    )
+    try:
+        yield SplitAccount(
+            subject=claims["sub"],
+            issuer=issuer,
+            email=email,
+            access_token=access_token,
+            cli_env=env,
+        )
+    finally:
+        config_dir.cleanup()
+
+
+@pytest.fixture(scope="session")
+def split_run_rosalind(split_account: SplitAccount):
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, **split_account.cli_env}
         return subprocess.run(
             ["uv", "run", "--directory", str(CLI_DIR), "rosalind", *args],
             env=env,
