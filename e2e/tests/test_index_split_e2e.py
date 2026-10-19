@@ -1,9 +1,9 @@
 """End-to-end test for index stage 1: splitting an mbox into messages.
 
 Creates a dedicated Keycloak user, lets the backend provision its Rosalind
-account just-in-time, imports the synthetic mbox through the CLI, runs only the
-split stage, and verifies both the ``raw.source_record`` rows and the
-content-addressed objects in SeaweedFS.
+account just-in-time, imports the synthetic mbox through the CLI, runs the full
+index pipeline, and verifies the split outputs: both the
+``raw.source_record`` rows and the content-addressed objects in SeaweedFS.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ FIXTURE = (
     / "rosalind_synthetic_emails.mbox"
 )
 EXPECTED_MESSAGE_COUNT = 18
+SELF_EMAIL = "felipe@example.test"
 IMPORT_ID_RE = re.compile(r"ID:\s+([0-9a-f-]{36})")
 
 
@@ -198,17 +199,19 @@ def test_cli_import_and_split_index(
     imports = json.loads(listed.stdout)
     assert [item["import_id"] for item in imports] == [import_id]
 
-    # --- Run only the split stage. ------------------------------------------
-    indexed = split_run_rosalind(["--json", "index", import_id, "--stage", "split"])
+    # --- Run the full index pipeline. ---------------------------------------
+    indexed = split_run_rosalind(
+        ["--json", "index", import_id, "--self-email", SELF_EMAIL]
+    )
     assert indexed.returncode == 0, indexed.stdout + indexed.stderr
     events = _parse_events(indexed.stdout)
     assert events
-    assert {event["stage"] for event in events} == {"split"}
     assert not any(event["phase"] == "error" for event in events)
 
-    starts = [event for event in events if event["phase"] == "start"]
-    progresses = [event for event in events if event["phase"] == "progress"]
-    dones = [event for event in events if event["phase"] == "done"]
+    split_events = [event for event in events if event["stage"] == "split"]
+    starts = [event for event in split_events if event["phase"] == "start"]
+    progresses = [event for event in split_events if event["phase"] == "progress"]
+    dones = [event for event in split_events if event["phase"] == "done"]
     assert len(starts) == 1
     assert len(progresses) == 1
     assert len(dones) == 1
@@ -231,6 +234,20 @@ def test_cli_import_and_split_index(
     assert done["reused"] == 0
     assert done["failed"] == 0
     assert done["processed_bytes"] == expected_bytes
+
+    # The full pipeline continued past split into the derived stages.
+    for stage in ("canonicalize", "reconcile", "enrich", "attachments", "chunk"):
+        assert any(
+            event["stage"] == stage and event["phase"] == "done" for event in events
+        ), f"missing done event for stage {stage}"
+    canonicalize = next(
+        event
+        for event in events
+        if event["stage"] == "canonicalize" and event["phase"] == "done"
+    )
+    assert canonicalize["processed"] == EXPECTED_MESSAGE_COUNT
+    assert canonicalize["created"] == EXPECTED_MESSAGE_COUNT
+    assert canonicalize["failed"] == 0
 
     # --- One immutable raw record per message. ------------------------------
     records = db.query_all(
@@ -263,8 +280,10 @@ def test_cli_import_and_split_index(
         assert record_import_id == import_id
         assert record_source_id == source_id
 
-    # Split runs before every later stage, so no canonical email exists yet.
-    assert _count(split_pg_conn, "SELECT count(*) FROM core.email_message") == 0
+    assert (
+        _count(split_pg_conn, "SELECT count(*) FROM core.email_message")
+        == EXPECTED_MESSAGE_COUNT
+    )
     assert (
         _count(
             split_pg_conn,
@@ -295,16 +314,28 @@ def test_cli_import_and_split_index(
     )["Body"].read()
     assert archive == fixture_bytes
 
-    # --- Re-running split is idempotent. ------------------------------------
-    rerun = split_run_rosalind(["--json", "index", import_id, "--stage", "split"])
+    # --- Re-running the pipeline is idempotent. -----------------------------
+    rerun = split_run_rosalind(
+        ["--json", "index", import_id, "--self-email", SELF_EMAIL]
+    )
     assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+    rerun_events = _parse_events(rerun.stdout)
     rerun_done = next(
-        event for event in _parse_events(rerun.stdout) if event["phase"] == "done"
+        event
+        for event in rerun_events
+        if event["stage"] == "split" and event["phase"] == "done"
     )
     assert rerun_done["processed"] == EXPECTED_MESSAGE_COUNT
     assert rerun_done["created"] == 0
     assert rerun_done["reused"] == EXPECTED_MESSAGE_COUNT
     assert rerun_done["failed"] == 0
+    rerun_canonicalize = next(
+        event
+        for event in rerun_events
+        if event["stage"] == "canonicalize" and event["phase"] == "done"
+    )
+    assert rerun_canonicalize["created"] == 0
+    assert rerun_canonicalize["reused"] == EXPECTED_MESSAGE_COUNT
 
     assert (
         _count(
@@ -312,6 +343,10 @@ def test_cli_import_and_split_index(
             "SELECT count(*) FROM raw.source_record WHERE import_id = %s::uuid",
             (import_id,),
         )
+        == EXPECTED_MESSAGE_COUNT
+    )
+    assert (
+        _count(split_pg_conn, "SELECT count(*) FROM core.email_message")
         == EXPECTED_MESSAGE_COUNT
     )
     rerun_listing = s3_client.list_objects_v2(Bucket=split_bucket, Prefix="records/")
