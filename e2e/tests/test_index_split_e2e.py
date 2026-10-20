@@ -2,8 +2,8 @@
 
 Creates a dedicated Keycloak user, lets the backend provision its Rosalind
 account just-in-time, imports the synthetic mbox through the CLI, runs the full
-index pipeline, and verifies the split, canonicalize, reconcile, and enrich
-stages.
+index pipeline, and verifies the split, canonicalize, reconcile, enrich, and
+attachments stages.
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ FIXTURE = (
 EXPECTED_MESSAGE_COUNT = 18
 SELF_EMAIL = "felipe@example.test"
 EXPECTED_ENRICH_STAGE_VERSION = "enrich/1+selectolax/1+lingua/2"
+EXPECTED_ATTACHMENT_STAGE_VERSION = "attachments/1"
+EXPECTED_ATTACHMENT_ERROR = "PDF has no text layer"
 IMPORT_ID_RE = re.compile(r"ID:\s+([0-9a-f-]{36})")
 
 THREAD_ROOT_OVERRIDES = {
@@ -829,6 +831,83 @@ def _verify_enrich_stage(
     return texts, segments
 
 
+def _verify_attachments_stage(
+    ctx: PipelineContext,
+    conn: psycopg.Connection,
+    events: list[dict],
+    *,
+    rerun: bool = False,
+) -> list[tuple]:
+    attachment_events = _stage_events(events, "attachments")
+    starts = [event for event in attachment_events if event["phase"] == "start"]
+    assert len(starts) == 1
+
+    done = _done_event(events, "attachments")
+    expected_processed = 0 if rerun else 1
+    expected_needs_ocr = 0 if rerun else 1
+    assert done["processed"] == expected_processed
+    assert done["details"] == {
+        "done": 0,
+        "empty": 0,
+        "needs_ocr": expected_needs_ocr,
+        "unsupported": 0,
+        "too_large": 0,
+        "encrypted": 0,
+        "failed": 0,
+        "budget_exhausted": False,
+    }
+
+    expected_shas = {
+        attachment.sha256
+        for message in ctx.expected
+        for attachment in message.attachments
+    }
+    assert len(expected_shas) == 1
+
+    rows = db.query_all(
+        conn,
+        "SELECT blob_sha256, status, text, method, page_count, language, "
+        "error, truncated, text_sha256, stage_version, created_at, updated_at "
+        "FROM derived.attachment_text",
+    )
+    assert len(rows) == 1
+    (
+        blob_sha256,
+        status,
+        text,
+        method,
+        page_count,
+        language,
+        error,
+        truncated,
+        text_sha256,
+        stage_version,
+        _created_at,
+        _updated_at,
+    ) = rows[0]
+    assert blob_sha256 in expected_shas
+    assert status == "needs_ocr"
+    assert text is None
+    assert method is None
+    assert page_count is None
+    assert language is None
+    assert text_sha256 is None
+    assert truncated is False
+    assert error == EXPECTED_ATTACHMENT_ERROR
+    assert stage_version == EXPECTED_ATTACHMENT_STAGE_VERSION
+
+    attachment_rows = db.query_all(
+        conn,
+        "SELECT sha256, storage_key FROM core.email_attachment "
+        "WHERE disposition != 'inline'",
+    )
+    assert {row[0] for row in attachment_rows} == expected_shas
+    for sha256, storage_key in attachment_rows:
+        assert storage_key == f"blobs/{sha256[:2]}/{sha256}"
+
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Main test
 # ---------------------------------------------------------------------------
@@ -863,6 +942,7 @@ def test_cli_import_and_index_pipeline(
     _verify_canonicalize_stage(ctx, split_pg_conn, s3_client, split_bucket, events)
     thread_ids = _verify_reconcile_stage(ctx, split_pg_conn, events)
     enrich_snapshot = _verify_enrich_stage(ctx, split_pg_conn, events)
+    attachment_snapshot = _verify_attachments_stage(ctx, split_pg_conn, events)
 
     rerun_events = _run_index(split_run_rosalind, import_id)
     _verify_split_stage(
@@ -887,3 +967,7 @@ def test_cli_import_and_index_pipeline(
         ctx, split_pg_conn, rerun_events, rerun=True
     )
     assert rerun_enrich_snapshot == enrich_snapshot
+    rerun_attachment_snapshot = _verify_attachments_stage(
+        ctx, split_pg_conn, rerun_events, rerun=True
+    )
+    assert rerun_attachment_snapshot == attachment_snapshot

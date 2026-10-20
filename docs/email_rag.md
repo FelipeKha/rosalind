@@ -144,6 +144,21 @@ class EmailText:
     segments: tuple[EmailSegment, ...]  # Lossless tiling of clean_text into EmailSegment spans
 ```
 
+### Attachments
+Extracts text from non-inline attachment blobs so attachments can later become searchable chunks.
+
+```
+class AttachmentText:
+    blob_sha256: str                # Content hash of the attachment blob; the identity of the extracted result
+    status: AttachmentStatus        # done, empty, needs_ocr, unsupported, too_large, encrypted, failed
+    text: str | None = None         # Extracted and cleaned text, when successful
+    method: str | None = None       # Extractor used: pdf, docx, xlsx, pptx, or text
+    page_count: int | None = None   # Page count where the extractor can determine it
+    language: str | None = None     # Reserved language field; currently typically null
+    error: str | None = None        # Failure/limitation reason
+    truncated: bool = False         # True when output was cut at the character cap
+    text_sha256: str | None = None  # SHA-256 of text; set only for status = done
+```
 
 ### Extraction
 
