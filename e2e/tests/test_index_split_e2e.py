@@ -2,7 +2,7 @@
 
 Creates a dedicated Keycloak user, lets the backend provision its Rosalind
 account just-in-time, imports the synthetic mbox through the CLI, runs the full
-index pipeline, and verifies the split and canonicalize stages.
+index pipeline, and verifies the split, canonicalize, and reconcile stages.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import json
 import mailbox
 import re
 import subprocess
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from email import message_from_bytes
@@ -32,6 +33,13 @@ FIXTURE = (
 EXPECTED_MESSAGE_COUNT = 18
 SELF_EMAIL = "felipe@example.test"
 IMPORT_ID_RE = re.compile(r"ID:\s+([0-9a-f-]{36})")
+
+THREAD_ROOT_OVERRIDES = {
+    "msg-002@example.test": "msg-001@example.test",
+    "msg-003@example.test": "msg-001@example.test",
+    "msg-007@example.test": "msg-006@example.test",
+    "msg-017@example.test": "msg-root-migration@example.test",
+}
 
 
 @dataclass(frozen=True)
@@ -147,6 +155,14 @@ def _expected_messages() -> list[ExpectedMessage]:
             )
         )
     return expected
+
+
+def _expected_thread_roots(ctx: PipelineContext) -> dict[str, str]:
+    """Every message is its own root unless it belongs to a reply chain."""
+    roots = {message.external_id: message.external_id for message in ctx.expected}
+    assert set(THREAD_ROOT_OVERRIDES) <= set(roots)
+    roots.update(THREAD_ROOT_OVERRIDES)
+    return roots
 
 
 def _parse_events(stdout: str) -> list[dict]:
@@ -572,6 +588,82 @@ def _verify_canonicalize_stage(
     )
 
 
+def _verify_reconcile_stage(
+    ctx: PipelineContext,
+    conn: psycopg.Connection,
+    events: list[dict],
+) -> dict[str, str]:
+    reconcile_events = _stage_events(events, "reconcile")
+    starts = [event for event in reconcile_events if event["phase"] == "start"]
+    assert len(starts) == 1
+
+    done = _done_event(events, "reconcile")
+    assert done["details"] == {
+        "threads_created": 0,
+        "threads_removed": 0,
+        "messages_reassigned": 0,
+    }
+
+    expected_roots = _expected_thread_roots(ctx)
+    rows = db.query_all(
+        conn,
+        "SELECT m.message_id, t.root_message_id, m.thread_changed_at, "
+        "m.thread_id::text "
+        "FROM core.email_message m "
+        "JOIN core.email_thread t ON t.id = m.thread_id",
+    )
+    assert len(rows) == EXPECTED_MESSAGE_COUNT
+
+    roots: dict[str, str] = {}
+    thread_ids: dict[str, str] = {}
+    for message_id, root_message_id, thread_changed_at, thread_id in rows:
+        roots[message_id] = root_message_id
+        thread_ids[message_id] = thread_id
+        assert thread_changed_at is None
+    assert roots == expected_roots
+
+    assert thread_ids["msg-001@example.test"] == thread_ids["msg-002@example.test"]
+    assert thread_ids["msg-001@example.test"] == thread_ids["msg-003@example.test"]
+    assert thread_ids["msg-006@example.test"] == thread_ids["msg-007@example.test"]
+    assert thread_ids["msg-017@example.test"] != thread_ids["msg-005@example.test"]
+
+    synthetic = next(message for message in ctx.expected if message.message_id is None)
+    assert thread_ids[synthetic.external_id] is not None
+
+    thread_counts = dict(
+        db.query_all(
+            conn,
+            "SELECT t.root_message_id, count(*) "
+            "FROM core.email_thread t "
+            "JOIN core.email_message m ON m.thread_id = t.id "
+            "GROUP BY t.root_message_id",
+        )
+    )
+    expected_counts = Counter(expected_roots.values())
+    assert thread_counts == dict(expected_counts)
+    assert _count(conn, "SELECT count(*) FROM core.email_thread") == len(
+        expected_counts
+    )
+    assert (
+        _count(
+            conn,
+            "SELECT count(*) FROM core.email_thread t "
+            "LEFT JOIN core.email_message m ON m.thread_id = t.id "
+            "WHERE m.id IS NULL",
+        )
+        == 0
+    )
+    assert (
+        _count(
+            conn,
+            "SELECT count(*) FROM core.email_thread WHERE provider_hint IS NOT NULL",
+        )
+        == 0
+    )
+
+    return thread_ids
+
+
 # ---------------------------------------------------------------------------
 # Main test
 # ---------------------------------------------------------------------------
@@ -604,6 +696,7 @@ def test_cli_import_and_index_pipeline(
     events = _run_index(split_run_rosalind, import_id)
     _verify_split_stage(ctx, split_pg_conn, s3_client, split_bucket, events)
     _verify_canonicalize_stage(ctx, split_pg_conn, s3_client, split_bucket, events)
+    thread_ids = _verify_reconcile_stage(ctx, split_pg_conn, events)
 
     rerun_events = _run_index(split_run_rosalind, import_id)
     _verify_split_stage(
@@ -622,3 +715,5 @@ def test_cli_import_and_index_pipeline(
         rerun_events,
         rerun=True,
     )
+    rerun_thread_ids = _verify_reconcile_stage(ctx, split_pg_conn, rerun_events)
+    assert rerun_thread_ids == thread_ids

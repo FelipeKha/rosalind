@@ -116,6 +116,9 @@ class CanonicalEmail:
     tags: tuple[str, ...]                           # Namespaced labels, e.g. gmail:SPAM
 ```
 
+### Reconcile
+Assigns every canonical message to a conversation thread.
+
 ### Enrich
 
 ### Extraction
