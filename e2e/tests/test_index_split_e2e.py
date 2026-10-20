@@ -2,8 +2,8 @@
 
 Creates a dedicated Keycloak user, lets the backend provision its Rosalind
 account just-in-time, imports the synthetic mbox through the CLI, runs the full
-index pipeline, and verifies the split, canonicalize, reconcile, enrich, and
-attachments stages.
+index pipeline, and verifies the split, canonicalize, reconcile, enrich,
+attachments, and chunk stages.
 """
 
 from __future__ import annotations
@@ -36,6 +36,10 @@ SELF_EMAIL = "felipe@example.test"
 EXPECTED_ENRICH_STAGE_VERSION = "enrich/1+selectolax/1+lingua/2"
 EXPECTED_ATTACHMENT_STAGE_VERSION = "attachments/1"
 EXPECTED_ATTACHMENT_ERROR = "PDF has no text layer"
+EXPECTED_CHUNK_COUNT = 19
+EXPECTED_BODY_CHUNK_COUNT = 18
+EXPECTED_QUOTE_CHUNK_COUNT = 1
+EXPECTED_CHUNK_BUILD_COUNT = 19
 IMPORT_ID_RE = re.compile(r"ID:\s+([0-9a-f-]{36})")
 
 THREAD_ROOT_OVERRIDES = {
@@ -908,6 +912,230 @@ def _verify_attachments_stage(
     return rows
 
 
+def _verify_chunk_stage(
+    ctx: PipelineContext,
+    conn: psycopg.Connection,
+    events: list[dict],
+    *,
+    rerun: bool = False,
+) -> tuple[list[tuple], list[tuple]]:
+    chunk_events = _stage_events(events, "chunk")
+    starts = [event for event in chunk_events if event["phase"] == "start"]
+    assert len(starts) == 1
+
+    done = _done_event(events, "chunk")
+    expected_processed = 0 if rerun else EXPECTED_MESSAGE_COUNT
+    assert done["processed"] == expected_processed
+    assert done["details"] == {
+        "chunks_written": 0 if rerun else EXPECTED_CHUNK_COUNT,
+        "chunks_unchanged": 0,
+        "skipped_not_ready": 0 if rerun else 1,
+        "failed": 0,
+    }
+
+    source_num = db.query_one(
+        conn,
+        "SELECT num FROM source_account WHERE id = %s::uuid",
+        (ctx.source_id,),
+    )[0]
+
+    chunks = db.query_all(
+        conn,
+        "SELECT m.message_id, c.chunk_kind, c.seq, c.attachment_id, "
+        "c.text_for_display, c.text_for_index, c.text_sha256, c.language, "
+        "c.index_version, c.thread_id::text, m.thread_id::text, "
+        "c.source_account_id::text, c.source_account_num, c.sent_at, "
+        "m.occurred_at, c.sender_handle, c.recipient_handles, "
+        "c.participant_handles, c.direction, c.has_attachment, "
+        "c.is_trash_or_spam, c.tags, c.meta, c.created_at "
+        "FROM search.chunk c "
+        "JOIN core.email_message m ON m.id = c.email_id "
+        "ORDER BY m.message_id, c.chunk_kind, c.seq",
+    )
+    assert len(chunks) == EXPECTED_CHUNK_COUNT
+
+    expected_sent = {
+        "msg-002@example.test",
+        "msg-007@example.test",
+        "msg-014@example.test",
+    }
+    expected_trash = {
+        message.external_id
+        for message in ctx.expected
+        if any(tag.lower() in {"spam", "trash"} for tag in message.provider_tags)
+    }
+    expected_with_attachments = {
+        message.external_id for message in ctx.expected if message.attachments
+    }
+    by_message = {message.external_id: message for message in ctx.expected}
+
+    kinds: Counter = Counter()
+    languages: Counter = Counter()
+    index_versions: set[str] = set()
+    chunked_messages: set[str] = set()
+    quoted_messages: set[str] = set()
+
+    for chunk in chunks:
+        (
+            message_id,
+            chunk_kind,
+            seq,
+            attachment_id,
+            text_for_display,
+            text_for_index,
+            text_sha256,
+            language,
+            index_version,
+            chunk_thread_id,
+            message_thread_id,
+            source_account_id,
+            source_account_num,
+            sent_at,
+            occurred_at,
+            sender_handle,
+            recipient_handles,
+            participant_handles,
+            direction,
+            has_attachment,
+            is_trash_or_spam,
+            tags,
+            meta,
+            _created_at,
+        ) = chunk
+        message = by_message[message_id]
+        kinds[chunk_kind] += 1
+        languages[language] += 1
+        index_versions.add(index_version)
+
+        assert attachment_id is None
+        assert seq == 0
+        assert text_for_display
+        assert text_for_display in text_for_index
+        assert text_sha256 == hashlib.sha256(text_for_index.encode("utf-8")).hexdigest()
+        assert chunk_thread_id == message_thread_id
+        assert source_account_id == ctx.source_id
+        assert source_account_num == source_num
+        assert sent_at == occurred_at
+        assert direction == ("sent" if message_id in expected_sent else "received")
+        assert has_attachment is (message_id in expected_with_attachments)
+        assert is_trash_or_spam is (message_id in expected_trash)
+        assert set(tags) == {f"gmail:{tag}" for tag in message.provider_tags}
+        assert meta == {}
+
+        from_participants = sorted(
+            (
+                participant
+                for participant in message.participants
+                if participant.role == "from"
+            ),
+            key=lambda participant: participant.seq,
+        )
+        assert sender_handle == (from_participants[0].addr if from_participants else "")
+        assert set(recipient_handles) == {
+            participant.addr
+            for participant in message.participants
+            if participant.role in ("to", "cc", "bcc")
+        }
+        assert set(participant_handles) == {
+            participant.addr for participant in message.participants
+        }
+
+        if chunk_kind == "email_body":
+            assert text_for_index.startswith("Email |")
+            chunked_messages.add(message_id)
+        elif chunk_kind == "email_quote":
+            assert text_for_index.startswith("Quoted history |")
+            quoted_messages.add(message_id)
+        else:  # pragma: no cover - the fixture has no attachment chunks
+            raise AssertionError(f"unexpected chunk kind: {chunk_kind}")
+
+    assert kinds == {
+        "email_body": EXPECTED_BODY_CHUNK_COUNT,
+        "email_quote": EXPECTED_QUOTE_CHUNK_COUNT,
+    }
+    assert chunked_messages == {message.external_id for message in ctx.expected}
+    assert quoted_messages == {"msg-003@example.test"}
+    assert dict(languages) == {"en": 18, "fr": 1}
+    assert len(index_versions) == 1
+    chunk_index_version = index_versions.pop()
+    assert chunk_index_version.startswith("chunker/1+prefix/1+bge-m3/")
+
+    msg_003_kinds = {chunk[1] for chunk in chunks if chunk[0] == "msg-003@example.test"}
+    assert msg_003_kinds == {"email_body", "email_quote"}
+    msg_003_body = next(
+        chunk
+        for chunk in chunks
+        if chunk[0] == "msg-003@example.test" and chunk[1] == "email_body"
+    )
+    msg_003_quote = next(
+        chunk
+        for chunk in chunks
+        if chunk[0] == "msg-003@example.test" and chunk[1] == "email_quote"
+    )
+    assert "> 12 March works for me" not in msg_003_body[4]
+    assert "> 12 March works for me" in msg_003_quote[4]
+
+    msg_008_body = next(
+        chunk
+        for chunk in chunks
+        if chunk[0] == "msg-008@example.test" and chunk[1] == "email_body"
+    )
+    assert "attachments: q1-budget.pdf" in msg_008_body[5]
+
+    msg_006_body = next(chunk for chunk in chunks if chunk[0] == "msg-006@example.test")
+    assert msg_006_body[7] == "fr"
+
+    text_digests = dict(
+        db.query_all(
+            conn,
+            "SELECT m.message_id, t.segments_digest "
+            "FROM derived.email_text t "
+            "JOIN core.email_message m ON m.id = t.email_id",
+        )
+    )
+
+    builds = db.query_all(
+        conn,
+        "SELECT m.message_id, b.chunk_kind, b.attachment_id, "
+        "b.index_version, b.source_digest, b.built_at, b.chunk_count, "
+        "b.status, b.error "
+        "FROM search.chunk_build b "
+        "JOIN core.email_message m ON m.id = b.email_id "
+        "ORDER BY m.message_id, b.chunk_kind",
+    )
+    assert len(builds) == EXPECTED_CHUNK_BUILD_COUNT
+    build_kinds: Counter = Counter()
+    built_at_values: set = set()
+    for build in builds:
+        (
+            message_id,
+            chunk_kind,
+            attachment_id,
+            index_version,
+            source_digest,
+            built_at,
+            chunk_count,
+            status,
+            error,
+        ) = build
+        build_kinds[chunk_kind] += 1
+        built_at_values.add(built_at)
+        assert attachment_id is None
+        assert index_version == chunk_index_version
+        assert source_digest == text_digests[message_id]
+        assert chunk_count == 1
+        assert status == "done"
+        assert error is None
+
+    assert build_kinds == {
+        "email_body": EXPECTED_BODY_CHUNK_COUNT,
+        "email_quote": EXPECTED_QUOTE_CHUNK_COUNT,
+    }
+    assert len(built_at_values) == 1
+
+    return chunks, builds
+
+
 # ---------------------------------------------------------------------------
 # Main test
 # ---------------------------------------------------------------------------
@@ -943,6 +1171,7 @@ def test_cli_import_and_index_pipeline(
     thread_ids = _verify_reconcile_stage(ctx, split_pg_conn, events)
     enrich_snapshot = _verify_enrich_stage(ctx, split_pg_conn, events)
     attachment_snapshot = _verify_attachments_stage(ctx, split_pg_conn, events)
+    chunk_snapshot = _verify_chunk_stage(ctx, split_pg_conn, events)
 
     rerun_events = _run_index(split_run_rosalind, import_id)
     _verify_split_stage(
@@ -971,3 +1200,7 @@ def test_cli_import_and_index_pipeline(
         ctx, split_pg_conn, rerun_events, rerun=True
     )
     assert rerun_attachment_snapshot == attachment_snapshot
+    rerun_chunk_snapshot = _verify_chunk_stage(
+        ctx, split_pg_conn, rerun_events, rerun=True
+    )
+    assert rerun_chunk_snapshot == chunk_snapshot

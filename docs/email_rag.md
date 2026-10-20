@@ -119,6 +119,7 @@ class CanonicalEmail:
 ### Reconcile
 Assigns every canonical message to a conversation thread using a JWZ-style algorithm.
 
+### Extraction
 ### Enrich
 Turns canonical email bodies into clean, segmented, language-annotated text for later chunking and retrieval.
 
@@ -160,9 +161,62 @@ class AttachmentText:
     text_sha256: str | None = None  # SHA-256 of text; set only for status = done
 ```
 
-### Extraction
-
 ### Chunking
+Turns derived text into the retrieval unit: search.chunk rows.
+
+The chunk stage uses a deterministic token-budget algorithm:
+1. BgeM3TokenCounter counts tokens using the tokenizers library and the pinned tokenizer at backend/assets/bge-m3/tokenizer.json.
+2. chunk_text builds splittable units:
+- a paragraph that fits within max_tokens becomes one unit,
+- an over-budget paragraph is split into sentences,
+- an over-budget sentence is split at tokenizer boundaries.
+3. Greedy grouping packs units into chunks up to target_tokens = 400.
+4. Tail merging merges an undersized final chunk into the previous one if it fits within max_tokens.
+5. Overlap adds trailing whole units from the previous chunk, up to overlap_tokens = 50, without exceeding the max.
+6. Prefix budgeting happens in _chunk_source:
+budget = max_tokens - prefix_tokens - 1
+target = min(target_tokens, budget)
+Here:
+max_tokens       = 480
+prefix tokens    = 42
+text budget      = 480 - 42 - 1 = 437
+chunk target     = min(400, 437) = 400
+
+```
+class ChunkDraft:
+    id: uuid.UUID
+    email_id: uuid.UUID                         # Canonical message this chunk belongs to
+    attachment_id: uuid.UUID | None             # Attachment ID for attachment chunks; otherwise null
+    thread_id: uuid.UUID | None                 # Conversation thread, copied for filtering
+    kind: ChunkKind                             # email_body, email_quote, or attachment
+    seq: int                                    # Position within that source, starting at 0
+    text_for_display: str                       # Chunk text without the contextual prefix
+    text_for_index: str                         # Contextual prefix + newline + chunk text
+    text_sha256: str                            # SHA-256 of text_for_index; used for embedding reuse
+    language: str | None                        # Dominant segment language, or attachment text language
+    index_version: str                          # Chunker + prefix + tokenizer + params version
+    source_account_id: uuid.UUID                # Account scope
+    source_account_num: int                     # Integer account surrogate for search pushdown
+    sent_at: datetime                           # Message occurred_at
+    sender_handle: str                          # First from address, normalized
+    recipient_handles: tuple[str, ...]          # To/Cc/Bcc addresses
+    participant_handles: tuple[str, ...]        # Sorted union of all participant addresses
+    direction: str                              # received, sent, self, or unknown
+    has_attachment: bool                        # Message-level attachment flag
+    is_trash_or_spam: bool                      # Message-level trash/spam flag
+    tags: tuple[str, ...]                       # Namespaced provider tags
+    meta: dict = field(default_factory=dict)    # JSONB flags such as header_only, truncated, or partial
+
+class ChunkBuildRow:
+    chunk_kind: str                             # email_body, email_quote, or attachment
+    attachment_id: uuid.UUID | None             # Set only for attachment chunks
+    index_version: str                          # Version that produced this build
+    source_digest: str | None                   # Input digest used to decide staleness
+    built_at: datetime                          # When the inputs were read
+    chunk_count: int                            # Number of chunks produced for this source
+    status: str                                 # done, empty, or failed
+    error: str | None                           # Failure reason, if any
+```
 
 ### Embedding
 
