@@ -4,6 +4,9 @@ Creates a dedicated Keycloak user, lets the backend provision its Rosalind
 account just-in-time, imports the synthetic mbox through the CLI, runs the full
 index pipeline, and verifies the split, canonicalize, reconcile, enrich,
 attachments, and chunk stages.
+
+The embed stage requires the native FlagEmbedding backend, so it is verified by a
+separate ``rag``-marked test that reuses the native RAG stack.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from email.utils import getaddresses
 from pathlib import Path
 
 import psycopg
+import pytest
 from support import db
 
 FIXTURE = (
@@ -40,6 +44,9 @@ EXPECTED_CHUNK_COUNT = 19
 EXPECTED_BODY_CHUNK_COUNT = 18
 EXPECTED_QUOTE_CHUNK_COUNT = 1
 EXPECTED_CHUNK_BUILD_COUNT = 19
+EXPECTED_EMBEDDED_CHUNK_COUNT = 16
+EXPECTED_SKIPPED_EMBEDDING_COUNT = 3
+EXPECTED_EMBEDDING_SPACE = "bge_m3_v1"
 IMPORT_ID_RE = re.compile(r"ID:\s+([0-9a-f-]{36})")
 
 THREAD_ROOT_OVERRIDES = {
@@ -1136,6 +1143,121 @@ def _verify_chunk_stage(
     return chunks, builds
 
 
+def _embedding_snapshot(
+    conn: psycopg.Connection,
+    source_id: str,
+) -> list[tuple]:
+    return db.query_all(
+        conn,
+        "SELECT m.message_id, c.id::text, c.chunk_kind, c.seq, "
+        "c.text_sha256, c.is_trash_or_spam, c.emb_bge_m3_v1 IS NOT NULL, "
+        "c.emb_bge_m3_v1_text_sha256, md5(c.emb_bge_m3_v1::text), "
+        "vector_dims(c.emb_bge_m3_v1::vector) "
+        "FROM search.chunk c "
+        "JOIN core.email_message m ON m.id = c.email_id "
+        "WHERE c.source_account_id = %s::uuid "
+        "ORDER BY m.message_id, c.chunk_kind, c.seq",
+        (source_id,),
+    )
+
+
+def _verify_embed_stage(
+    conn: psycopg.Connection,
+    source_id: str,
+    expected: list[ExpectedMessage],
+    events: list[dict],
+) -> list[tuple]:
+    embed_events = _stage_events(events, "embed")
+    starts = [event for event in embed_events if event["phase"] == "start"]
+    assert len(starts) == 1
+    assert not any(event["phase"] in {"error", "blocked"} for event in embed_events)
+
+    done = _done_event(events, "embed")
+    assert done["processed"] == 0
+    assert done["details"] == {
+        "embedded": 0,
+        "reused": 0,
+        "skipped_not_embeddable": EXPECTED_SKIPPED_EMBEDDING_COUNT,
+        "failed": 0,
+        "budget_exhausted": False,
+    }
+
+    snapshot = _embedding_snapshot(conn, source_id)
+    assert len(snapshot) == EXPECTED_CHUNK_COUNT
+    assert {row[0] for row in snapshot} == {message.external_id for message in expected}
+
+    embedded = 0
+    skipped = 0
+    for row in snapshot:
+        (
+            _message_id,
+            _chunk_id,
+            chunk_kind,
+            _seq,
+            text_sha256,
+            is_trash_or_spam,
+            has_vector,
+            embedding_text_sha256,
+            vector_md5,
+            vector_dimensions,
+        ) = row
+        embeddable = chunk_kind != "email_quote" and not is_trash_or_spam
+        if embeddable:
+            embedded += 1
+            assert has_vector is True
+            assert embedding_text_sha256 == text_sha256
+            assert vector_md5 is not None
+            assert vector_dimensions == 1024
+        else:
+            skipped += 1
+            assert has_vector is False
+            assert embedding_text_sha256 is None
+            assert vector_md5 is None
+            assert vector_dimensions is None
+
+    assert embedded == EXPECTED_EMBEDDED_CHUNK_COUNT
+    assert skipped == EXPECTED_SKIPPED_EMBEDDING_COUNT
+    assert _count(conn, "SELECT count(*) FROM search.embedding_failure") == 0
+    assert (
+        _count(
+            conn,
+            "SELECT count(*) FROM search.embedding_run "
+            "WHERE space = %s AND chunks_embedded = %s AND chunks_failed = 0",
+            (EXPECTED_EMBEDDING_SPACE, EXPECTED_EMBEDDED_CHUNK_COUNT),
+        )
+        >= 1
+    )
+
+    latest_run = db.query_one(
+        conn,
+        "SELECT space, chunks_embedded, chunks_failed, locality, host, "
+        "dtype, revision, device_class "
+        "FROM search.embedding_run "
+        "ORDER BY started_at DESC, finished_at DESC LIMIT 1",
+    )
+    assert latest_run is not None
+    (
+        space,
+        chunks_embedded,
+        chunks_failed,
+        locality,
+        host,
+        dtype,
+        revision,
+        device_class,
+    ) = latest_run
+    assert space == EXPECTED_EMBEDDING_SPACE
+    assert chunks_embedded == 0
+    assert chunks_failed == 0
+    assert locality == "local"
+    assert host == "in-process (FlagEmbedding)"
+    assert dtype == "float16"
+    assert revision == ""
+    assert device_class in {"mps", "cpu"}
+
+    return snapshot
+
+
 # ---------------------------------------------------------------------------
 # Main test
 # ---------------------------------------------------------------------------
@@ -1204,3 +1326,21 @@ def test_cli_import_and_index_pipeline(
         ctx, split_pg_conn, rerun_events, rerun=True
     )
     assert rerun_chunk_snapshot == chunk_snapshot
+
+
+@pytest.mark.rag
+def test_cli_index_pipeline_embeddings(
+    rag_corpus,
+    rag_run_rosalind,
+) -> None:
+    expected = _expected_messages()
+    before = _embedding_snapshot(rag_corpus.conn, rag_corpus.source_id)
+
+    rerun = rag_run_rosalind(
+        ["--json", "index", rag_corpus.import_id, "--stage", "embed"]
+    )
+    assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+    events = _parse_events(rerun.stdout)
+
+    after = _verify_embed_stage(rag_corpus.conn, rag_corpus.source_id, expected, events)
+    assert after == before

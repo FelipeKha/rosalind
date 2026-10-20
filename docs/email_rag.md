@@ -219,7 +219,12 @@ class ChunkBuildRow:
 ```
 
 ### Embedding
+Turns indexed chunks into vectors for semantic retrieval.
+- Only embed email_body chunks
+- Embeds text_for_index, which includes the contextual prefix.
+- FlagEmbedding embeds with BAAI/bge-m3.
 
+Embeddings are persisted in chunk document at emb_bge_m3_v1.
 
 ## Indexing
 
