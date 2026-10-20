@@ -2,7 +2,8 @@
 
 Creates a dedicated Keycloak user, lets the backend provision its Rosalind
 account just-in-time, imports the synthetic mbox through the CLI, runs the full
-index pipeline, and verifies the split, canonicalize, and reconcile stages.
+index pipeline, and verifies the split, canonicalize, reconcile, and enrich
+stages.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ FIXTURE = (
 )
 EXPECTED_MESSAGE_COUNT = 18
 SELF_EMAIL = "felipe@example.test"
+EXPECTED_ENRICH_STAGE_VERSION = "enrich/1+selectolax/1+lingua/2"
 IMPORT_ID_RE = re.compile(r"ID:\s+([0-9a-f-]{36})")
 
 THREAD_ROOT_OVERRIDES = {
@@ -664,6 +666,169 @@ def _verify_reconcile_stage(
     return thread_ids
 
 
+def _verify_enrich_stage(
+    ctx: PipelineContext,
+    conn: psycopg.Connection,
+    events: list[dict],
+    *,
+    rerun: bool = False,
+) -> tuple[list[tuple], list[tuple]]:
+    enrich_events = _stage_events(events, "enrich")
+    starts = [event for event in enrich_events if event["phase"] == "start"]
+    assert len(starts) == 1
+
+    done = _done_event(events, "enrich")
+    expected_processed = 0 if rerun else EXPECTED_MESSAGE_COUNT
+    expected_done = 0 if rerun else EXPECTED_MESSAGE_COUNT
+    assert done["processed"] == expected_processed
+    assert done["details"] == {
+        "done": expected_done,
+        "empty": 0,
+        "failed": 0,
+        "budget_exhausted": False,
+    }
+
+    texts = db.query_all(
+        conn,
+        "SELECT m.message_id, t.clean_text, t.clean_method, t.status, "
+        "t.error, t.stage_version, t.input_sha256, t.segments_digest, "
+        "t.created_at, t.updated_at, m.content_sha256 "
+        "FROM derived.email_text t "
+        "JOIN core.email_message m ON m.id = t.email_id "
+        "ORDER BY m.message_id",
+    )
+    assert len(texts) == EXPECTED_MESSAGE_COUNT
+    assert {row[0] for row in texts} == {
+        message.external_id for message in ctx.expected
+    }
+
+    clean_by_id: dict[str, str] = {}
+    for row in texts:
+        (
+            message_id,
+            clean_text,
+            clean_method,
+            status,
+            error,
+            stage_version,
+            input_sha256,
+            segments_digest,
+            _created_at,
+            _updated_at,
+            content_sha256,
+        ) = row
+        clean_by_id[message_id] = clean_text
+        assert clean_text
+        assert status == "done"
+        assert error is None
+        assert stage_version == EXPECTED_ENRICH_STAGE_VERSION
+        assert input_sha256 == content_sha256
+        assert segments_digest is not None
+        assert clean_method == (
+            "html" if message_id == "msg-015@example.test" else "plain"
+        )
+
+    assert "réunion" in clean_by_id["msg-006@example.test"]
+    assert "25 March" in clean_by_id["msg-015@example.test"]
+    assert "> 12 March works for me" in clean_by_id["msg-003@example.test"]
+
+    segments = db.query_all(
+        conn,
+        "SELECT m.message_id, s.seq, s.kind, s.start_offset, s.end_offset, "
+        "s.language, s.language_confidence, s.quote_depth, "
+        "s.attribution_raw, s.quoted_author, s.quoted_at, "
+        "s.covered_by_email_id, s.coverage_checked_at "
+        "FROM derived.email_segment s "
+        "JOIN core.email_message m ON m.id = s.email_id "
+        "ORDER BY m.message_id, s.seq",
+    )
+    assert len(segments) == 20
+
+    by_message: dict[str, list[tuple]] = {}
+    for segment in segments:
+        by_message.setdefault(segment[0], []).append(segment)
+
+    assert set(by_message) == set(clean_by_id)
+    kinds = Counter(segment[2] for segment in segments)
+    assert kinds == {"new": 19, "quoted": 1}
+
+    languages: Counter = Counter()
+    for message_id, message_segments in by_message.items():
+        clean_text = clean_by_id[message_id]
+        assert [segment[1] for segment in message_segments] == list(
+            range(len(message_segments))
+        )
+        assert any(segment[2] == "new" for segment in message_segments)
+
+        previous_end = 0
+        for segment in message_segments:
+            (
+                _message_id,
+                _seq,
+                kind,
+                start_offset,
+                end_offset,
+                language,
+                language_confidence,
+                quote_depth,
+                attribution_raw,
+                quoted_author,
+                quoted_at,
+                covered_by_email_id,
+                coverage_checked_at,
+            ) = segment
+            assert start_offset == previous_end
+            assert end_offset > start_offset
+            previous_end = end_offset
+
+            assert attribution_raw is None
+            assert quoted_author is None
+            assert quoted_at is None
+            assert covered_by_email_id is None
+            assert coverage_checked_at is None
+
+            if kind == "quoted":
+                assert quote_depth == 1
+            else:
+                assert quote_depth == 0
+
+            if language is None:
+                assert language_confidence is None
+            else:
+                assert language_confidence is not None
+                assert 0 < language_confidence <= 1
+            languages[language] += 1
+
+        assert previous_end == len(clean_text)
+
+    assert dict(languages) == {"en": 18, "fr": 1, None: 1}
+
+    msg_003 = by_message["msg-003@example.test"]
+    quoted = [segment for segment in msg_003 if segment[2] == "quoted"]
+    assert len(quoted) == 1
+    assert quoted[0][3:5] == (92, 169)
+    assert clean_by_id["msg-003@example.test"][92:169].startswith(
+        "> 12 March works for me"
+    )
+    tail = msg_003[-1]
+    assert tail[2] == "new"
+    assert tail[5] is None
+    assert tail[4] - tail[3] == 13
+
+    msg_006 = by_message["msg-006@example.test"]
+    assert len(msg_006) == 1
+    assert msg_006[0][5] == "fr"
+
+    for message_id, message_segments in by_message.items():
+        if message_id == "msg-006@example.test":
+            continue
+        for segment in message_segments:
+            if segment[5] is not None:
+                assert segment[5] == "en"
+
+    return texts, segments
+
+
 # ---------------------------------------------------------------------------
 # Main test
 # ---------------------------------------------------------------------------
@@ -697,6 +862,7 @@ def test_cli_import_and_index_pipeline(
     _verify_split_stage(ctx, split_pg_conn, s3_client, split_bucket, events)
     _verify_canonicalize_stage(ctx, split_pg_conn, s3_client, split_bucket, events)
     thread_ids = _verify_reconcile_stage(ctx, split_pg_conn, events)
+    enrich_snapshot = _verify_enrich_stage(ctx, split_pg_conn, events)
 
     rerun_events = _run_index(split_run_rosalind, import_id)
     _verify_split_stage(
@@ -717,3 +883,7 @@ def test_cli_import_and_index_pipeline(
     )
     rerun_thread_ids = _verify_reconcile_stage(ctx, split_pg_conn, rerun_events)
     assert rerun_thread_ids == thread_ids
+    rerun_enrich_snapshot = _verify_enrich_stage(
+        ctx, split_pg_conn, rerun_events, rerun=True
+    )
+    assert rerun_enrich_snapshot == enrich_snapshot

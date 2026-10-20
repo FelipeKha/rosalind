@@ -117,9 +117,33 @@ class CanonicalEmail:
 ```
 
 ### Reconcile
-Assigns every canonical message to a conversation thread.
+Assigns every canonical message to a conversation thread using a JWZ-style algorithm.
 
 ### Enrich
+Turns canonical email bodies into clean, segmented, language-annotated text for later chunking and retrieval.
+
+```
+class EmailSegment:
+    seq: int                                    # Position within the message, starting at 0
+    kind: SegmentKind                           # new, quoted, forwarded, signature, or reserved disclaimer
+    start_offset: int                           # Code-point offsets into EmailText.clean_text
+    end_offset: int                             # Code-point offsets into EmailText.clean_text
+    quote_depth: int = 0                        # Nesting depth for quoted content
+    attribution_raw: str | None = None          # Raw attribution line, e.g. “On Tue … wrote:”
+    quoted_author: str | None = None            # Parsed attribution, currently deferred
+    quoted_at: str | None = None                # Parsed attribution, currently deferred
+    language: str | None = None                 # ISO 639-1 code, or null below the length/confidence threshold
+    language_confidence: float | None = None    # Detector confidence
+    # Set by the (deferred) 4C coverage pass; included in ``segments_digest`` so
+    # a later coverage change invalidates the chunk source digest.
+    covered_by_email_id: str | None = None      # Set by the deferred 4C quote-coverage pass
+
+class EmailText:
+    clean_text: str                     # normalized text the enrich stage derived from plain or HTML body content
+    clean_method: CleanMethod           # plain or html — which representation was used
+    segments: tuple[EmailSegment, ...]  # Lossless tiling of clean_text into EmailSegment spans
+```
+
 
 ### Extraction
 
