@@ -1,0 +1,6 @@
+# Semantic-only retrieval: vector search with no keyword branch.
+name: mode-semantic
+dataset: ../dataset.jsonl
+description: Semantic-only retrieval (pgvector), no BM25.
+overrides:
+  mode: semantic

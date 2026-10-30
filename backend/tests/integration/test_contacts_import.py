@@ -92,7 +92,7 @@ def test_import_api_contacts_ingests_and_stores_sync_token(
     service = _service(gateway)
 
     import_ = uow.imports.create(
-        account_id=account_id, source_account_id=source.id, type_="api"
+        account_id=account_id, source_account_id=source.id, via="api"
     )
     outcome = service.import_api_contacts(uow, source, import_)
     uow.commit()
@@ -125,13 +125,13 @@ def test_import_api_contacts_is_idempotent(
     service = _service(gateway)
 
     first = uow.imports.create(
-        account_id=account_id, source_account_id=source.id, type_="api"
+        account_id=account_id, source_account_id=source.id, via="api"
     )
     service.import_api_contacts(uow, source, first)
     uow.commit()
 
     second = uow.imports.create(
-        account_id=account_id, source_account_id=source.id, type_="api"
+        account_id=account_id, source_account_id=source.id, via="api"
     )
     outcome = service.import_api_contacts(uow, source, second)
     uow.commit()
@@ -156,7 +156,7 @@ def test_import_api_contacts_skips_unparseable_contact(
     service = _service(gateway)
 
     import_ = uow.imports.create(
-        account_id=account_id, source_account_id=source.id, type_="api"
+        account_id=account_id, source_account_id=source.id, via="api"
     )
     outcome = service.import_api_contacts(uow, source, import_)
     uow.commit()

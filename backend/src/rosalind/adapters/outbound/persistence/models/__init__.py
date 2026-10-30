@@ -59,6 +59,7 @@ from rosalind.adapters.outbound.persistence.models.search import (
     ChunkBuild,
     EmbeddingFailure,
     EmbeddingRun,
+    SearchRequestLog,
 )
 from rosalind.adapters.outbound.persistence.models.source import (
     OAuthAuthRequest,
@@ -115,6 +116,7 @@ __all__ = [
     "PersonRelationAssertion",
     "PersonUrl",
     "PersonUrlAssertion",
+    "SearchRequestLog",
     "SourceAccount",
     "SourceAssertion",
     "SourceIdentity",

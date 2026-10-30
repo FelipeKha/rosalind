@@ -1,0 +1,4 @@
+# Minimal no-op experiment: name + dataset only, all defaults.
+name: baseline
+dataset: ../dataset.jsonl
+description: Baseline hybrid search with default pipeline settings.

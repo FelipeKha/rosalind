@@ -3,6 +3,10 @@
 An import is a discrete ingestion job/dataset bound to a source account. It
 tracks two independent dimensions: ``ingestion_status`` (was the data brought
 in?) and ``processing_status`` (has it been turned into canonical data?).
+
+``via`` records how the data entered Rosalind (a local file/folder upload or a
+provider API pull). The format of uploaded files is tracked per file, not on the
+import.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ class Import:
     account_id: uuid.UUID | None
     source_account_id: uuid.UUID | None
     source_name: str | None
-    type: str
+    via: str
     ingestion_status: str
     processing_status: str
     created_at: datetime

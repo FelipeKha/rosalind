@@ -119,6 +119,20 @@ def test_model_loaded_once() -> None:
     assert len(created) == 1
 
 
+def test_warmup_loads_model_once_without_encoding() -> None:
+    created = []
+
+    def factory(model_id, **kwargs):
+        created.append(model_id)
+        return _FakeModel(model_id, **kwargs)
+
+    embedder = _embedder(model_class=factory)
+    embedder.warmup()
+    embedder.warmup()
+
+    assert len(created) == 1
+
+
 def test_invalid_device_raises() -> None:
     with pytest.raises(ValueError, match="unsupported embedder device"):
         FlagEmbeddingEmbedder(_SPACE, device="cuda")

@@ -22,18 +22,18 @@ from rosalind.application.errors import (
     ImportNotFoundError,
     InvalidImportStateError,
     InvalidManifestError,
-    UnsupportedImportTypeError,
+    UnsupportedImportViaError,
 )
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.processing import ProcessingService
-from rosalind.application.services.sources import SourceService
+from rosalind.application.services.sources import LOCAL_SOURCE_NAME, SourceService
 from rosalind.domain.source import Import, ImportFile
 
 INGESTION_UPLOADING = "uploading"
 
-IMPORT_TYPE_TAKEOUT = "takeout"
-IMPORT_TYPE_API = "api"
+VIA_FILE = "file"
+VIA_API = "api"
 
 
 class ImportService:
@@ -48,25 +48,33 @@ class ImportService:
         self._processing = processing
 
     def create_import(
-        self, uow: UnitOfWork, account_id: uuid.UUID, source_name: str, type_: str
+        self, uow: UnitOfWork, account_id: uuid.UUID, source_name: str, via: str
     ) -> Import:
-        """Create an import, and for API-backed imports ingest it immediately."""
-        source = self._sources.resolve_source(uow, account_id, source_name)
+        """Create an import, and for API-backed imports ingest it immediately.
 
-        if type_ == IMPORT_TYPE_TAKEOUT:
+        ``source_name`` is ``google`` (an existing connected source) or ``none``
+        (a local, file-based import that resolves to the sentinel source). API
+        imports always require a real provider source.
+        """
+        if via == VIA_API:
+            source = self._sources.resolve_source(uow, account_id, source_name)
             import_ = uow.imports.create(
-                account_id=account_id, source_account_id=source.id, type_=type_
-            )
-        elif type_ == IMPORT_TYPE_API:
-            import_ = uow.imports.create(
-                account_id=account_id, source_account_id=source.id, type_=type_
+                account_id=account_id, source_account_id=source.id, via=via
             )
             self._processing.import_api_contacts(uow, source, import_)
             import_ = uow.imports.mark_completed(
                 import_.id, completed_at=datetime.now(UTC)
             )
+        elif via == VIA_FILE:
+            if source_name == LOCAL_SOURCE_NAME:
+                source = self._sources.resolve_local_source(uow, account_id)
+            else:
+                source = self._sources.resolve_source(uow, account_id, source_name)
+            import_ = uow.imports.create(
+                account_id=account_id, source_account_id=source.id, via=via
+            )
         else:
-            raise UnsupportedImportTypeError(f"unsupported import type {type_!r}")
+            raise UnsupportedImportViaError(f"unsupported import via {via!r}")
 
         uow.commit()
         return replace(import_, source_name=source.name)

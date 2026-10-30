@@ -21,8 +21,8 @@ class InvalidManifestError(IngestionError):
     """Raised when a completion manifest is malformed."""
 
 
-class UnsupportedImportTypeError(IngestionError):
-    """Raised when an import type has no known ingestion path."""
+class UnsupportedImportViaError(IngestionError):
+    """Raised when an import ``via`` has no known ingestion path."""
 
 
 class InvalidPayloadError(IngestionError):

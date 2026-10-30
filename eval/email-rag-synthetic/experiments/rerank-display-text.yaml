@@ -1,0 +1,8 @@
+# Rerank passage text without the contextual prefix (display text instead of
+# the prefixed index text).
+name: rerank-display-text
+dataset: ../dataset.jsonl
+description: Cross-encoder sees display text, not the contextual prefix.
+overrides:
+  reranker: bge-reranker-v2-m3/v1
+  chunk_prefix: false

@@ -7,10 +7,11 @@ unnecessary chunk rebuilds, stable chunk text, and no redundant embedding work.
 from __future__ import annotations
 
 import pytest
-
 from support import db
 
 pytestmark = pytest.mark.rag
+
+SELF_EMAIL = "felipe@example.test"
 
 
 def _count(conn, sql, params=None) -> int:
@@ -34,7 +35,7 @@ def test_rerun_is_idempotent(rag_corpus, rag_run_rosalind) -> None:
         ),
     }
 
-    result = rag_run_rosalind(["pipeline", "run", import_id])
+    result = rag_run_rosalind(["index", import_id, "--self-email", SELF_EMAIL])
     assert result.returncode == 0, result.stderr
 
     assert _count(conn, "SELECT count(*) FROM core.email_message") == before["emails"]

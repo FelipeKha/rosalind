@@ -38,8 +38,15 @@ def file_info(entry: Path, root: Path) -> FileInfo:
     )
 
 
-def discover(root: Path) -> list[FileInfo]:
-    return [file_info(entry, root) for entry in discover_paths(root)]
+def discover(path: Path) -> list[FileInfo]:
+    """Collect files for an import from a directory or a single file.
+
+    A single file is recorded under its own name (relative to its parent), so a
+    one-file import produces a one-entry manifest.
+    """
+    if path.is_file():
+        return [file_info(path, path.parent)]
+    return [file_info(entry, path) for entry in discover_paths(path)]
 
 
 def sha256_file(path: Path) -> str:

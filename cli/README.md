@@ -26,6 +26,12 @@ rosalind [command] [flags]
 
 Emit machine-readable JSON instead of human-readable output.
 
+`--profile <name>`
+
+Load the config profile `<config_dir>/<name>.yaml` on top of the base config
+(equivalent to setting `ROSALIND_PROFILE`). Profiles keep separate backends and
+credentials, e.g. `--profile eval`.
+
 ### Commands
 
 - [rosalind status](#rosalind-status)
@@ -33,7 +39,9 @@ Emit machine-readable JSON instead of human-readable output.
 - [rosalind source](#rosalind-source)
 - [rosalind import](#rosalind-import)
 - [rosalind process](#rosalind-process)
+- [rosalind index](#rosalind-index)
 - [rosalind query](#rosalind-query)
+- [rosalind search](#rosalind-search)
 
 ### Exit codes
 
@@ -328,34 +336,40 @@ rosalind import [command]
 Create an import from a source.
 
 ```
-rosalind import create --source <name> --type <takeout|api> [<path>] [flags]
+rosalind import create [--source <google|none>] [--via <file|api>] [<path>]
 ```
 
 ### Options
 
-`--source <string>` (required)
+`--source <google|none>` (default: `none`)
 
-Source name (slug).
+Where the data comes from. `google` uses an existing connected source; `none`
+uses a built-in local source for file-based imports.
 
-`--type <string>` (required)
+`--via <file|api>` (default: `file`)
 
-Import type: `takeout` (a local provider export) or `api` (import all contacts
-directly from a connected provider).
+How the data enters Rosalind. `file` uploads a local file or folder; `api`
+pulls all contacts directly from a connected provider (requires
+`--source google`).
 
 ### Arguments
 
 `<path>`
 
-Path to a provider export. Required for `--type takeout`.
+A file or folder to upload. Required for `--via file`, and not accepted for
+`--via api`. The import format is inferred from each file's extension.
 
 ### Examples
 
 ```bash
-# Import a local Google Takeout export
-$ rosalind import create --source google --type takeout ~/Downloads/Takeout
+# Import a local Google Takeout export (a folder)
+$ rosalind import create --source google ~/Downloads/Takeout
+
+# Import a single mbox archive
+$ rosalind import create ~/Downloads/rosalind_synthetic_emails.mbox
 
 # Import all contacts directly from the Google People API
-$ rosalind import create --source google --type api
+$ rosalind import create --source google --via api
 ```
 
 ### See also
@@ -374,8 +388,8 @@ rosalind import list [flags]
 
 ```bash
 $ rosalind import list
-ID   SOURCE  TYPE      INGESTION   PROCESSING  FILES  SIZE
-42   google  takeout   completed   pending     1842   4.8 GB
+ID   SOURCE  VIA    INGESTION   PROCESSING  FILES  SIZE
+42   google  file   completed   pending     1842   4.8 GB
 ```
 
 ### See also
@@ -472,6 +486,58 @@ Processing import completed
 
 - [rosalind process](#rosalind-process)
 
+## rosalind index
+
+Build the searchable index for an import: split raw archives, canonicalize,
+enrich, chunk, and embed. Running it twice is idempotent.
+
+```
+rosalind index <import-id> [--stage <stage>]
+```
+
+### Options
+
+`--stage <string>`
+
+Run a single stage (`split`, `canonicalize`, `reconcile`, `enrich`,
+`attachments`, `chunk`, `embed`) instead of all of them.
+
+`--self-email <string>`
+
+Email address to treat as yours when computing message direction. When
+indexing an mbox archive, `rosalind index` prompts for it (defaulting to the
+signed-in account's email). In a non-interactive run (piped input, no TTY, or
+`--json`), pass this flag explicitly.
+
+### Arguments
+
+`<import-id>`
+
+Import id.
+
+### Examples
+
+```bash
+# Build the full index for an import
+$ rosalind index 42
+Email address to treat as yours [me@example.com]:
+Index complete
+  Processed: 1842 messages
+  Created:   1842
+  Reused:    0
+  Failed:    0
+
+# Rebuild only the embeddings
+$ rosalind index 42 --stage embed
+
+# Non-interactive mbox import
+$ rosalind index 42 --self-email me@example.com
+```
+
+### See also
+
+- [rosalind import](#rosalind-import)
+
 ## rosalind query
 
 Query canonical data.
@@ -535,11 +601,111 @@ Person id.
 
 - [rosalind query](#rosalind-query)
 
+## rosalind search
+
+Search indexed email. The query is natural language; `--keywords` adds exact
+terms. Results are ranked, and `--cursor` pages through them.
+
+```
+rosalind search [query] [flags]
+```
+
+### Options
+
+`--keywords <string>`, `-k <string>`
+
+Exact-match terms for keyword search (names, amounts). Supports quoted phrases.
+
+`--sender <string>`, `-s <string>`
+
+Sender address or entity id. Repeat for more than one (OR).
+
+`--since <date>`
+
+Inclusive lower date bound (`YYYY-MM-DD`).
+
+`--before <date>`
+
+Exclusive upper date bound (`YYYY-MM-DD`).
+
+`--has-attachment` / `--no-attachment`
+
+Restrict to messages with (or without) attachments.
+
+`--mode <hybrid|lexical|semantic>` (default: `hybrid`)
+
+Retrieval mode.
+
+`--limit <int>`, `-n <int>` (default: `10`)
+
+Maximum number of results (1–25).
+
+`--cursor <string>`
+
+Opaque pagination cursor from a previous search.
+
+### Arguments
+
+`query`
+
+Natural-language query. Optional when filters are given.
+
+### Examples
+
+```bash
+# Natural-language search
+$ rosalind search "roofer invoice"
+
+# Exact terms, scoped to a sender and a date range
+$ rosalind search --keywords '"market report"' --sender boss@example.com --since 2024-01-01
+
+# Only messages with attachments
+$ rosalind search "contract" --has-attachment
+
+# Page through results
+$ rosalind search "invoice" --limit 25 --cursor <token>
+```
+
+### See also
+
+- [rosalind index](#rosalind-index)
+- [rosalind query](#rosalind-query)
+
 ## Configuration
+
+The CLI reads settings from environment variables and an optional YAML file.
+Precedence, highest first:
+
+1. Environment variables (`ROSALIND_*`)
+2. The selected profile file `<config_dir>/<profile>.yaml`
+3. The base file (`ROSALIND_CONFIG`, or `<config_dir>/rosalind.yaml`)
+4. Built-in defaults
+
+`config_dir` is `ROSALIND_CONFIG_DIR` (default `~/.config/rosalind`). Profiles
+are selected with `--profile <name>` or `ROSALIND_PROFILE`; a missing base file
+is ignored, but a missing profile file is an error. Stored credentials follow
+the profile (`<config_dir>/<profile>/credentials.json`, or
+`<config_dir>/credentials.json` for the default config).
+
+Config files are optional: the built-in defaults already target the local
+dev/eval endpoints. Use one only to point at another deployment:
+
+```yaml
+# ~/.config/rosalind/rosalind.yaml
+api_url: https://rosalind.example.com
+s3_endpoint: https://rosalind.example.com:8333
+keycloak_url: https://auth.example.com
+```
+
+### Environment variables
 
 | Variable                  | Default                  | Description                     |
 |---------------------------|--------------------------|---------------------------------|
+| `ROSALIND_CONFIG`         | `<config_dir>/rosalind.yaml` | Base config file path       |
+| `ROSALIND_CONFIG_DIR`     | `~/.config/rosalind`     | Config and credentials directory |
+| `ROSALIND_PROFILE`        | (none)                   | Profile layered over the base config |
 | `ROSALIND_API_URL`        | `http://localhost:8000`  | Base URL of the backend         |
+| `ROSALIND_SEARCH_TIMEOUT` | `60.0`                   | `rosalind search` request timeout, in seconds |
 | `ROSALIND_S3_ENDPOINT`    | `http://localhost:8333`  | S3-compatible endpoint (SeaweedFS) |
 | `ROSALIND_S3_ACCESS_KEY`  | `rosalind`               | S3 access key                   |
 | `ROSALIND_S3_SECRET_KEY`  | `rosalind`               | S3 secret key                   |

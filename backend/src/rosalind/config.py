@@ -1,10 +1,94 @@
-"""Backend configuration loaded from environment variables."""
+"""Backend configuration loaded from environment variables and an optional YAML file.
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+Precedence: explicit init args > environment variables > YAML file > defaults.
+The YAML file is named by ``ROSALIND_CONFIG`` (default ``rosalind.yaml``); if it
+does not exist the app behaves exactly as before (env-only). Nested settings
+(such as ``eval``) may be set in YAML or via ``ROSALIND_<SECTION>__<FIELD>``.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import BaseModel
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+# Absolute path to the bundled bge-m3 tokenizer asset. Anchored to the backend
+# project root (``backend/``) rather than the process CWD, which varies: the
+# ``just serve`` recipes run uvicorn with CWD=``backend/``.
+_DEFAULT_CHUNK_TOKENIZER_PATH = str(
+    Path(__file__).resolve().parents[2] / "assets" / "bge-m3" / "tokenizer.json"
+)
+
+
+class EvalSettings(BaseModel):
+    """Evaluation subsystem settings. Disabled unless explicitly enabled."""
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = False
+    runs_dir: Path = Path("runs")
+
+
+class YamlConfigSettingsSource(PydanticBaseSettingsSource):
+    """Load settings from the YAML file named by ``ROSALIND_CONFIG``.
+
+    A missing file is not an error; a malformed or non-mapping file is.
+    """
+
+    def __init__(self, settings_cls: type[BaseSettings]) -> None:
+        super().__init__(settings_cls)
+        path = os.environ.get("ROSALIND_CONFIG", "rosalind.yaml")
+        config_path = Path(path)
+        if not config_path.is_file():
+            self._data: dict[str, Any] = {}
+            return
+        loaded = yaml.safe_load(config_path.read_text())
+        if loaded is None:
+            self._data = {}
+        elif isinstance(loaded, dict):
+            self._data = loaded
+        else:
+            raise ValueError(f"config file must be a mapping: {config_path}")
+
+    def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
+        return self._data.get(field_name), field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return self._data
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ROSALIND_")
+    model_config = SettingsConfigDict(
+        env_prefix="ROSALIND_",
+        env_nested_delimiter="__",
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            YamlConfigSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
+    eval: EvalSettings = EvalSettings()
 
     database_url: str = "postgresql+psycopg://rosalind:rosalind@localhost:5432/rosalind"
     s3_bucket: str = "rosalind"
@@ -12,6 +96,13 @@ class Settings(BaseSettings):
     s3_access_key: str = "rosalind"
     s3_secret_key: str = "rosalind"
     s3_region: str = "us-east-1"
+
+    log_level: str = "INFO"
+    log_format: str = "console"
+    log_query_text: bool = False
+
+    # How long rows in ``search.request_log`` are retained before pruning.
+    search_request_log_retention_days: int = 30
 
     google_client_id: str | None = None
     google_client_secret: str | None = None
@@ -64,7 +155,7 @@ class Settings(BaseSettings):
     chunk_max_chunks_per_attachment: int = 20
     chunk_include_signature: bool = True
     chunk_batch_size: int = 500
-    chunk_tokenizer_path: str = "backend/assets/bge-m3/tokenizer.json"
+    chunk_tokenizer_path: str = _DEFAULT_CHUNK_TOKENIZER_PATH
     chunk_tokenizer_sha256: str | None = None
 
     embedding_space: str = "bge_m3_v1"
@@ -83,6 +174,9 @@ class Settings(BaseSettings):
     embed_trash_spam: bool = False
     allow_remote_embedding: bool = False
     embed_inline_budget_seconds: float = 60.0
+    # Load the in-process embedder (and reranker) at startup instead of on the
+    # first search, so cold-start latency does not land on a user request.
+    embedder_warmup: bool = True
 
     # Online search (Prepare step). Budgets and fusion settings are
     # configuration-controlled: they participate in the plan fingerprint, so the

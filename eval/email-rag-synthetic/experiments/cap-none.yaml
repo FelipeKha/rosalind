@@ -1,0 +1,8 @@
+# Cap effectively disabled. The app requires a positive cap, so a large value
+# stands in for "no cap".
+name: cap-none
+dataset: ../dataset.jsonl
+description: No effective per-message chunk cap.
+overrides:
+  fusion:
+    max_chunks_per_item: 1000

@@ -197,3 +197,70 @@ class EmbeddingRun(Base):
     locality: Mapped[str] = mapped_column(Text, nullable=False)
     chunks_embedded: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     chunks_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class SearchRequestLog(Base):
+    """Content-free summary of one completed online search run.
+
+    This is the durable form of the minimal ``SearchTrace`` projection: it holds
+    the plan fingerprint, versions, per-stage counts/flags, timings, and the
+    returned chunk/item IDs. It never holds query text, filters' values (only
+    their names and sizes), or chunk text. Rows cascade-delete with the account
+    and are pruned by the configurable retention window.
+    """
+
+    __tablename__ = "request_log"
+    __table_args__ = (
+        Index("request_log_account_created_idx", "account_id", "created_at"),
+        Index("request_log_created_idx", "created_at"),
+        {"schema": "search"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("account.id", ondelete="CASCADE"), nullable=False
+    )
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    audit_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    client_id: Mapped[str] = mapped_column(Text, nullable=False)
+    plan_fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    mode_requested: Mapped[str] = mapped_column(Text, nullable=False)
+    mode_effective: Mapped[str] = mapped_column(Text, nullable=False)
+    strategy: Mapped[str] = mapped_column(Text, nullable=False)
+    index_version: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reranker_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    filter_names: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list
+    )
+    filter_sizes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+    lexical_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lexical_exhausted: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    lexical_filter_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    semantic_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    semantic_complete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    semantic_filter_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    semantic_scan_limit_hit: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    fused_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dropped_by_item_cap: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rerank_applied: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    rerank_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    warnings: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list
+    )
+    degraded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    timings_ms: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    returned_chunk_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(Uuid), nullable=False, default=list
+    )
+    returned_item_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(Uuid), nullable=False, default=list
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )

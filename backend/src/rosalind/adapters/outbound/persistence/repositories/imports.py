@@ -25,12 +25,16 @@ class PostgresImportRepository:
         self._session = session
 
     def create(
-        self, *, account_id: uuid.UUID, source_account_id: uuid.UUID, type_: str
+        self,
+        *,
+        account_id: uuid.UUID,
+        source_account_id: uuid.UUID | None,
+        via: str,
     ) -> Import:
         model = ImportModel(
             account_id=account_id,
             source_account_id=source_account_id,
-            type=type_,
+            via=via,
             ingestion_status="uploading",
             processing_status="pending",
         )
@@ -140,7 +144,7 @@ class PostgresImportRepository:
             account_id=model.account_id,
             source_account_id=model.source_account_id,
             source_name=source.name if source else None,
-            type=model.type,
+            via=model.via,
             ingestion_status=model.ingestion_status,
             processing_status=model.processing_status,
             created_at=model.created_at,

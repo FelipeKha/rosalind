@@ -1,0 +1,6 @@
+name: cap-3
+dataset: ../dataset.jsonl
+description: Three chunks per message after fusion.
+overrides:
+  fusion:
+    max_chunks_per_item: 3

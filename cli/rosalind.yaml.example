@@ -1,0 +1,18 @@
+# Example Rosalind CLI configuration.
+#
+# Copy this to one of the locations the CLI reads:
+#
+#   $ROSALIND_CONFIG                    # explicit file path (highest priority)
+#   $ROSALIND_CONFIG_DIR/rosalind.yaml  # base config (default ~/.config/rosalind/rosalind.yaml)
+#   $ROSALIND_CONFIG_DIR/<profile>.yaml # layered on top when ROSALIND_PROFILE=<profile>
+#
+# Environment variables (e.g. ROSALIND_API_URL) always override these values.
+#
+# The built-in defaults already target the local dev/eval endpoints
+# (backend :8000, Keycloak :8080, S3 :8333), so a config file is only needed to
+# point the CLI at a different deployment. The values below are an example of a
+# remote server; adjust or delete as needed.
+
+api_url: https://rosalind.example.com
+s3_endpoint: https://rosalind.example.com:8333
+keycloak_url: https://auth.example.com

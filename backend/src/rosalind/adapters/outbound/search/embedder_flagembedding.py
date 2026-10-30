@@ -82,6 +82,10 @@ class FlagEmbeddingEmbedder:
     def embed_query(self, text: str) -> Vector:
         return self.embed_documents([text])[0]
 
+    def warmup(self) -> None:
+        """Load the model so the first query does not pay the cold start."""
+        self._ensure_loaded()
+
     def _resolve_device(self) -> str:
         if self._resolved_device is None:
             if self._device != "auto":

@@ -34,7 +34,9 @@ class BgeM3TokenCounter:
                 f"tokenizer file {self._path} sha256 {digest} does not match "
                 f"expected {self._expected_sha256}"
             )
-        from tokenizers import Tokenizer  # imported lazily so wiring needs no asset
+        from tokenizers import (
+            Tokenizer,
+        )  # imported lazily so wiring needs no asset
 
         tokenizer_cls: Any = Tokenizer
         self._tokenizer = tokenizer_cls.from_buffer(data)

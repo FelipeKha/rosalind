@@ -48,7 +48,7 @@ def _stub_google(monkeypatch) -> None:
 
 def _connect(api_client: TestClient) -> dict[str, str]:
     response = api_client.post(
-        "/sources/connect", json={"provider": "google", "name": "google-personal"}
+        "/sources/connect", json={"provider": "google", "name": "google"}
     )
     assert response.status_code == 200
     return response.json()
@@ -159,11 +159,11 @@ def test_api_import_creates_canonical_data(
     )
 
     response = migrated_api_client.post(
-        "/imports", json={"source_name": "google-personal", "type": "api"}
+        "/imports", json={"source_name": "google", "via": "api"}
     )
     assert response.status_code == 201
     body = response.json()
-    assert body["type"] == "api"
+    assert body["via"] == "api"
     assert body["ingestion_status"] == "completed"
     assert body["processing_status"] == "completed"
 
@@ -173,10 +173,8 @@ def test_api_import_creates_canonical_data(
 
 
 def test_api_import_requires_credentials(api_client: TestClient) -> None:
-    api_client.post("/sources", json={"provider": "google", "name": "google-personal"})
-    response = api_client.post(
-        "/imports", json={"source_name": "google-personal", "type": "api"}
-    )
+    api_client.post("/sources", json={"provider": "google", "name": "google"})
+    response = api_client.post("/imports", json={"source_name": "google", "via": "api"})
     assert response.status_code == 409
 
 
@@ -199,12 +197,9 @@ def test_disconnect_removes_credentials(api_client: TestClient, monkeypatch) -> 
     assert result["revoked"] is True
     assert revoke_calls == ["refresh-token"]
 
-    api_client.post(
-        "/sources", json={"provider": "google", "name": "google-personal-2"}
-    )
     assert (
         api_client.post(
-            "/imports", json={"source_name": "google-personal-2", "type": "api"}
+            "/imports", json={"source_name": "google", "via": "api"}
         ).status_code
         == 409
     )

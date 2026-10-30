@@ -2,16 +2,24 @@
 
 Layer: ``application``. A pure function with no SQLAlchemy, pg_search, pgvector,
 or database access. It merges the two ranked chunk lists by ``chunk_id``, scores
-them with reciprocal rank fusion, sorts deterministically, applies the
-per-message chunk cap, and truncates to ``fused_k``. Its job is to get the
-relevant chunks into the reranker window, not to produce the final order.
+them, sorts deterministically, applies the per-message chunk cap, and truncates
+to ``fused_k``. Its job is to get the relevant chunks into the reranker window,
+not to produce the final order.
+
+Two strategies are supported (``FusionStrategy``):
+
+* ``RRF`` (default): reciprocal rank fusion, ``sum(weight / (k + rank))``. It
+  uses ranks only, so no normalization is needed, and is the safe zero-shot
+  choice when there are no labels.
+* ``CONVEX``: a convex combination of min-max normalized BM25 and raw cosine
+  similarity, weighted by ``convex_alpha`` (the semantic side). It can beat RRF
+  once a small labelled set is available to tune the weight.
 
 Every candidate preserves its per-branch rank and score, so later assembly can
 tell whether a result matched by keyword, by meaning, or both, and the
-evaluation harness can see which branch found the answer. RRF uses ranks, not
-BM25/cosine scores, so no normalization is needed; the raw branch scores are
-kept purely as metadata. When one branch is missing (lexical-only mode, or a
-degraded call), fusion passes the other list through unchanged.
+evaluation harness can see which branch found the answer. When one branch is
+missing (lexical-only mode, or a degraded call), fusion passes the other list
+through unchanged.
 """
 
 from __future__ import annotations
@@ -99,13 +107,13 @@ def fuse(
         raise ValueError("at least one retrieval branch is required")
 
     config = plan.fusion
-    if config.strategy is not FusionStrategy.RRF:
-        raise NotImplementedError(
-            f"fusion strategy {config.strategy.value!r} is not implemented"
-        )
-
     merged = _merge(lexical, semantic)
-    scored = _score(merged, config.rrf_k, config.lexical_weight, config.semantic_weight)
+    if config.strategy is FusionStrategy.RRF:
+        scored = _score_rrf(
+            merged, config.rrf_k, config.lexical_weight, config.semantic_weight
+        )
+    else:
+        scored = _score_convex(merged, config.convex_alpha or 0.0)
     ordered = sorted(scored, key=_sort_key)
 
     kept, dropped = _cap(ordered, config.max_chunks_per_item)
@@ -179,7 +187,7 @@ def _merge(
     return merged
 
 
-def _score(
+def _score_rrf(
     merged: dict[uuid.UUID, _Merged],
     rrf_k: int,
     lexical_weight: float,
@@ -197,6 +205,52 @@ def _score(
                 chunk_id=candidate.chunk_id,
                 email_id=candidate.email_id,
                 fused_score=score,
+                lexical_rank=candidate.lexical_rank,
+                lexical_score=candidate.lexical_score,
+                semantic_rank=candidate.semantic_rank,
+                semantic_distance=candidate.semantic_distance,
+            )
+        )
+    return scored
+
+
+def _score_convex(
+    merged: dict[uuid.UUID, _Merged],
+    alpha: float,
+) -> list[_Scored]:
+    """Convex combination of min-max normalized BM25 and raw cosine similarity.
+
+    ``alpha`` weights the semantic side in ``[0, 1]``. Lexical BM25 scores are
+    min-max normalized per query; cosine similarity (``1 - distance``) is used as
+    is. A candidate missing from a branch contributes ``0`` on that side. When
+    there is no spread in the lexical scores (or no lexical hits), the normalized
+    lexical value is ``0``.
+    """
+    lexical_values = [
+        candidate.lexical_score
+        for candidate in merged.values()
+        if candidate.lexical_score is not None
+    ]
+    low = min(lexical_values) if lexical_values else 0.0
+    high = max(lexical_values) if lexical_values else 0.0
+    span = high - low
+
+    scored: list[_Scored] = []
+    for candidate in merged.values():
+        if candidate.lexical_score is not None and span > 0.0:
+            lexical_norm = (candidate.lexical_score - low) / span
+        else:
+            lexical_norm = 0.0
+        semantic = (
+            1.0 - candidate.semantic_distance
+            if candidate.semantic_distance is not None
+            else 0.0
+        )
+        scored.append(
+            _Scored(
+                chunk_id=candidate.chunk_id,
+                email_id=candidate.email_id,
+                fused_score=alpha * semantic + (1.0 - alpha) * lexical_norm,
                 lexical_rank=candidate.lexical_rank,
                 lexical_score=candidate.lexical_score,
                 semantic_rank=candidate.semantic_rank,

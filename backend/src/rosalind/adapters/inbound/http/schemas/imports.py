@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FileEntryRequest(BaseModel):
@@ -20,16 +21,38 @@ class ManifestRequest(BaseModel):
     files: list[FileEntryRequest]
 
 
+class IndexRequest(BaseModel):
+    """Optional per-run email used to compute message direction."""
+
+    self_email: str | None = None
+
+    @field_validator("self_email")
+    @classmethod
+    def _validate_self_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned or "@" not in cleaned:
+            raise ValueError("self_email must be an email address")
+        return cleaned
+
+
 class ImportCreateRequest(BaseModel):
-    source_name: str
-    type: str
+    source_name: Literal["google", "none"] = "none"
+    via: Literal["file", "api"] = "file"
+
+    @model_validator(mode="after")
+    def _check_combination(self) -> Self:
+        if self.via == "api" and self.source_name != "google":
+            raise ValueError("via='api' requires source_name='google'")
+        return self
 
 
 class ImportCreatedResponse(BaseModel):
     import_id: uuid.UUID
     source_id: uuid.UUID | None = None
     source_name: str | None = None
-    type: str
+    via: str
     bucket: str
     storage_prefix: str
     ingestion_status: str
@@ -49,7 +72,7 @@ class ImportSummaryResponse(BaseModel):
     import_id: uuid.UUID
     source_id: uuid.UUID | None = None
     source_name: str | None = None
-    type: str
+    via: str
     ingestion_status: str
     processing_status: str
     created_at: datetime

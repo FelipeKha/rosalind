@@ -1,0 +1,6 @@
+# Reranker off: return the fused order.
+name: rerank-off
+dataset: ../dataset.jsonl
+description: No cross-encoder; fused order is the final order.
+overrides:
+  disable_reranker: true

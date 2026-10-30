@@ -1,5 +1,3 @@
-import uuid
-
 from fastapi.testclient import TestClient
 
 from rosalind.adapters import composition
@@ -7,23 +5,15 @@ from rosalind.adapters import composition
 SHA256 = "a" * 64
 
 
-def _create_source(api_client: TestClient, name: str) -> str:
-    response = api_client.post("/sources", json={"provider": "google", "name": name})
-    assert response.status_code == 201
-    return name
-
-
 def _create_import(api_client: TestClient) -> str:
-    name = _create_source(api_client, f"google-{uuid.uuid4().hex[:8]}")
-    response = api_client.post(
-        "/imports", json={"source_name": name, "type": "takeout"}
-    )
+    response = api_client.post("/imports", json={"source_name": "none", "via": "file"})
     assert response.status_code == 201
     body = response.json()
     assert body["ingestion_status"] == "uploading"
     assert body["processing_status"] == "pending"
     assert body["storage_prefix"] == f"imports/{body['import_id']}"
-    assert body["source_name"] == name
+    assert body["source_name"] == "none"
+    assert body["via"] == "file"
     return body["import_id"]
 
 
@@ -156,12 +146,31 @@ def test_delete_import_deletes_objects_before_rows(
 
 def test_create_import_unknown_source(api_client: TestClient) -> None:
     response = api_client.post(
-        "/imports", json={"source_name": "does-not-exist", "type": "takeout"}
+        "/imports", json={"source_name": "google", "via": "file"}
     )
     assert response.status_code == 404
 
 
-def test_process_takeout_import_unsupported(api_client: TestClient) -> None:
+def test_create_import_api_requires_google_source(api_client: TestClient) -> None:
+    response = api_client.post("/imports", json={"source_name": "none", "via": "api"})
+    assert response.status_code == 422
+
+
+def test_create_import_rejects_unknown_source_option(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/imports", json={"source_name": "dropbox", "via": "file"}
+    )
+    assert response.status_code == 422
+
+
+def test_create_import_rejects_unknown_via(api_client: TestClient) -> None:
+    response = api_client.post(
+        "/imports", json={"source_name": "none", "via": "carrier-pigeon"}
+    )
+    assert response.status_code == 422
+
+
+def test_process_file_import_unsupported(api_client: TestClient) -> None:
     import_id = _create_import(api_client)
 
     response = api_client.post(f"/imports/{import_id}/process")

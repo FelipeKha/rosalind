@@ -1,5 +1,5 @@
 """Client for the processing operations (``POST /imports/{id}/process`` and
-the offline pipeline ``POST /imports/{id}/pipeline``).
+the offline indexing ``POST /imports/{id}/index``).
 """
 
 from __future__ import annotations
@@ -15,12 +15,15 @@ def process_import(import_id: str) -> dict[str, Any]:
     return http.api.post(f"/imports/{import_id}/process")
 
 
-def stream_pipeline(
-    import_id: str, stage: str | None = None
+def stream_index(
+    import_id: str,
+    stage: str | None = None,
+    self_email: str | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """Run the offline pipeline and yield decoded progress events."""
-    path = f"/imports/{import_id}/pipeline"
+    """Run the offline indexing and yield decoded progress events."""
+    path = f"/imports/{import_id}/index"
     if stage:
         path = f"{path}?stage={stage}"
-    for line in http.api.stream_post(path):
+    body = {"self_email": self_email} if self_email else None
+    for line in http.api.stream_post(path, json=body):
         yield json.loads(line)

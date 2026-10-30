@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import logging
+import uuid
 from collections.abc import Callable, Iterator
 
 from sqlalchemy.orm import Session
@@ -51,6 +52,7 @@ from rosalind.adapters.outbound.search.semantic import (
     SemanticRetrievalConfig,
 )
 from rosalind.adapters.outbound.search.tokenizer import BgeM3TokenCounter
+from rosalind.adapters.outbound.search.trace_log import SearchTraceRecorder
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
 )
@@ -389,6 +391,7 @@ def build_search_service(session_factory: Callable[[], Session]) -> SearchServic
         token_counter=_token_counter,
         result_data=PostgresSearchResultDataRepository(session_factory),
         list_retriever=PostgresMessageListRetriever(session_factory),
+        trace_recorder=SearchTraceRecorder(session_factory),
     )
 
 
@@ -397,6 +400,82 @@ def build_rerank_texts(
 ) -> PostgresChunkTextRepository:
     """Wire the rerank text fetcher with a request-scoped session factory."""
     return PostgresChunkTextRepository(session_factory)
+
+
+def warm_search_models() -> None:
+    """Load in-process search models ahead of serving.
+
+    Cold-starting BGE-M3 (or the reranker) costs torch import, weight load, and
+    device init; doing it at startup keeps that latency off the first request.
+    Best-effort: a warm-up failure is logged and swallowed, because the lazy
+    load on first use still works and a transient download error must not stop
+    the process from starting. No-op when warm-up is disabled or no in-process
+    embedder is configured (e.g. the ``ml`` group is not installed).
+    """
+    if not settings.embedder_warmup:
+        return
+    logger = logging.getLogger(__name__)
+    if _embedder is not None:
+        try:
+            _embedder.warmup()
+        except Exception:
+            logger.warning(
+                "embedder warm-up failed; the first search may be slow",
+                exc_info=True,
+            )
+    if _search_reranker is not None:
+        try:
+            _search_reranker.warmup()
+        except Exception:
+            logger.warning(
+                "reranker warm-up failed; the first reranked search may be slow",
+                exc_info=True,
+            )
+
+
+def build_eval_service(
+    account_id: uuid.UUID,
+    session_factory: Callable[[], Session] = SessionLocal,
+) -> object:
+    """Wire the eval service for one account.
+
+    Eval-only wiring: imports the eval adapters lazily so production/disabled
+    deployments never import them (they need the optional ``eval`` dependency
+    group). Returns an ``EvalService``.
+    """
+    from rosalind.adapters.outbound.eval.item_catalog import PostgresItemCatalog
+    from rosalind.adapters.outbound.eval.mailbox_source import MailboxPassageSource
+    from rosalind.adapters.outbound.eval.ollama import make_ollama_llm
+    from rosalind.adapters.outbound.eval.pipeline_executor import (
+        PipelineSearchExecutor,
+    )
+    from rosalind.adapters.outbound.eval.run_store import ParquetRunStore
+    from rosalind.application.services.eval import EvalService
+
+    search_service = build_search_service(session_factory)
+
+    def search_factory(*, overrides: object, mode: str | None):
+        return PipelineSearchExecutor(
+            search_service,
+            account_id,
+            overrides=overrides,
+            mode=mode,
+        )
+
+    llm = None
+    try:
+        llm = make_ollama_llm()
+    except RuntimeError:
+        llm = None
+
+    return EvalService(
+        search_factory=search_factory,
+        run_store=ParquetRunStore(settings.eval.runs_dir),
+        item_catalog=PostgresItemCatalog(session_factory),
+        account_id=account_id,
+        passage_source=MailboxPassageSource(),
+        llm=llm,
+    )
 
 
 def get_uow() -> Iterator[UnitOfWork]:

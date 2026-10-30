@@ -32,6 +32,7 @@ from rosalind.application.search.plan import (
 from rosalind.application.search.rerank import ChunkText, RerankTextMode
 from rosalind.application.search.retrieve import LexicalResult
 from rosalind.application.search.semantic import SemanticResult
+from rosalind.application.search.trace import TraceSummary
 
 __all__ = [
     "AuditEvent",
@@ -53,6 +54,7 @@ __all__ = [
     "SearchScopePort",
     "SemanticRetrieverPort",
     "ThreadResolverPort",
+    "TraceRecorderPort",
 ]
 
 
@@ -197,6 +199,14 @@ class RerankerPort(Protocol):
         that outlived retries and ``RerankError`` for a malformed response.
         """
 
+    def warmup(self) -> None:
+        """Load model state ahead of use (best-effort; may be a no-op).
+
+        Called at startup so an in-process cross-encoder's cold start does not
+        land on the first reranked search. A remote backend implements this as a
+        no-op.
+        """
+
 
 class ChunkTextPort(Protocol):
     async def get_rerank_texts(
@@ -285,3 +295,13 @@ class AuditEvent:
 class AuditPort(Protocol):
     async def record(self, event: AuditEvent) -> None:
         """Record one Prepare outcome (logs today; a durable table later)."""
+
+
+class TraceRecorderPort(Protocol):
+    async def record(self, summary: TraceSummary) -> None:
+        """Record one completed search run's content-free summary.
+
+        Implementations must be best-effort: a logging or persistence failure
+        must never fail the search itself. Must never persist a full trace or
+        any query/chunk text.
+        """

@@ -135,6 +135,9 @@ class TeiEmbedder:
     def embed_query(self, text: str) -> Vector:
         return self._request([text])[0]
 
+    def warmup(self) -> None:
+        """No-op: the TEI server loads and serves its own model."""
+
     def _request(self, texts: list[str]) -> list[Vector]:
         attempt = 0
         while True:

@@ -167,12 +167,6 @@ def test_both_branches_none_raises() -> None:
         fuse(_plan(), None, None)
 
 
-def test_convex_strategy_is_not_implemented() -> None:
-    fusion = FusionConfig(strategy=FusionStrategy.CONVEX, convex_alpha=0.5)
-    with pytest.raises(NotImplementedError):
-        fuse(_plan(fusion=fusion), _lex_result(), None)
-
-
 def test_per_message_cap_drops_extras() -> None:
     a1, a2, a3, a4 = (uuid.uuid4() for _ in range(4))
     b1, b2 = uuid.uuid4(), uuid.uuid4()
@@ -329,3 +323,78 @@ def test_sort_key_breaks_ties_by_branch_count_then_best_rank_then_id() -> None:
     first = _scored(low, 0.5, lexical_rank=1, semantic_rank=2)
     second = _scored(high, 0.5, lexical_rank=2, semantic_rank=1)
     assert _sort_key(first) < _sort_key(second)
+
+
+# ---------------------------------------------------------------------------
+# Convex combination
+# ---------------------------------------------------------------------------
+
+
+def _convex(alpha: float) -> FusionConfig:
+    return FusionConfig(strategy=FusionStrategy.CONVEX, convex_alpha=alpha)
+
+
+def test_convex_alpha_one_orders_by_semantic_similarity() -> None:
+    a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ea, eb, ec = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    lexical = _lex_result(_lex(a, ea, 1, score=10.0), _lex(c, ec, 2, score=5.0))
+    semantic = _sem_result(_sem(b, eb, 1, distance=0.0), _sem(a, ea, 2, distance=0.9))
+
+    result = fuse(_plan(fusion=_convex(1.0)), lexical, semantic)
+
+    assert _chunk_ids(result) == [b, a, c]
+    by_id = {candidate.chunk_id: candidate for candidate in result.candidates}
+    assert by_id[b].fused_score == pytest.approx(1.0)
+    assert by_id[a].fused_score == pytest.approx(0.1)
+    assert by_id[c].fused_score == pytest.approx(0.0)
+
+
+def test_convex_normalizes_lexical_scores() -> None:
+    a, c = uuid.uuid4(), uuid.uuid4()
+    ea, ec = uuid.uuid4(), uuid.uuid4()
+    lexical = _lex_result(_lex(a, ea, 1, score=10.0), _lex(c, ec, 2, score=2.0))
+
+    result = fuse(_plan(fusion=_convex(0.5)), lexical, None)
+
+    by_id = {candidate.chunk_id: candidate for candidate in result.candidates}
+    assert by_id[a].fused_score == pytest.approx(0.5)  # 0.5 * 1.0
+    assert by_id[c].fused_score == pytest.approx(0.0)  # 0.5 * 0.0
+    assert _chunk_ids(result) == [a, c]
+
+
+def test_convex_alpha_zero_is_pure_lexical() -> None:
+    a, c = uuid.uuid4(), uuid.uuid4()
+    ea, ec = uuid.uuid4(), uuid.uuid4()
+    lexical = _lex_result(_lex(a, ea, 1, score=10.0), _lex(c, ec, 2, score=2.0))
+
+    result = fuse(_plan(fusion=_convex(0.0)), lexical, None)
+
+    by_id = {candidate.chunk_id: candidate for candidate in result.candidates}
+    assert by_id[a].fused_score == pytest.approx(1.0)
+    assert by_id[c].fused_score == pytest.approx(0.0)
+
+
+def test_convex_missing_branch_counts_as_zero() -> None:
+    a, b = uuid.uuid4(), uuid.uuid4()
+    ea, eb = uuid.uuid4(), uuid.uuid4()
+    lexical = _lex_result(_lex(a, ea, 1, score=10.0))
+    semantic = _sem_result(_sem(b, eb, 1, distance=0.0))
+
+    result = fuse(_plan(fusion=_convex(0.5)), lexical, semantic)
+
+    by_id = {candidate.chunk_id: candidate for candidate in result.candidates}
+    # a: lexical only -> 0.5 * 0.0 (single lexical value normalizes to 0)
+    assert by_id[a].fused_score == pytest.approx(0.0)
+    # b: semantic only -> 0.5 * (1 - 0.0)
+    assert by_id[b].fused_score == pytest.approx(0.5)
+
+
+def test_convex_is_deterministic() -> None:
+    a, b = uuid.uuid4(), uuid.uuid4()
+    ea, eb = uuid.uuid4(), uuid.uuid4()
+    lexical = _lex_result(_lex(a, ea, 1, score=3.0), _lex(b, eb, 2, score=1.0))
+    semantic = _sem_result(_sem(a, ea, 1, distance=0.4), _sem(b, eb, 2, distance=0.2))
+
+    first = fuse(_plan(fusion=_convex(0.5)), lexical, semantic)
+    second = fuse(_plan(fusion=_convex(0.5)), lexical, semantic)
+    assert _chunk_ids(first) == _chunk_ids(second)

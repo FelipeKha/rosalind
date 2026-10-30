@@ -43,6 +43,18 @@ def test_discover_skips_symlinks(tmp_path) -> None:
     assert [f.path for f in files] == ["real.txt"]
 
 
+def test_discover_single_file_uses_its_name(tmp_path) -> None:
+    (tmp_path / "sub").mkdir()
+    mbox = tmp_path / "sub" / "mail.mbox"
+    mbox.write_text("From a@b\n\nbody\n")
+
+    files = discovery.discover(mbox)
+
+    assert [f.path for f in files] == ["mail.mbox"]
+    assert files[0].local_path == mbox
+    assert files[0].format == "mbox"
+
+
 def test_sha256_file_matches_hashlib(tmp_path) -> None:
     path = tmp_path / "f.bin"
     path.write_bytes(b"hello world")

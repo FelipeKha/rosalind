@@ -64,6 +64,10 @@ class FlagEmbeddingReranker:
             raise RerankBackendError(f"in-process reranker failed: {exc}") from exc
         return tuple(float(score) for score in scores)
 
+    def warmup(self) -> None:
+        """Load the cross-encoder so the first reranked search does not pay cold start."""
+        self._ensure_loaded()
+
     def _resolve_device(self) -> str:
         if self._resolved_device is None:
             if self._device != "auto":

@@ -26,20 +26,35 @@ class ApiClient:
         base_url: str | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self._base_url = (base_url or config.api_url()).rstrip("/")
+        self._explicit_base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout
 
-    def get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
-        return self._request("GET", path, params=params)
+    @property
+    def _base_url(self) -> str:
+        """Backend base URL, resolved from config at request time.
 
-    def post(self, path: str, *, json: Any = None) -> Any:
-        return self._request("POST", path, json=json)
+        Resolved lazily so a profile selected on the command line (after import)
+        is honoured, and a malformed config surfaces as a clean CLI error.
+        """
+        return self._explicit_base_url or config.api_url().rstrip("/")
 
-    def delete(self, path: str) -> Any:
-        return self._request("DELETE", path)
+    def get(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        return self._request("GET", path, params=params, timeout=timeout)
+
+    def post(self, path: str, *, json: Any = None, timeout: float | None = None) -> Any:
+        return self._request("POST", path, json=json, timeout=timeout)
+
+    def delete(self, path: str, *, timeout: float | None = None) -> Any:
+        return self._request("DELETE", path, timeout=timeout)
 
     def stream_post(self, path: str, *, json: Any = None) -> Iterator[str]:
-        """POST and stream newline-delimited lines (used by the offline pipeline).
+        """POST and stream newline-delimited lines (used by long-running commands).
 
         The access token is fetched up front and refreshed once if the server
         answers 401 before any body is streamed.
@@ -58,7 +73,7 @@ class ApiClient:
                     f"{self._base_url}{path}",
                     json=json,
                     headers=headers,
-                    timeout=None,  # nosec B113 - pipeline may stream for a very long time
+                    timeout=None,  # nosec B113 - indexing may stream for a very long time
                 ) as response:
                     if (
                         response.status_code == 401
@@ -66,6 +81,10 @@ class ApiClient:
                         and attempt == 0
                     ):
                         continue
+                    if response.is_error:
+                        # Buffer the body before raising so the error detail can
+                        # still be read once the streaming context closes.
+                        response.read()
                     response.raise_for_status()
                     for line in response.iter_lines():
                         if line:
@@ -85,9 +104,15 @@ class ApiClient:
         *,
         params: dict[str, Any] | None = None,
         json: Any = None,
+        timeout: float | None = None,
     ) -> Any:
         return self._request_with_auth(
-            method, path, params=params, json=json, retried=False
+            method,
+            path,
+            params=params,
+            json=json,
+            timeout=timeout,
+            retried=False,
         )
 
     def _request_with_auth(
@@ -97,6 +122,7 @@ class ApiClient:
         *,
         params: dict[str, Any] | None,
         json: Any,
+        timeout: float | None,
         retried: bool,
     ) -> Any:
         from cli.client import auth
@@ -113,11 +139,16 @@ class ApiClient:
                 params=params,
                 json=json,
                 headers=headers,
-                timeout=self._timeout,
+                timeout=self._timeout if timeout is None else timeout,
             )
             if response.status_code == 401 and not retried and token is not None:
                 return self._request_with_auth(
-                    method, path, params=params, json=json, retried=True
+                    method,
+                    path,
+                    params=params,
+                    json=json,
+                    timeout=timeout,
+                    retried=True,
                 )
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -135,7 +166,7 @@ class ApiClient:
 def _error_detail(response: httpx.Response) -> str:
     try:
         detail = response.json().get("detail")
-    except ValueError:
+    except ValueError, httpx.ResponseNotRead:
         return f"request failed ({response.status_code})"
     if isinstance(detail, str):
         return detail

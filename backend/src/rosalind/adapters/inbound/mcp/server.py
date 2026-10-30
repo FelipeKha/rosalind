@@ -37,6 +37,7 @@ from rosalind.application.read_models import (
 )
 from rosalind.application.search import ShortCircuit
 from rosalind.application.services.search import PrepareContext
+from rosalind.logging import configure_logging
 
 
 def _auth_settings() -> AuthSettings:
@@ -81,8 +82,8 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
     prepared = await service.prepare(context, request)
     if isinstance(prepared, ShortCircuit):
         return to_short_circuit_result(prepared)
-    response = await service.search(prepared)
-    return to_search_result(prepared, response)
+    trace = await service.run(prepared)
+    return to_search_result(prepared, trace.response)
 
 
 @mcp.tool()
@@ -208,6 +209,12 @@ def _to_result(profile: PersonProfile) -> PersonProfileResult:
 
 
 def main() -> None:
+    configure_logging(
+        config.settings.log_level,
+        config.settings.log_format,
+        log_query_text=config.settings.log_query_text,
+    )
+    composition.warm_search_models()
     if config.settings.mcp_transport == "streamable-http":
         mcp.run(
             "streamable-http",

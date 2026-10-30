@@ -229,6 +229,10 @@ item.tag           gmail:Inbox, gmail:Important, gmail:Projects
 conv.thread        t_41aa  root_message_id=orig-001@mail.gmail.com
                            provider_hint=1790123456789012345
 
+Self-handles (the account owner's addresses, used to derive `direction`) come
+from the account's linked self person. `rosalind index` may alternatively send a
+per-run `--self-email`, used for that run only, never persisted and never logged.
+
 #### 3.2. Reconcile 
 Builds conv.thread from References, and later computes which quoted segments are covered by an existing item. Both depend on other items in the DB, so they can't happen in the parser. They must be re-runnable when an older message arrives later.
 

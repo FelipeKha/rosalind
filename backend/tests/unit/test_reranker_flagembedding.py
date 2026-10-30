@@ -90,6 +90,20 @@ def test_model_loaded_once() -> None:
     assert len(created) == 1
 
 
+def test_warmup_loads_model_once() -> None:
+    created = []
+
+    def factory(model_id, **kwargs):
+        created.append(model_id)
+        return _FakeModel(model_id, **kwargs)
+
+    reranker = _reranker(model_class=factory)
+    reranker.warmup()
+    reranker.warmup()
+
+    assert len(created) == 1
+
+
 def test_invalid_device_raises() -> None:
     with pytest.raises(ValueError, match="unsupported reranker device"):
         FlagEmbeddingReranker("BAAI/bge-reranker-v2-m3", device="cuda")

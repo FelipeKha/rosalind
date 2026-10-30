@@ -43,8 +43,8 @@ async def search(
     prepared = await service.prepare(context, request)
     if isinstance(prepared, ShortCircuit):
         return _to_short_circuit(prepared)
-    response = await service.search(prepared)
-    return _to_response(prepared, response)
+    trace = await service.run(prepared)
+    return _to_response(prepared, trace.response)
 
 
 def _to_search_request(input: schemas.SearchEmailsInput) -> SearchRequest:

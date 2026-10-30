@@ -13,8 +13,10 @@ avoid duplicates.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import tempfile
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -23,12 +25,16 @@ from datetime import UTC, datetime
 
 from rosalind.adapters.inbound.ingestion.email import parse_email
 from rosalind.adapters.inbound.ingestion.mbox import iter_messages
+from rosalind.application.canonicalization.email import normalize_email
 from rosalind.application.canonicalization.email_message import (
     EmailCanonicalizationService,
     blob_key,
     build_canonical_email,
 )
-from rosalind.application.errors import ImportNotFoundError, InvalidImportStateError
+from rosalind.application.errors import (
+    ImportNotFoundError,
+    InvalidImportStateError,
+)
 from rosalind.application.ports.object_storage import ObjectStorage
 from rosalind.application.ports.unit_of_work import UnitOfWork
 from rosalind.application.services.attachment_extraction import (
@@ -74,12 +80,78 @@ ALL_STAGES = frozenset(
     }
 )
 
+# Every event carries a canonical ``stage`` (one of ALL_STAGES) plus a ``phase``
+# describing where in that stage it sits. ``start``/``progress`` events repeat
+# and are not accumulated; the terminal phases carry the final per-stage tallies
+# for a run.
+PHASE_START = "start"
+PHASE_PROGRESS = "progress"
+PHASE_DONE = "done"
+PHASE_ERROR = "error"
+PHASE_BLOCKED = "blocked"
+
+_TERMINAL_PHASES = frozenset({PHASE_DONE, PHASE_BLOCKED, PHASE_ERROR})
+
+logger = logging.getLogger("rosalind.ingestion")
+
+
+def _event_outcomes(event: PipelineEvent) -> tuple[int, int, int]:
+    """Map an event onto the (ok, skipped_unchanged, failed) vocabulary.
+
+    ``ok`` is new work; ``skipped_unchanged`` is work proven identical to a
+    prior run (the idempotent re-import case); ``failed`` is quarantined work.
+    """
+    details = event.details or {}
+    if details:
+        ok = details.get(
+            "chunks_written",
+            details.get("embedded", details.get("done", event.created)),
+        )
+        skipped = details.get("chunks_unchanged", details.get("reused", event.reused))
+        failed = details.get("failed", event.failed)
+        return int(ok), int(skipped), int(failed)
+    return int(event.created), int(event.reused), int(event.failed)
+
+
+def _record_event(
+    event: PipelineEvent,
+    summary: dict[str, tuple[int, int, int]],
+    started: float,
+) -> None:
+    """Log one ingestion stage event and accumulate terminal tallies. No content."""
+    ok, skipped, failed = _event_outcomes(event)
+    logger.info(
+        "ingestion_stage",
+        extra={
+            "stage": event.stage,
+            "phase": event.phase,
+            "processed": event.processed,
+            "ok": ok,
+            "skipped_unchanged": skipped,
+            "failed": failed,
+            "elapsed_ms": (time.perf_counter() - started) * 1000,
+        },
+    )
+    if event.phase in _TERMINAL_PHASES:
+        previous = summary.get(event.stage, (0, 0, 0))
+        summary[event.stage] = (
+            previous[0] + ok,
+            previous[1] + skipped,
+            previous[2] + failed,
+        )
+
 
 @dataclass(frozen=True)
 class PipelineEvent:
-    """A progress event emitted while the pipeline runs."""
+    """A progress event emitted while the pipeline runs.
+
+    ``stage`` is the canonical stage id (one of ``ALL_STAGES``); ``phase`` says
+    where in that stage the event sits (``start``/``progress``/``done``/
+    ``error``/``blocked``).
+    """
 
     stage: str
+    phase: str
     file: str | None = None
     total_files: int = 0
     total_bytes: int = 0
@@ -94,6 +166,7 @@ class PipelineEvent:
     def to_dict(self) -> dict[str, object]:
         return {
             "stage": self.stage,
+            "phase": self.phase,
             "file": self.file,
             "total_files": self.total_files,
             "total_bytes": self.total_bytes,
@@ -215,6 +288,63 @@ class EmailProcessingService:
         prepared: PreparedSplit,
         *,
         stages: set[str] | None = None,
+        self_email: str | None = None,
+    ) -> Iterator[PipelineEvent]:
+        """Run the pipeline, logging a content-free event per stage plus a summary.
+
+        Yields the same progress events as before; the logging wrapper observes
+        them (ok/skipped_unchanged/failed counts) without changing the stream.
+        ``self_email`` is an optional per-run address used to compute message
+        direction; it is never persisted and never logged. If a stage raises an
+        unexpected exception, a terminal ``PHASE_ERROR`` event is yielded (with
+        the traceback logged server-side) so streaming clients fail cleanly.
+        """
+        started = time.perf_counter()
+        summary: dict[str, tuple[int, int, int]] = {}
+        last_stage: str | None = None
+        try:
+            for event in self._run(uow, prepared, stages=stages, self_email=self_email):
+                last_stage = event.stage
+                _record_event(event, summary, started)
+                yield event
+        except Exception:
+            # A fatal, unexpected failure (an exception, not a yielded
+            # ``PHASE_ERROR``). The response headers are already sent by the
+            # time the pipeline runs, so we cannot turn this into an HTTP error;
+            # instead we emit a terminal event so streaming clients fail cleanly
+            # rather than seeing a truncated body. The traceback stays in the
+            # logs; the event carries no internal detail.
+            logger.exception(
+                "ingestion_run_failed",
+                extra={
+                    "import_id": str(prepared.import_id),
+                    "stage": last_stage,
+                    "elapsed_ms": (time.perf_counter() - started) * 1000,
+                },
+            )
+            stage = last_stage or "unknown"
+            yield PipelineEvent(
+                stage=stage,
+                phase=PHASE_ERROR,
+                message=f"indexing failed during stage {stage}; see server logs",
+            )
+        finally:
+            logger.info(
+                "ingestion_run_summary",
+                extra={
+                    "import_id": str(prepared.import_id),
+                    "stages": summary,
+                    "elapsed_ms": (time.perf_counter() - started) * 1000,
+                },
+            )
+
+    def _run(
+        self,
+        uow: UnitOfWork,
+        prepared: PreparedSplit,
+        *,
+        stages: set[str] | None = None,
+        self_email: str | None = None,
     ) -> Iterator[PipelineEvent]:
         """Run the selected pipeline stages over the prepared import.
 
@@ -231,7 +361,8 @@ class EmailProcessingService:
         counters = _Counters()
         if wants(STAGE_SPLIT):
             yield PipelineEvent(
-                stage="starting",
+                stage=STAGE_SPLIT,
+                phase=PHASE_START,
                 total_files=len(prepared.files),
                 total_bytes=prepared.total_bytes,
             )
@@ -240,7 +371,8 @@ class EmailProcessingService:
                 yield from self._split_file(uow, prepared, file, counters)
 
             yield PipelineEvent(
-                stage="done",
+                stage=STAGE_SPLIT,
+                phase=PHASE_DONE,
                 total_files=len(prepared.files),
                 total_bytes=prepared.total_bytes,
                 processed=counters.processed,
@@ -252,8 +384,8 @@ class EmailProcessingService:
 
         canonicalize_ok = True
         if wants(STAGE_CANONICALIZE):
-            for event in self._canonicalize(uow, prepared):
-                if event.stage == "error":
+            for event in self._canonicalize(uow, prepared, self_email=self_email):
+                if event.phase == PHASE_ERROR:
                     canonicalize_ok = False
                 yield event
 
@@ -286,14 +418,15 @@ class EmailProcessingService:
         extractor = self._attachment_extractor
         if extractor is None:
             return
-        yield PipelineEvent(stage="extracting_attachments")
+        yield PipelineEvent(stage=STAGE_ATTACHMENTS, phase=PHASE_START)
         outcome = extractor.extract(
             uow,
             prepared.source_account.id,
             budget_seconds=self._attachment_budget_seconds,
         )
         yield PipelineEvent(
-            stage="attachments_extracted",
+            stage=STAGE_ATTACHMENTS,
+            phase=PHASE_DONE,
             processed=outcome.processed,
             details={
                 "done": outcome.done,
@@ -314,10 +447,11 @@ class EmailProcessingService:
         chunker = self._chunker
         if chunker is None:
             return
-        yield PipelineEvent(stage="chunking")
+        yield PipelineEvent(stage=STAGE_CHUNK, phase=PHASE_START)
         outcome = chunker.chunk(uow, prepared.source_account.id)
         yield PipelineEvent(
-            stage="chunked",
+            stage=STAGE_CHUNK,
+            phase=PHASE_DONE,
             processed=outcome.emails_synced,
             details={
                 "chunks_written": outcome.chunks_written,
@@ -338,7 +472,7 @@ class EmailProcessingService:
         embedder = self._embedder
         if embedder is None:
             return
-        yield PipelineEvent(stage="embedding")
+        yield PipelineEvent(stage=STAGE_EMBED, phase=PHASE_START)
         outcome = embedder.embed(
             uow,
             prepared.source_account.id,
@@ -346,12 +480,14 @@ class EmailProcessingService:
         )
         if outcome.blocked_reason:
             yield PipelineEvent(
-                stage="embed_blocked",
+                stage=STAGE_EMBED,
+                phase=PHASE_BLOCKED,
                 message=outcome.blocked_reason,
             )
             return
         yield PipelineEvent(
-            stage="embedded",
+            stage=STAGE_EMBED,
+            phase=PHASE_DONE,
             processed=outcome.embedded + outcome.reused,
             details={
                 "embedded": outcome.embedded,
@@ -369,7 +505,7 @@ class EmailProcessingService:
         enricher = self._enricher
         if enricher is None:
             return
-        yield PipelineEvent(stage="enriching")
+        yield PipelineEvent(stage=STAGE_ENRICH, phase=PHASE_START)
         outcome = enricher.enrich(
             uow,
             prepared.source_account.id,
@@ -377,7 +513,8 @@ class EmailProcessingService:
             limit=self._enrich_batch_size,
         )
         yield PipelineEvent(
-            stage="enriched",
+            stage=STAGE_ENRICH,
+            phase=PHASE_DONE,
             processed=outcome.processed,
             details={
                 "done": outcome.done,
@@ -391,10 +528,11 @@ class EmailProcessingService:
         self, uow: UnitOfWork, prepared: PreparedSplit
     ) -> Iterator[PipelineEvent]:
         """Reconcile thread membership across the whole source account."""
-        yield PipelineEvent(stage="reconciling")
+        yield PipelineEvent(stage=STAGE_RECONCILE, phase=PHASE_START)
         result = self._reconciler.reconcile(uow, prepared.source_account.id)
         yield PipelineEvent(
-            stage="reconciled",
+            stage=STAGE_RECONCILE,
+            phase=PHASE_DONE,
             details={
                 "threads_created": result.threads_created,
                 "threads_removed": result.threads_removed,
@@ -403,18 +541,30 @@ class EmailProcessingService:
         )
 
     def _canonicalize(
-        self, uow: UnitOfWork, prepared: PreparedSplit
+        self,
+        uow: UnitOfWork,
+        prepared: PreparedSplit,
+        *,
+        self_email: str | None = None,
     ) -> Iterator[PipelineEvent]:
         """Parse and canonicalize each split record into ``core.email_*``.
 
         Self-handles are resolved *after* the split so raw persistence never
-        depends on a self person existing. Missing self-handles emit a clear
-        error event rather than discarding any raw evidence.
+        depends on a self person existing. A per-run ``self_email`` override
+        (never persisted) wins; otherwise the account's self person is used.
+        Missing self-handles emit a clear error event rather than discarding
+        any raw evidence.
         """
-        self_handles = self._canonicalizer.self_handles(uow, prepared.account_id)
+        yield PipelineEvent(stage=STAGE_CANONICALIZE, phase=PHASE_START)
+
+        if self_email is not None:
+            self_handles = {normalize_email(self_email)}
+        else:
+            self_handles = self._canonicalizer.self_handles(uow, prepared.account_id)
         if not self_handles:
             yield PipelineEvent(
-                stage="error",
+                stage=STAGE_CANONICALIZE,
+                phase=PHASE_ERROR,
                 message=(
                     "cannot compute message direction: the account has no self "
                     "person with an email address; set it via the self-person "
@@ -473,7 +623,8 @@ class EmailProcessingService:
         self, counters: _Counters, *, final: bool = False
     ) -> PipelineEvent:
         return PipelineEvent(
-            stage="canonicalized" if final else "canonicalizing",
+            stage=STAGE_CANONICALIZE,
+            phase=PHASE_DONE if final else PHASE_PROGRESS,
             processed=counters.processed,
             created=counters.created,
             reused=counters.reused,
@@ -530,7 +681,8 @@ class EmailProcessingService:
 
     def _event(self, file: ImportFile, counters: _Counters) -> PipelineEvent:
         return PipelineEvent(
-            stage="splitting",
+            stage=STAGE_SPLIT,
+            phase=PHASE_PROGRESS,
             file=file.path,
             processed=counters.processed,
             created=counters.created,

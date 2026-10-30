@@ -9,8 +9,9 @@ runner = CliRunner()
 def _summary(import_id: str = "imp-1") -> dict[str, object]:
     return {
         "import_id": import_id,
-        "source_name": "google-personal",
-        "type": "takeout",
+        "created_at": "2026-01-02T03:04:05+00:00",
+        "source_name": "none",
+        "via": "file",
         "ingestion_status": "completed",
         "processing_status": "pending",
         "file_count": 2,
@@ -31,6 +32,7 @@ def test_list_imports(monkeypatch) -> None:
     result = runner.invoke(app, ["import", "list"])
     assert result.exit_code == 0
     assert "imp-1" in result.stdout
+    assert "CREATED" in result.stdout
     assert "INGESTION" in result.stdout and "PROCESSING" in result.stdout
 
 

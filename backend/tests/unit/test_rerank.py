@@ -98,6 +98,9 @@ class _FakeReranker:
             return self._scores
         return tuple(float(len(passages) - index) for index in range(len(passages)))
 
+    def warmup(self) -> None:
+        pass
+
 
 def _plan(
     *,

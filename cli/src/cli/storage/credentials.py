@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from cli import settings
+
 
 @dataclass(frozen=True)
 class Credentials:
@@ -23,10 +25,16 @@ class Credentials:
 
 
 def credentials_path() -> Path:
-    base = os.environ.get(
-        "ROSALIND_CONFIG_DIR", os.environ.get("XDG_CONFIG_HOME", "~/.config")
-    )
-    return Path(base).expanduser() / "rosalind" / "credentials.json"
+    """Credential file for the active config, separated per profile.
+
+    The default config stores ``<config_dir>/credentials.json``; a named profile
+    stores ``<config_dir>/<profile>/credentials.json`` so tokens never leak
+    between environments.
+    """
+    base = settings.config_dir()
+    selected = settings.profile()
+    directory = base / selected if selected else base
+    return directory / "credentials.json"
 
 
 class CredentialStore:

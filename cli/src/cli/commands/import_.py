@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -20,43 +21,57 @@ from cli.storage.s3 import S3ObjectStorage
 import_app = typer.Typer(help="Bring source data into Rosalind.")
 
 
+class Source(str, Enum):
+    google = "google"
+    none = "none"
+
+
+class Via(str, Enum):
+    file = "file"
+    api = "api"
+
+
 @import_app.command("create")
 def create(
-    source: Annotated[str, typer.Option("--source", help="Source name (slug).")],
-    type_: Annotated[
-        str,
+    source: Annotated[
+        Source,
+        typer.Option("--source", help="Source to import from: google or none."),
+    ] = Source.none,
+    via: Annotated[
+        Via,
         typer.Option(
-            "--type",
-            help="Import type: takeout (upload files) or api (import all contacts).",
+            "--via",
+            help="How data enters Rosalind: file (upload a local file/folder) or api.",
         ),
-    ],
+    ] = Via.file,
     path: Annotated[
-        Path | None, typer.Argument(help="Path to a provider export (takeout).")
+        Path | None,
+        typer.Argument(help="File or folder to upload (required for --via file)."),
     ] = None,
 ) -> None:
     """Create an import from a source."""
-    if type_ == "takeout":
-        _create_takeout(source, path)
-    elif type_ == "api":
-        _create_api(source)
+    if via is Via.api:
+        if source is not Source.google:
+            typer.echo("--via api requires --source google.", err=True)
+            raise typer.Exit(code=2)
+        if path is not None:
+            typer.echo("--via api does not take a path.", err=True)
+            raise typer.Exit(code=2)
+        _create_api(source.value)
     else:
-        typer.echo(f"Unsupported import type: {type_!r}", err=True)
-        raise typer.Exit(code=2)
+        _create_file(source.value, path)
 
 
-def _create_takeout(source: str, path: Path | None) -> None:
+def _create_file(source: str, path: Path | None) -> None:
     if path is None:
-        typer.echo("A path is required for --type takeout.", err=True)
+        typer.echo("A path is required for --via file.", err=True)
         raise typer.Exit(code=2)
     if not path.exists():
         typer.echo(f"Path does not exist: {path}", err=True)
         raise typer.Exit(code=1)
-    if not path.is_dir():
-        typer.echo(f"Path is not a directory: {path}", err=True)
-        raise typer.Exit(code=1)
 
     try:
-        created = client.create_import(source, "takeout")
+        created = client.create_import(source, "file")
     except ApiClientError as exc:
         typer.echo(f"Failed to create import: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -66,15 +81,8 @@ def _create_takeout(source: str, path: Path | None) -> None:
     bucket = str(created["bucket"])
 
     typer.echo("Discovering files...")
-    paths = discovery.discover_paths(path)
-    typer.echo(f"Discovered {len(paths)} files.")
-
-    with typer.progressbar(
-        paths,
-        label="Hashing",
-        item_show_func=lambda entry: entry.name if entry else "",
-    ) as progress:
-        files = [discovery.file_info(entry, path) for entry in progress]
+    files = discovery.discover(path)
+    typer.echo(f"Discovered {len(files)} files.")
 
     storage = S3ObjectStorage()
     try:
@@ -101,7 +109,7 @@ def _create_takeout(source: str, path: Path | None) -> None:
         typer.echo(f"Failed to complete import: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    _print_takeout_result(result, bucket)
+    _print_file_result(result, bucket)
 
 
 def _create_api(source: str) -> None:
@@ -118,7 +126,7 @@ def _create_api(source: str) -> None:
     typer.echo("Import completed")
     typer.echo(f"ID:          {result['import_id']}")
     typer.echo(f"Source:      {result['source_name']}")
-    typer.echo(f"Type:        {result['type']}")
+    typer.echo(f"Via:         {result['via']}")
     typer.echo(f"Ingestion:   {result['ingestion_status']}")
     typer.echo(f"Processing:  {result['processing_status']}")
 
@@ -138,7 +146,7 @@ def show(import_id: str) -> None:
 
     typer.echo(f"ID:         {detail['import_id']}")
     typer.echo(f"Source:     {detail['source_name'] or '-'}")
-    typer.echo(f"Type:       {detail['type']}")
+    typer.echo(f"Via:        {detail['via']}")
     typer.echo(f"Ingestion:  {detail['ingestion_status']}")
     typer.echo(f"Processing: {detail['processing_status']}")
     typer.echo(f"Files:      {detail['file_count']}")
@@ -169,12 +177,22 @@ def list_imports() -> None:
         typer.echo("No imports found.")
         return
 
-    headers = ("ID", "SOURCE", "TYPE", "INGESTION", "PROCESSING", "FILES", "SIZE")
+    headers = (
+        "ID",
+        "CREATED",
+        "SOURCE",
+        "VIA",
+        "INGESTION",
+        "PROCESSING",
+        "FILES",
+        "SIZE",
+    )
     rows = [
         (
             str(item["import_id"]),
+            _format.format_datetime(item["created_at"]),
             str(item["source_name"] or "-"),
-            str(item["type"]),
+            str(item["via"]),
             str(item["ingestion_status"]),
             str(item["processing_status"]),
             str(item["file_count"]),
@@ -209,7 +227,7 @@ def delete_import(
     typer.echo(f"Import {import_id} deleted.")
 
 
-def _print_takeout_result(result: dict[str, Any], bucket: str) -> None:
+def _print_file_result(result: dict[str, Any], bucket: str) -> None:
     if output.json_mode:
         json_output.render_json(result)
         return
@@ -217,7 +235,7 @@ def _print_takeout_result(result: dict[str, Any], bucket: str) -> None:
     typer.echo("Import completed")
     typer.echo(f"ID:         {result['import_id']}")
     typer.echo(f"Source:     {result['source_name'] or '-'}")
-    typer.echo(f"Type:       {result['type']}")
+    typer.echo(f"Via:        {result['via']}")
     typer.echo(f"Ingestion:  {result['ingestion_status']}")
     typer.echo(f"Processing: {result['processing_status']}")
     typer.echo(f"Files:      {result['file_count']}")
