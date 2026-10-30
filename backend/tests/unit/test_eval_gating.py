@@ -10,8 +10,9 @@ import pytest
 from fastapi import HTTPException
 
 from rosalind import config
-from rosalind.adapters.inbound.http.app import app
+from rosalind.adapters.inbound.http.app import create_app
 from rosalind.adapters.inbound.http.routes import eval as eval_routes
+from rosalind.config import EvalSettings
 from rosalind.domain.account import Account
 
 
@@ -20,12 +21,17 @@ def _account() -> Account:
 
 
 def test_eval_disabled_by_default() -> None:
-    assert config.settings.eval.enabled is False
+    assert EvalSettings().enabled is False
 
 
 def test_eval_routes_absent_when_disabled() -> None:
-    paths = set(app.openapi().get("paths", {}))
+    paths = set(create_app(eval_enabled=False).openapi().get("paths", {}))
     assert not any(path.startswith("/eval") for path in paths)
+
+
+def test_eval_routes_present_when_enabled() -> None:
+    paths = set(create_app(eval_enabled=True).openapi().get("paths", {}))
+    assert "/eval/run" in paths
 
 
 def test_get_eval_service_rejects_when_disabled(monkeypatch) -> None:
