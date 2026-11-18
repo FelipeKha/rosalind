@@ -1,6 +1,13 @@
-# Rosalind — Policy Engine & RAG Filtering (v3)
+# Rosalind — Policy Engine & RAG Filtering (v4)
 
-**Changes since v2**
+**Changes since v3**
+
+- Every policy revision now stores the user's original prompt, the confirmed plain-language description and the interpreter version in a `source` block (section 3.5).
+- The protected statement is now a separate, shared object (section 3.6).
+- Added worked examples of constraint creation and request-time use for one semantic and one exact constraint (section 4.4).
+- Deny rules on senders use a `sender_entity_id` predicate, and copies of denied text are masked by content hash (sections 4.4, 7.2).
+
+**Earlier changes (v3)**
 
 - Added when and where protected information is identified (section 6.5) and the per-stage enforcement view (section 7.2).
 - Sanitization is now *cut at verifier offsets plus a visible, uniform redaction marker*. The LLM rewrite step is gone (section 6.6).
@@ -128,11 +135,18 @@ Access policies specify what an agent is explicitly permitted to access.
       "roles": ["from", "to", "cc", "bcc"]
     }
   },
+  "source": {
+    "kind": "natural_language",
+    "prompt": "Agent Y can see my emails with John Smith",
+    "interpreter_version": "interp-2.1"
+  },
   "status": "active"
 }
 ```
 
 The contact's name is resolved to a canonical Rosalind entity ID. If resolution is ambiguous (two "John Smith"), no grant is created and the policy waits in `needs_review`.
+
+Deny rules use the same shape with `"effect": "deny"` (see the worked example in section 4.4).
 
 Content-based grants ("my travel agent can access flight and hotel reservations") use the semantic pipeline to identify matching emails. They are allow-lists, so they fail safe: until the build is ready, the agent simply has no access through that grant.
 
@@ -157,8 +171,7 @@ Confidentiality policies specify information an agent must not learn. The protec
   "resource": {
     "type": "protected_information",
     "kind": "fact",
-    "statement": "The user has cancer",
-    "subject": { "type": "entity", "id": "person_self" },
+    "statement_id": "st_17",
     "match_levels": ["asserts", "implies", "evidence"]
   },
   "treatment": {
@@ -166,12 +179,22 @@ Confidentiality policies specify information an agent must not learn. The protec
     "fallback": "drop_segment"
   },
   "enforcement": { "hold_until_ready": false },
+  "source": {
+    "kind": "natural_language",
+    "prompt": "Agent A can't know I have cancer",
+    "language": "en",
+    "confirmed_description": "Agent A will not receive anything stating or strongly implying that you have cancer. Affected parts are replaced by a redaction marker.",
+    "interpreter_version": "interp-2.1",
+    "confirmed_at": "2026-11-18T10:42:00Z"
+  },
   "status": "building"
 }
 ```
 
 | Field | Meaning |
 |---|---|
+| `statement_id` | Reference to the canonical protected statement (section 3.6). |
+| `source` | The user's original instruction and how it was interpreted (section 3.5). Ignored by the evaluator. |
 | `kind` | `fact` (a specific statement) or `topic` (e.g. "my financial information"). Both are enforced at span level, never by blocking whole emails. |
 | `match_levels` | `asserts`: states or paraphrases it. `implies`: entails it ("my oncologist said the scan is clear"). `evidence`: strongly suggestive ("chemotherapy on Thursday"). Weak or ambiguous evidence is handled by classifier thresholds and the final gate (see section 6.3). |
 | `treatment.mode` | `redact_span` replaces only the protected span with the redaction marker. `drop_segment` replaces the whole sentence or clause with the marker. |
@@ -197,6 +220,62 @@ Confidentiality policies specify information an agent must not learn. The protec
 | `needs_review` | Ambiguity or low-confidence resolution. | A request to clarify. |
 | `failed` | Build error. | An error and a retry action. |
 | `paused` / `revoked` | Disabled by the user. | The state. |
+
+### 3.5 Source of a policy (the user's prompt)
+
+Every policy revision carries a `source` block. It is persisted with the revision but is not evaluated.
+
+```json
+"source": {
+  "kind": "natural_language",
+  "prompt": "Agent A can't know I have cancer",
+  "language": "en",
+  "confirmed_description": "Agent A will not receive anything stating or strongly implying that you have cancer. Affected parts are replaced by a redaction marker.",
+  "interpreter_version": "interp-2.1",
+  "confirmed_at": "2026-11-18T10:42:00Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` | `natural_language` (created from a prompt) or `dashboard_edit` (created by manual editing). A dashboard edit stores no new prompt and records which fields changed. |
+| `prompt` | The user's text, verbatim. |
+| `confirmed_description` | The plain-language preview the user actually confirmed. |
+| `interpreter_version` | The interpreter that produced the spec. |
+
+Uses:
+
+- **Dashboard:** show "You said: ..." next to the interpreted rule, with the revision history.
+- **Traceability and disputes:** compare what the user wrote, what they confirmed and what the spec does.
+- **Re-interpretation:** when the interpreter improves, the stored prompt can be re-run. The result is a new *draft* revision for the user to confirm, never applied automatically.
+- **Debugging** misinterpretations.
+
+Handling:
+
+- The prompt is itself sensitive ("I have cancer"). It is encrypted at rest and readable only in the owner dashboard.
+- It never appears in MCP responses, audit entries, ordinary logs, external model calls or the semantic pipeline.
+- Nothing is persisted before the user confirms the preview. Drafts are ephemeral.
+- Each revision has its own `source`. The original prompt stays on revision 1 and remains visible in the revision history.
+
+### 3.6 Protected statement object
+
+The statement is stored separately from the policy, so several policies (or agents) can share it and its findings.
+
+```json
+{
+  "statement_id": "st_17",
+  "canonical": "The user has cancer",
+  "subject": "person_self",
+  "embedding": "[...]",
+  "expansion": { "terms": ["chemotherapy", "oncologist", "tumor", "biopsy", "diagnosis"] },
+  "version": 1
+}
+```
+
+- The statement is the normalized form of the prompt. First-person text is resolved ("I" becomes `person_self`), because verifiers can't use it.
+- Creation embeds the new statement and compares it with existing ones. A match reuses the existing `statement_id` and all its findings.
+- The expansion terms feed candidate generation only. They block nothing.
+- The statement is the secret in a different form, so it gets the same encryption and access restrictions as `source.prompt`.
 
 ---
 
@@ -226,7 +305,7 @@ PolicySpec construction
 Preview and user confirmation
       |
       v
-Storage, then async build
+Storage (revision with source prompt), then async build
 ```
 
 The interpreter has access to registered agents, the entity directory and the PolicySpec schema. It does not need access to the email archive. It never produces SQL or executable policy code, only a validated PolicySpec.
@@ -235,11 +314,14 @@ Deterministic parsing handles common phrasings. A local LLM (Ollama or llama.cpp
 
 **Preview before confirmation:** the user sees the normalized rule in plain language ("Agent A will not receive anything stating or strongly implying that you have cancer. Affected sentences are replaced by a redaction marker, the rest of each email stays visible.") and, once the build runs, a sample of before and after.
 
+**On confirmation**, the revision is saved together with the user's verbatim prompt and the confirmed description (section 3.5). Before confirmation nothing is persisted.
+
 ### 4.2 Dashboard and owner transparency
 
 The owner is the one person who can safely see what was removed.
 
 - **Rules:** list with agent, plain-language description, status, coverage and pending-items count. Pause, resume, edit, delete. Manual editing of structured fields (agent, entities, treatment, `hold_until_ready`).
+- **Original instruction:** each rule shows what the user wrote next to how it was interpreted, with the revision history.
 - **Notifications:** when a rule moves from `building` to `active`, or to `needs_review` or `failed`.
 - **Per-request audit:** "Agent A read email X, 1 segment redacted under rule R12." The log stores segment IDs and hashes, never content.
 - **Agent-view diff:** original versus what Agent A saw, re-rendered on demand from stored data, for any item and request.
@@ -253,12 +335,133 @@ PostgreSQL:
 | Table | Responsibility |
 |---|---|
 | `authz.policy` | Stable identity, owner, principal, status. |
-| `authz.policy_revision` | Immutable PolicySpec versions. |
+| `authz.policy_revision` | Immutable PolicySpec versions, including the `source` block (user's original prompt, encrypted). |
 | `authz.policy_build` | Build status, coverage, classifier version, timestamps. |
+| `semantic.protected_statement` | Canonical protected statements shared across policies (section 3.6). Encrypted and access-restricted. |
 | `audit.request_log` | Principal, action, policy version, scope fingerprint, item IDs, decision. |
 | `audit.redaction_event` | Request, segment ID and hash, rule, treatment. No content. |
 
-Each change creates a new immutable revision. The original natural-language instruction may be retained encrypted for traceability and must not be exposed through MCP or ordinary logs.
+Each change creates a new immutable revision. The `source.prompt` is encrypted at rest and readable only in the owner dashboard. It is never exposed through MCP, ordinary logs, audit entries, external models or the semantic pipeline (section 3.5).
+
+### 4.4 Constraint creation: worked examples
+
+Two constraints for Agent A, illustrated with the email E5: "I have cancer, let's meet tomorrow at 10am."
+
+#### Constraint 1: "Agent A can't know I have cancer" (semantic)
+
+**Persisted objects**
+
+1. The policy revision from section 3.2, including its `source` block with the user's prompt.
+2. The protected statement `st_17` from section 3.6.
+3. A build record in `authz.policy_build`: status `building`, coverage 0 of N segments, classifier version.
+
+**At creation**
+
+1. **Interpret.** The local interpreter resolves "I" to the user's own entity and normalizes the statement to "The user has cancer".
+2. **Deduplicate the statement.** It is embedded and compared with existing statements. A match reuses the existing `statement_id` and its findings.
+3. **Expand.** A local LLM generates related terms and concepts, used for candidate generation only.
+4. **Preview and confirm.** The user sees: "Agent A will not receive anything stating or strongly implying that you have cancer. Affected parts are replaced by a redaction marker." On confirmation the revision is saved with the verbatim prompt and that description in `source`.
+5. **Build, asynchronously.** For each segment: candidate generation, local verification, findings and overlay rows. The dashboard shows coverage.
+
+For E5 the build produces:
+
+```text
+derived.finding:  segment_hash 9f3a…, statement st_17, verdict asserts,
+                  span [0,14] "I have cancer,", raw_score 0.98, classifier v3
+search.segment_view (scope_fingerprint sf_a_1):
+  display_text: "[REDACTED BY PRIVACY POLICY], let's meet tomorrow at 10am."
+  index_text:   "let's meet tomorrow at 10am."
+  + BM25 and embedding entries computed on index_text
+```
+
+Before the overlay row is saved, the safety check (the sanitized text doesn't imply the statement) and the utility check ("tomorrow" and "10am" still extractable) must pass. If either fails, the treatment falls back to `drop_segment`.
+
+When coverage reaches 100% the status becomes `active` and the user is notified. New emails go through the same pipeline incrementally.
+
+**At request time** (Agent A asks "when is the meeting?")
+
+1. The Policy Engine returns the `EffectiveScope`: exact scope, `protected_information: [{ st_17, redact_span, active }]`, `scope_fingerprint: sf_a_1`.
+2. Retrieval searches two sets together: base segments in exact scope with no finding for `st_17` above threshold, plus overlay rows for `sf_a_1` (searched on `index_text`). E5's segment is excluded from the first set and found in the second. A search for "cancer" matches nothing.
+3. Reranking runs locally on sanitized candidates only.
+4. JIT verification covers any returned segment with no finding for `st_17` yet.
+5. Assembly returns `display_text` plus the `redactions` field. The final gate checks the combined context.
+
+If the rule is still `building`, retrieval can only exclude segments that already have findings. The rest are served as-is, except for JIT on the returned segments, and the audit records the pending ones.
+
+#### Constraint 2: "Agent A can't see emails from John Smith" (exact)
+
+**Persisted object**
+
+One policy revision. There is no statement and no build, because nothing semantic is involved.
+
+```json
+{
+  "policy_id": "pol_42", "revision": 1,
+  "schema_version": "rosalind.policy.v2",
+  "type": "access",
+  "effect": "deny",
+  "principal": { "type": "agent", "id": "agent_a" },
+  "actions": ["email.search", "email.read_content",
+              "email.read_attachment", "email.read_extraction"],
+  "resource": {
+    "type": "email",
+    "selector": {
+      "operator": "has_participant",
+      "entity_id": "person_123",
+      "roles": ["from"]
+    }
+  },
+  "source": {
+    "kind": "natural_language",
+    "prompt": "Agent A can't see emails from John Smith",
+    "language": "en",
+    "confirmed_description": "Agent A will not see the 312 emails sent by John Smith (2 addresses).",
+    "interpreter_version": "interp-2.1",
+    "confirmed_at": "2026-11-18T10:51:00Z"
+  },
+  "status": "active"
+}
+```
+
+The rule stores the **entity ID, not email addresses**. If John gets a new address or two contacts are merged, the rule follows.
+
+**At creation**
+
+1. **Interpret.** "Emails from" maps to role `from` only. Emails where John is cc'd are unaffected unless the user says so.
+2. **Resolve the entity.** If there are two John Smiths, the policy stays `needs_review` and asks the user which one. No rule is created from a guess.
+3. **Preview and confirm.** The preview shows the affected count. On confirmation the revision is saved with the prompt.
+4. **No build.** Every email already has a `sender_entity_id` from ingestion, so the rule is `active` immediately.
+
+**At request time**
+
+The `EffectiveScope` carries `denied_selectors: [{ sender_entity_id: person_123 }]`. Retrieval turns it into a mandatory predicate on BM25 and vector queries, for base and overlay rows:
+
+```text
+AND NOT (sender_entity_id = ANY(:denied_sender_entities))
+```
+
+RLS repeats it as defence in depth. **Exact predicates run first, then the semantic anti-join and overlay.** An email from John that says "I have cancer, let's meet" is excluded by the deny, so semantic handling never sees it.
+
+| Request | Behaviour |
+|---|---|
+| `search` | John's emails never appear. Counts and pagination exclude them. |
+| `get_item` on John's email ID | Identical to "not found". |
+| `get_thread` containing John's messages | Placeholder with the redaction marker, no sender, date or size. |
+| Attachments and extractions from John's emails | Hidden with the email. |
+| Quoted copies of John's text in other emails | Segments whose content hash matches a segment of a denied email are replaced by the marker (best-effort, open decision 8). |
+| `find_entity("John Smith")` | Still returns him by default (open decision 7). |
+
+#### Side by side
+
+| | Constraint 1 | Constraint 2 |
+|---|---|---|
+| Kind | Semantic, best-effort | Exact, deterministic |
+| Persisted | Policy revision with source prompt, protected statement, build record, findings, overlay rows | Policy revision with source prompt |
+| Creation work | Interpret, deduplicate statement, expand, confirm, async build | Interpret, resolve entity, preview, confirm |
+| Ready when | Backlog processed (`building` to `active`) | Immediately |
+| Unit affected | Segment (span within it) | Whole email |
+| Request-time mechanism | Anti-join on findings, overlay, JIT, final gate | SQL predicate on `sender_entity_id`, RLS, hash masking |
+| If unresolved | Not enforced, user notified | No rule created (`needs_review`) |
 
 ---
 
@@ -289,6 +492,7 @@ EffectiveScope
     permitted_entities: [...]
     permitted_accounts: [...]
     date_limits: [...]
+    denied_selectors: [{ sender_entity_id: person_123 }]
   protected_information:
     - policy_id, statement_id, treatment, status (building|active), hold_until_ready
   scope_fingerprint: ...
@@ -448,7 +652,7 @@ RAG Filtering applies the `EffectiveScope` and the sanitized views to the actual
 
 | Stage | What happens |
 |---|---|
-| **Retrieval** | Mandatory exact-scope predicates (account, grants, participants, dates), which user-requested filters can only narrow. BM25 and vector search run over base minus affected segments, plus the agent's overlay. |
+| **Retrieval** | Mandatory exact-scope predicates (account, grants, denied selectors such as `sender_entity_id`, participants, dates), which user-requested filters can only narrow and which run before any semantic step. BM25 and vector search run over base minus affected segments, plus the agent's overlay. Segments whose content hash matches a segment of a denied email are replaced by the marker. |
 | **Reranking** | Only authorized, sanitized candidates reach the reranker. It must run locally. |
 | **Pre-assembly** | JIT verification of segments with no finding yet. |
 | **Assembly** | Render `display_text`, deduplicate (quoted copies by content hash), provenance check that every returned item traces to authorized sources. |
@@ -492,10 +696,10 @@ Consistency: the sanitized text returned by search and by `get_item` must be byt
 |---|---|
 | `search` | Scope plus overlay, JIT on top-k, sanitized results. |
 | `get_item` | Section 7.3. |
-| `get_thread` | Sanitize each message. Gaps must not reveal removed content. |
+| `get_thread` | Sanitize each message. Messages from denied senders appear as a placeholder with the redaction marker, with no sender, date or size. |
 | `get_context` | Sanitize each neighbouring item. |
 | `list_extractions` | Hide facts derived from hidden spans. |
-| `find_entity` | Restrict entities and handles that are access-restricted. |
+| `find_entity` | Entities stay findable by default even when their emails are denied (open decision 7). |
 | `describe_capabilities` | No restricted coverage or metadata. |
 
 ### 7.6 Side channels
@@ -521,7 +725,7 @@ The user creates the rule: *"Agent A should not know that I have cancer."* Agent
 
 Flow:
 
-1. The interpreter produces a `confidentiality` PolicySpec. The user confirms the preview.
+1. The interpreter produces a `confidentiality` PolicySpec. The user confirms the preview, and the prompt is saved in the revision's `source` block.
 2. The rule enters `building`. The dashboard shows coverage. Agent A is not blocked in the meantime, and the user was told the rule is not yet enforced.
 3. Candidate generation and verification flag spans. Findings and overlay rows are created.
 4. The rule becomes `active` and the user is notified.
@@ -564,6 +768,7 @@ Flow:
 10. **Injection resistance** for every model that reads email text (section 6.3).
 11. **Revocation and change:** cursors, caches and assembled contexts are invalidated when the policy version changes.
 12. **Abuse limits:** per-agent rate limits and query-pattern anomaly flags, to be extended in Phase 6.
+13. **Protection of stored instructions and statements:** source prompts and protected statements are themselves sensitive. They are encrypted at rest, readable only in the owner dashboard, and excluded from MCP, logs, audit and external models.
 
 ---
 
@@ -579,6 +784,7 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
   - Utility retention: non-protected facts (dates, times, entities) survive redaction.
   - Overlay oracle test: search results and ranking must not reveal hidden content.
   - Consistency test: search and `get_item` return byte-identical sanitized text.
+  - Deny coverage: emails from a denied entity never appear in search, items, threads, counts or extractions, including copies matched by content hash.
 - **Adversarial agent:** scripted probing ("chemo", "hospital", "wig", "sick leave", "why unavailable Thursdays"), including inference from marker positions.
 - **Injection cases** embedded in emails.
 - **Regression gate:** a classifier or prompt change cannot ship if leak rate regresses.
@@ -593,6 +799,7 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 - An agent can combine permitted information with its own world knowledge or with other data. Rosalind controls only what it returns.
 - In default (non-blocking) mode, there is an exposure window while a rule is building and while new items are pending. `hold_until_ready` closes it at the cost of availability.
 - Information welded to a protected fact is lost with it (section 6.6, third case).
+- Copies of a denied email's text inside other emails are masked by content-hash match. Reformatted quotes are not caught.
 - Revocation cannot un-disclose what an agent already received.
 - Weak-evidence statements ("medical appointments") cannot be classified perfectly. Thresholds trade leakage against utility.
 
@@ -632,12 +839,14 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 ### Phase 1 — Policy model and storage
 
 - PolicySpec v2, `authz` and `audit` tables, immutable revisions, status model.
+- Encrypted `source` block (user prompt, confirmed description, interpreter version) and the `protected_statement` table.
 - Manual creation and validation of JSON policies.
 
 ### Phase 2 — Policy Engine and exact scoping
 
 - Python evaluator and `EffectiveScope`.
 - Mandatory SQL predicates, RLS, agent-facing role and views.
+- Denied selectors (`sender_entity_id`) and content-hash masking of quoted copies.
 - Apply to all MCP tools. Audit and versioning.
 
 ### Phase 3 — Semantic pipeline
@@ -674,6 +883,9 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 4. **Weak-evidence thresholds:** defaults, and whether the user can tune them per rule ("strict" and "relaxed").
 5. **JIT time budget:** the value, and the behaviour when it is exceeded in default mode.
 6. **Overlay storage cost** at larger archive sizes, and whether overlays are shared across agents with identical scope.
+7. **Entity visibility under a deny:** by default the entity stays findable (`find_entity`) even when its emails are denied. Confirm, or let the user choose per rule.
+8. **Copies of denied content:** default is best-effort masking by content-hash match. Confirm, or restrict to the exact-scope deny only.
+9. **Retention of source prompts:** purge with the policy when it is deleted (default), or keep an encrypted history.
 
 ---
 
