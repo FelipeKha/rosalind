@@ -2,6 +2,14 @@
 
 Companion to `rosalind_policy_engine_rag_filtering_v5.md`. This document specifies how a user's natural-language instruction becomes a validated, confirmed and persisted policy object. It is the first implementation step.
 
+**Changes in this revision**
+
+- Model decision: a bake-off among Qwen 3.5 9B, Gemma 4 E4B and Ministral 3 8B Instruct, with runtime settings and a memory and latency budget for a 16GB MacBook Pro M2 (section 5.3, "Model selection").
+- Segmentation and extraction now share one LLM call that returns a list of drafts, each with its `source_span` (sections 4.1, 5.1, 5.3). Routing is done by code from the extracted object type.
+- Entailment checks run only against the few most similar existing statements, and statement similarity reuses Rosalind's existing embedding model (section 5.4).
+- One resident model at a time, no hosted models, and a startup check (sections 9 and 14).
+- The golden set adds entailment pairs and European-language prompts (section 13).
+
 ---
 
 ## 1. Purpose and scope
@@ -44,6 +52,7 @@ The interpreter needs three things from the rest of Rosalind. They are assumed t
 | Agent registry | Resolving "Agent A" | `list_agents()` returning id, display name, aliases, status |
 | Entity directory | Resolving people and accounts | `search(query)` returning id, display name, aliases, addresses, email counts |
 | Read-only count service | Impact counts in the preview | Returns integers only, over email metadata. Never content. |
+| Existing embedding model | Statement similarity | The model Rosalind already uses for pgvector retrieval. No second embedding model is loaded. |
 
 The interpreter does not read email content.
 
@@ -58,7 +67,7 @@ Prompt
 [1] Segment into atomic constraints          code + LLM
   |
   v
-[2] Route: access (exact) or confidentiality (semantic)   rules, LLM as tiebreaker
+[2] Route: access (exact) or confidentiality (semantic)   code, rules over the extracted object type
   |
   v
 [3] Extract mentions into a ConstraintDraft  LLM, constrained JSON, no IDs
@@ -82,9 +91,9 @@ Prompt
 
 | Stage | Done by | Output |
 |---|---|---|
-| 1 Segment | LLM proposes spans, code verifies | List of constraint segments |
-| 2 Route | Rules, LLM tiebreak | `access` or `confidentiality` per constraint |
-| 3 Extract | LLM (constrained) | `ConstraintDraft` |
+| 1 Segment | Same LLM call as stage 3 proposes spans, code verifies | List of constraint segments |
+| 2 Route | Code (rules over the extracted object type and modality) | `access` or `confidentiality` per constraint |
+| 3 Extract | LLM (constrained), one call shared with stage 1 | `ExtractionResult` (a list of `ConstraintDraft`) |
 | 4 Resolve | Code, LLM for canonicalization | `ResolvedConstraint` |
 | 5 Clarify | Code | `ClarificationRequest` |
 | 6 Build | Code | `PolicySpec` (unpersisted) |
@@ -92,16 +101,19 @@ Prompt
 | 8 Preview | Code (templates) | Preview text |
 | 9 Confirm | Code | Persisted revisions |
 
+**Execution note.** Stages 1 and 3 are performed by a single LLM call that returns one draft per constraint, each with its source span. Code then runs the span checks of stage 1 and the routing of stage 2. This keeps the number of LLM calls low (section 5.3, "LLM calls per prompt").
+
 ---
 
 ## 4. Data contracts
 
 ### 4.1 ConstraintDraft (LLM output, stage 3)
 
-Produced with grammar-constrained decoding against a JSON schema, so it always parses.
+The model returns an `ExtractionResult`: a list with one `ConstraintDraft` per atomic constraint. It is produced with grammar-constrained decoding against a JSON schema, so it always parses.
 
 ```json
 {
+  "source_span": "Agent A can't know I have cancer",
   "effect": "deny",
   "principal_mentions": ["Agent A"],
   "modality": "knowledge",
@@ -112,6 +124,7 @@ Produced with grammar-constrained decoding against a JSON schema, so it always p
 
 | Field | Values |
 |---|---|
+| `source_span` | The exact part of the prompt this constraint comes from. |
 | `effect` | `deny`, `permit` |
 | `principal_mentions` | One or more agent mentions. Code fans out to one constraint per agent. |
 | `modality` | `access` (see, read, receive) or `knowledge` (know, learn, find out, be told) |
@@ -135,7 +148,7 @@ Object variants:
 
 The LLM never outputs IDs, SQL, action lists, defaults or preview text.
 
-**Substring guard.** Every `mention` and `text` value must appear in the prompt segment (case-insensitive, whitespace-normalized). A draft that fails the guard is rejected and retried once with the error. A second failure marks the constraint `unsupported` with reason `extraction_failed`. This prevents the model from inventing names or claims.
+**Substring guard.** Every `source_span` must appear in the prompt, and every `mention` and `text` value must appear inside its own `source_span` (case-insensitive, whitespace-normalized). A draft that fails the guard is rejected and retried once with the error. A second failure marks the constraint `unsupported` with reason `extraction_failed`. This prevents the model from inventing names or claims.
 
 ### 4.2 ResolvedConstraint (stage 4)
 
@@ -198,13 +211,13 @@ The target object, defined in sections 3.1 and 3.2 of the main document. Its JSO
 
 A compound prompt ("Agent A can't see John's emails and can't know I have cancer") is split into one candidate constraint per clause.
 
-- The LLM returns clause spans. Code verifies each span is a substring of the prompt, that spans do not overlap, and that nothing meaningful is left uncovered.
+- Segmentation is part of the extraction call (section 5.3): the model returns one draft per clause, each with its `source_span`. Code verifies that every span is a substring of the prompt, that spans do not overlap, and that nothing meaningful is left uncovered. Uncovered text is reported to the user as unsupported.
 - Multiple agents ("Agents A and B") are fanned out by code into one constraint per agent.
 - Each constraint goes through the rest of the pipeline and is previewed and confirmed on its own. The user can confirm some and not others.
 
 ### 5.2 Routing
 
-The routing is decided by the **object**, not the verb.
+The routing is decided by the **object**, not the verb. It runs in code after extraction, using the draft's `object.type` and `modality`. It needs no separate LLM call.
 
 | Object | Modality and effect | Result |
 |---|---|---|
@@ -224,11 +237,11 @@ Notes:
 
 ### 5.3 Extraction
 
-- **Model:** a local instruct model run through Ollama or llama.cpp, temperature 0, grammar-constrained output. A small instruct-class model is likely sufficient because the task is extraction under a strict schema. This is to be confirmed on the golden set (open decision 3).
-- **Prompt skeleton:** the system prompt defines the schema and the rules (extract mentions only, copy text verbatim from the prompt, never invent IDs, use `unsupported_parts` for anything else). It includes a few worked examples. The user's prompt is passed as quoted data, never as instructions.
+- **Model:** a local instruct model with grammar-constrained output, chosen by a bake-off on the golden set (see "Model selection" below).
+- **Prompt skeleton:** the system prompt defines the schema and the rules (extract mentions only, copy text verbatim from the prompt, never invent IDs, use `unsupported_parts` for anything else). It includes a few worked examples. The user's prompt is passed as quoted data, never as instructions. Static content comes first so the runtime can reuse its cache. The output is an `ExtractionResult`.
 - **Fast path:** a rule-based parser for the most common phrasings may be added later as an optimization. It must produce the identical `ConstraintDraft`.
 
-Examples:
+Examples (each is one element of `constraints` in the `ExtractionResult`; `source_span` is omitted for brevity):
 
 ```json
 // "Agent A can't know I have cancer"
@@ -242,6 +255,61 @@ Examples:
               "date_range": null, "account_mention": null },
   "unsupported_parts": [] }
 ```
+
+#### Model selection
+
+**Target hardware:** MacBook Pro M2 with 16GB of unified memory. After macOS and everyday apps, roughly 9 to 11GB is available to a model, so the candidates are limited to about 9B parameters at 4-bit.
+
+**Candidates (bake-off)**
+
+| Candidate | Origin | Notes |
+|---|---|---|
+| Qwen 3.5 9B, instruct mode with thinking off | Alibaba (China) | Apache 2.0, broad multilingual coverage. About 5 to 5.5GB at Q4_K_M (some sources say 6 to 8GB in total). Default starting point. |
+| Gemma 4 E4B, instruct mode | Google (US) | Reported to give clean, consistent structured output. Download size close to the Qwen 9B on Ollama. |
+| Ministral 3 8B Instruct | Mistral (France) | Apache-licensed Mistral 3 family, tuned for local use. Use the Instruct variant, not Reasoning. Ollama availability is unconfirmed, and a GGUF import is the fallback. |
+
+These facts come from secondary sources (section 16) and have not been verified on this task.
+
+Not considered: models that do not fit next to the rest of the system (Qwen 3.5 27B and 35B-A3B, Ministral 3 14B). If memory pressure is a problem, the smaller sibling of the winning family is the fallback (for example Qwen 3.5 4B or Ministral 3 3B).
+
+A European origin changes nothing about privacy here, because the weights run offline either way. It matters for licensing, language coverage and preference.
+
+**Selection rule**
+
+1. Run the same golden set (section 13) on each candidate with identical prompts, schema and settings.
+2. A candidate must pass the hard gates in section 13.2.
+3. Among those that pass, rank by field-level accuracy, then determinism, then latency, then memory. A tie goes to the smaller model.
+4. Record the winner, the quantization and the results in the repository.
+
+The two LLM tasks are measured separately: extraction (the golden prompts) and entailment (the statement pairs). The wrong-statement-reuse gate depends on the second one.
+
+**Runtime settings**
+
+| Setting | Value |
+|---|---|
+| Runtime | Ollama first, using its JSON-schema `format` parameter (token-level constrained decoding). Ollama has an MLX backend on Apple Silicon. Access goes through a thin client (`llm_client.py`) so that llama.cpp (grammar) or MLX can replace it. |
+| Reasoning mode | Off for every candidate. Reasoning output can leak into the response or route the JSON into a separate field, and it costs tokens. |
+| Decoding | Temperature 0, fixed seed. |
+| Context | 4 to 8k tokens. |
+| Residency | Keep the model loaded between requests (`keep_alive`). |
+| Quantization | 4-bit (Q4_K_M or equivalent) to start. Higher precision only if memory allows and the golden set shows a benefit. |
+| Prompt layout | Static content first (rules, schema, examples), then the user prompt, so the runtime can reuse its cache across calls. |
+
+**LLM calls per prompt**
+
+| Call | When | Output |
+|---|---|---|
+| Extraction (segmentation and extraction together) | Always, once per prompt | `ExtractionResult`, roughly 100 to 150 tokens per constraint |
+| Canonicalization | Once per proposition or topic | Canonical statement and flags, roughly 50 tokens |
+| Entailment | Only against the top few similar existing statements. None for a first-time statement. | Yes or no, a few tokens |
+
+Routing, resolution of agents, people, accounts and dates, validation, impact counts and the preview use no LLM call.
+
+**Memory and latency (estimates, to be measured in the first iteration)**
+
+- One resident LLM of about 5 to 6.5GB, plus Rosalind's existing embedding model and PostgreSQL. This fits in the 9 to 11GB budget.
+- Token generation is limited by memory bandwidth. A base M2 has about 100 GB/s, so a 5.5GB model tops out near 18 tokens per second in theory and lower in practice. An M2 Pro has about double.
+- Initial target: a typical single-constraint prompt completes in about 20 seconds on the development laptop. This is revisited after the first measurements.
 
 ### 5.4 Resolution (deterministic)
 
@@ -270,7 +338,7 @@ Examples:
    - Not atomic: split into several statements, each becoming its own constraint shown to the user.
    - A question or an instruction: rejected as unsupported.
    - A negated or hedged statement ("I don't smoke", "I might have cancer") is kept as written.
-3. **Deduplicate in memory.** Compare the embedding with existing statements for the same subject. Reuse an existing `statement_id` only if two-way entailment holds (statement A implies B and B implies A, judged by the local model with a constrained yes/no output). Similarity alone never causes reuse. Otherwise create a draft statement.
+3. **Deduplicate in memory.** Embed the canonical statement with Rosalind's existing embedding model (no second embedding model is loaded) and compare it with existing statements for the same subject. Take only the few most similar ones above a similarity threshold (default: the top three). For each, reuse the existing `statement_id` only if two-way entailment holds (statement A implies B and B implies A, judged by the local model with a constrained yes/no output). Similarity alone never causes reuse. If no candidate passes, or none was similar enough to check, create a draft statement. A first-time statement therefore costs no entailment call.
 4. Nothing is stored at this point. The embedding stays in memory.
 
 **Topic:** same flow, canonicalized to a short noun phrase, deduplicated the same way.
@@ -423,7 +491,9 @@ ready -> confirmed | abandoned | expired
 
 ## 9. Staying local
 
-- **Model:** local only, temperature 0, constrained output, fixed seed. The same prompt yields the same draft. `interpreter_version` is a hash of the model id, prompt template version, schema version and resolver versions, and is recorded on every revision.
+- **Model:** local only, temperature 0, constrained output, fixed seed. The same prompt yields the same draft. `interpreter_version` is a hash of the model id, quantization, runtime version, prompt template version, schema version and resolver versions, and is recorded on every revision.
+- **One resident model.** On the development laptop the system keeps a single LLM loaded. The Phase 4 verifier (main document) is expected to reuse the same model, because two large models do not fit together in about 10GB.
+- **No hosted models.** Hosted or cloud-tagged models (for example Ollama `:cloud` tags) are never configured. A startup check refuses to run unless the model is local and the endpoint is loopback.
 - **Process isolation:** the interpreter runs in a process or container with no network egress. Embeddings and the entailment check also use local models.
 - **No tools or write access for the LLM.** It cannot query or modify the database. Code does that, after validation.
 - **Database access:** code reads the agent registry and entity directory, and calls the count service. It has no access to email content.
@@ -469,9 +539,10 @@ DraftState {
 rosalind/policy/spec/                 PolicySpec v2 Pydantic models and JSON Schema
 rosalind/policy/interpreter/
   service.py          orchestration and draft state machine
-  segmenter.py
-  router.py
-  extractor.py        LLM wrapper: constrained decoding, retry, substring guard
+  llm_client.py       runtime-agnostic client (Ollama first), model config, startup checks
+  segmenter.py        span verification and fan-out (the LLM call is in extractor.py)
+  router.py           routing from extracted object type and modality
+  extractor.py        one LLM call: segmentation and extraction, retry, substring guard
   schemas.py          ConstraintDraft, ResolvedConstraint, ClarificationRequest, Preview
   resolvers/
     agents.py  people.py  accounts.py  dates.py  statements.py
@@ -507,6 +578,11 @@ Drafts are not stored in these tables.
 
 A set of prompts mapped to expected outcomes, including multi-turn clarification. Start with a few hundred cases covering: varied phrasings, typos, several languages, compound and ambiguous prompts, unsupported constructs, injection attempts.
 
+It also includes:
+
+- **Entailment pairs:** pairs of statements labelled equivalent, near-equivalent or unrelated, used to measure the reuse decision on its own.
+- **European-language prompts** (for example French, German, Spanish, Italian, Polish), so the model choice and the preview-language decision use data.
+
 ```json
 {
   "id": "gs_0042",
@@ -536,7 +612,8 @@ A set of prompts mapped to expected outcomes, including multi-turn clarification
 | Determinism | Same prompt gives the same draft across repeated runs. |
 | Preview coverage | Every spec field is rendered or listed as a default. Tested by perturbing each field. |
 | Injection suite | Hostile directory names and prompts never alter spec fields beyond the schema, never add constraints, never change the preview. |
-| Latency | Interactive on the owner's hardware. The target is measured in the first iteration. |
+| Latency | Measured per candidate on the development laptop. Initial target: a typical single-constraint prompt in about 20 seconds, revisited after the first measurements. |
+| Model comparison | The same golden set is run on each candidate (section 5.3, "Model selection") and recorded per candidate. |
 
 A new interpreter version cannot ship if the golden set regresses.
 
@@ -549,6 +626,8 @@ A new interpreter version cannot ship if the golden set regresses.
 - Semantic rules create a statement and a build record. Exact rules are `active` immediately.
 - The preview is generated from the spec and states clearly that enforcement is not active yet.
 - All interpretation runs locally with no network egress, and the prompt appears in no log.
+- A startup check refuses to run with a non-local model or a non-loopback endpoint.
+- A model has been selected from the three candidates by the golden-set comparison, and the choice and results are recorded.
 - The golden set passes its hard gates.
 - The interpreter is not reachable from MCP.
 
@@ -558,10 +637,22 @@ A new interpreter version cannot ship if the golden set regresses.
 
 1. **Whole-email topic requests:** "see emails about X" currently becomes span-level redaction with a preview note. Alternative: ask whether the user also wants whole emails hidden (this would need a model change).
 2. **Clarification rounds:** a maximum of two, then `needs_review`. Alternative: allow unlimited rounds.
-3. **Model choice:** which local model and size, validated on the golden set.
+3. **Model choice:** bake-off among Qwen 3.5 9B, Gemma 4 E4B and Ministral 3 8B Instruct, decided on the golden set (section 5.3, "Model selection"). Open until the results are in.
 4. **Draft store:** in-process memory, or an encrypted ephemeral store if the service runs several workers.
-5. **Preview languages:** English only first, or the language of the prompt from the start.
+5. **Preview languages:** English only first, or the language of the prompt from the start. The golden set includes European-language prompts, so this can be decided with data.
 6. **Natural-language edits and revocations** ("remove my rule about cancer"): dashboard only in this step.
 7. **"Only" semantics:** a permit that leaves other grants in place (current default), or an option to replace them.
 8. **Rolling date windows** ("the last 12 months" that moves with time): unsupported now, since dates are frozen at confirmation.
 9. **Content-class permits** (allow-lists by content): deferred to the semantic pipeline.
+
+---
+
+## 16. References
+
+Background on the candidate models and local runtimes. These are secondary sources (blog posts and press), used for shortlisting only and not verified on this task.
+
+- Atomic Chat, "Best Local LLM for 16GB Mac in 2026": https://atomic.chat/blog/guides/best-local-llm-16gb-mac
+- MindStudio, "Gemma 4 vs Qwen 3.5": https://mindstudio.ai/blog/gemma-4-vs-qwen-3-5-open-weight-comparison
+- InsiderLLM, "Best Local LLMs for Structured Output": https://insiderllm.com/pdfs/structured-output-local-llms.pdf
+- heise, "Mistral 3: Four new AI models from France": https://heise.de/-11101058
+- DEV Community, "Mistral 3 vs Llama 3.1: Choosing Your Open AI Stack in 2026": https://dev.to/dr_hernani_costa/mistral-3-vs-llama-31-open-ai-stack-for-eu-smes-3o96
