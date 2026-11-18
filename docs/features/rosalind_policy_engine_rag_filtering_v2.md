@@ -1,4 +1,14 @@
-# Rosalind — Policy Engine & RAG Filtering (v2)
+# Rosalind — Policy Engine & RAG Filtering (v3)
+
+**Changes since v2**
+
+- Added when and where protected information is identified (section 6.5) and the per-stage enforcement view (section 7.2).
+- Sanitization is now *cut at verifier offsets plus a visible, uniform redaction marker*. The LLM rewrite step is gone (section 6.6).
+- Added full-item reads and the field-by-field rules (section 7.3).
+- Added owner-facing transparency: audit, agent-view diff, spot-check queue (section 4.2).
+- Agents and human readers see the same thing: redaction is visible. Probing protections are deferred to Phase 6.
+
+---
 
 ## 1. Objective
 
@@ -14,6 +24,7 @@ Authorization must be:
 - **Seamless:** The user writes a rule in natural language and manages rules in a dashboard. The system decides internally how each rule is enforced.
 - **Asynchronous and transparent:** Semantic rules take time to build. The user always knows whether a rule is ready, building, or needs attention.
 - **Non-blocking by default:** A rule that is not ready yet does not block the agent. The user is told it is not enforced yet. Holding access until ready is an opt-in setting.
+- **Visibly redacted:** Agents see the same thing a human reader would: a marker where information was removed. The agent can tell its user that part of an item is hidden by the owner's privacy policy.
 - **Model-independent:** Authorization is controlled by Rosalind, regardless of which external LLM or agent is used.
 - **Enforced internally:** Sensitive content and policy interpretation are never sent to external models.
 
@@ -28,7 +39,7 @@ The system consists of three parts:
 | Kind | Examples | Nature |
 |---|---|---|
 | Exact scoping | Agent grants, participants, accounts, dates | Deterministic and provable. |
-| Semantic protection | "Don't let Agent X know I have cancer" | Model-based, best-effort, measured by recall. |
+| Semantic protection | "Don't let Agent A know I have cancer" | Model-based, best-effort, measured by recall. |
 
 The user does not choose between them. The interpreter routes each rule to the right mechanism. The dashboard shows how each rule is enforced. Semantic rules show a coverage figure and are labelled as AI-detected, not as guaranteed.
 
@@ -39,7 +50,7 @@ The user does not choose between them. The interpreter routes each rule to the r
 ```text
                   USER
                     |
-                    | "Agent X should not know I have cancer"
+                    | "Agent A should not know I have cancer"
                     v
           +-----------------------+
           |  Policy Interpreter   |   local NLP, entity resolution
@@ -59,8 +70,8 @@ The user does not choose between them. The interpreter routes each rule to the r
 | Grants, denies,       |            | Segmentation              |
 | precedence            |            | Candidate generation      |
 | -> EffectiveScope     |            | Verification (local model)|
-+-----------------------+            | Span store + provenance   |
-          |                          | Sanitized views (overlay) |
++-----------------------+            | Findings + provenance     |
+          |                          | Sanitized overlay         |
           |                          +---------------------------+
           |                                       |
           v                                       v
@@ -79,7 +90,9 @@ The user does not choose between them. The interpreter routes each rule to the r
                     v
           +-----------------------+
           |   Context Assembly    |
-          | Sanitized rendering   |
+          | JIT verification of   |
+          |   unprocessed segments|
+          | Marker rendering      |
           | Dedup, provenance     |
           | Final semantic gate   |
           +-----------------------+
@@ -127,14 +140,14 @@ Content-based grants ("my travel agent can access flight and hotel reservations"
 
 Confidentiality policies specify information an agent must not learn. The protected item is a **statement about the world**, not a category label.
 
-> Agent X should not know that I have cancer.
+> Agent A should not know that I have cancer.
 
 ```json
 {
   "schema_version": "rosalind.policy.v2",
   "type": "confidentiality",
   "effect": "deny",
-  "principal": { "type": "agent", "id": "agent_x" },
+  "principal": { "type": "agent", "id": "agent_a" },
   "actions": [
     "email.search",
     "email.read_content",
@@ -161,8 +174,8 @@ Confidentiality policies specify information an agent must not learn. The protec
 |---|---|
 | `kind` | `fact` (a specific statement) or `topic` (e.g. "my financial information"). Both are enforced at span level, never by blocking whole emails. |
 | `match_levels` | `asserts`: states or paraphrases it. `implies`: entails it ("my oncologist said the scan is clear"). `evidence`: strongly suggestive ("chemotherapy on Thursday"). Weak or ambiguous evidence is handled by classifier thresholds and the final gate (see section 6.3). |
-| `treatment.mode` | `redact_span` removes only the protected span. `drop_segment` removes the whole sentence or clause. |
-| `treatment.fallback` | Used when a clean redaction cannot be verified. The fallback is the smallest enclosing segment, never the whole email. |
+| `treatment.mode` | `redact_span` replaces only the protected span with the redaction marker. `drop_segment` replaces the whole sentence or clause with the marker. |
+| `treatment.fallback` | Used when the result of a span redaction fails verification (section 6.6). The fallback is the smallest enclosing segment, never the whole email. |
 | `hold_until_ready` | Opt-in. If true, the agent cannot read affected data until the rule is ready. Default is false. |
 
 ### 3.3 Precedence and failure behaviour
@@ -187,11 +200,11 @@ Confidentiality policies specify information an agent must not learn. The protec
 
 ---
 
-## 4. Policy creation and storage
+## 4. Policy creation, storage and dashboard
 
 Users create policies through a natural-language box.
 
-- "Agent X should not know that I have cancer."
+- "Agent A should not know that I have cancer."
 - "Agent Y can see my emails with John Smith."
 - "My travel agent can access flight and hotel reservations."
 - "Agent Z should not see my financial information."
@@ -220,25 +233,30 @@ The interpreter has access to registered agents, the entity directory and the Po
 
 Deterministic parsing handles common phrasings. A local LLM (Ollama or llama.cpp) handles the rest.
 
-**Preview before confirmation:** the user sees the normalized rule in plain language ("Agent X will not receive anything stating or strongly implying that you have cancer. Affected sentences are removed, the rest of each email stays visible.") and, once the build runs, a sample of before and after.
+**Preview before confirmation:** the user sees the normalized rule in plain language ("Agent A will not receive anything stating or strongly implying that you have cancer. Affected sentences are replaced by a redaction marker, the rest of each email stays visible.") and, once the build runs, a sample of before and after.
 
-### 4.2 Dashboard
+### 4.2 Dashboard and owner transparency
 
-- List of rules with agent, plain-language description, status, coverage and pending-items count.
-- Pause, resume, edit and delete.
-- Manual editing of structured fields (agent, entities, treatment, `hold_until_ready`).
-- A sample view of "what Agent X sees" for a given email.
-- Notification when a rule moves from `building` to `active`, or to `needs_review` or `failed`.
+The owner is the one person who can safely see what was removed.
+
+- **Rules:** list with agent, plain-language description, status, coverage and pending-items count. Pause, resume, edit, delete. Manual editing of structured fields (agent, entities, treatment, `hold_until_ready`).
+- **Notifications:** when a rule moves from `building` to `active`, or to `needs_review` or `failed`.
+- **Per-request audit:** "Agent A read email X, 1 segment redacted under rule R12." The log stores segment IDs and hashes, never content.
+- **Agent-view diff:** original versus what Agent A saw, re-rendered on demand from stored data, for any item and request.
+- **Per-rule stats:** segments affected, requests served with redactions.
+- **Spot-check queue:** the audit shows what was removed but never what was *missed*. The dashboard surfaces low-confidence verifier calls and random samples of unflagged candidate segments for the user to review. This is how false negatives get caught.
 
 ### 4.3 Storage
 
-PostgreSQL, `authz` schema:
+PostgreSQL:
 
 | Table | Responsibility |
 |---|---|
 | `authz.policy` | Stable identity, owner, principal, status. |
 | `authz.policy_revision` | Immutable PolicySpec versions. |
 | `authz.policy_build` | Build status, coverage, classifier version, timestamps. |
+| `audit.request_log` | Principal, action, policy version, scope fingerprint, item IDs, decision. |
+| `audit.redaction_event` | Request, segment ID and hash, rule, treatment. No content. |
 
 Each change creates a new immutable revision. The original natural-language instruction may be retained encrypted for traceability and must not be exposed through MCP or ordinary logs.
 
@@ -265,7 +283,7 @@ For each MCP request:
 ```text
 EffectiveScope
   decision: PERMIT | DENY
-  agent_id: agent_x
+  agent_id: agent_a
   policy_version: 12
   exact_scope:
     permitted_entities: [...]
@@ -282,7 +300,7 @@ The engine does not search, rank, embed, classify raw text, or return content.
 
 ## 6. Semantic Pipeline (fact-level protection)
 
-This is the core of Tier-2 enforcement. It works asynchronously and produces what RAG Filtering needs.
+This is the core of semantic enforcement. It works asynchronously and produces what RAG Filtering needs.
 
 ### 6.1 Segmentation
 
@@ -290,6 +308,7 @@ Every text field (subject, body, quoted blocks, attachment text) is split into *
 
 - Each segment has a stable content hash. The same sentence quoted in a reply inherits the same findings, so a protected sentence cannot leak through a quoted copy.
 - Chunks used for context are assembled at query time from authorized segments.
+- Segment boundaries do not need to be perfect. The verifier returns character offsets, so a comma-spliced sentence like "I have cancer, let's meet tomorrow at 10am" is cut inside the segment.
 
 ### 6.2 Candidate generation
 
@@ -307,7 +326,7 @@ A local model judges each candidate segment against the protected statement:
 
 - Verdict: `asserts`, `implies`, `evidence`, or `none`.
 - The minimal sensitive span offsets inside the segment.
-- Confidence and classifier version.
+- Raw confidence score and classifier version.
 
 Thresholds are tuned for recall. Weak signals ("I hope you feel better") are the hard cases. Whether they are flagged is a utility versus leakage tradeoff measured by the evaluation set (section 11), not decided by hand.
 
@@ -318,56 +337,102 @@ Thresholds are tuned for recall. Weak signals ("I hope you feel better") are the
 - Segment text is passed as quoted data, never as instructions.
 - Injection test cases are part of the evaluation set.
 
-### 6.4 Provenance
+### 6.4 Findings and provenance
+
+A finding belongs to the **segment**, not to the agent: "segment X asserts statement S1", stored once, keyed by segment content hash and normalized statement. The agent enters only at enforcement time.
 
 ```text
 derived.span            segment_id, start, end, hash
-derived.finding         span_id, statement_id, verdict, confidence, classifier_version
+derived.finding         span_id, statement_id, verdict, raw_score, classifier_version
 derived.fact            extracted facts, each linked to source spans
 derived.fact_evidence   fact_id -> span_id
 derived.fact_relation   links between facts
 ```
 
-Any fact, summary or extraction derived from a hidden span is itself hidden for that agent. Sensitivity propagates through provenance.
+Consequences:
 
-### 6.5 Sanitized rendering
+- A second agent with the same rule ("Agent B can't know I have cancer") needs no re-verification. It points to the same findings and the same overlay.
+- Raw scores are stored, so changing a confidence threshold means rebuilding overlays, not re-running the model.
+- Extracted facts point at **span offsets**, not whole segments. The event "Meeting, tomorrow 10:00" has its evidence in the unprotected span and stays visible. A fact extracted from "I have cancer" is hidden. Sensitivity propagates through provenance to facts, summaries and extractions.
 
-For an agent with an active rule, a flagged segment is rendered as follows:
+### 6.5 When protected information is identified
 
-1. Remove the protected span.
-2. Apply a minimal rewrite so the remainder reads naturally.
-3. Run a verifier pass confirming the result neither states nor implies the protected statement.
-4. If verification fails, apply the fallback and drop the whole segment (not the email).
-5. By default no marker is left ("[redacted]" would reveal that something is hidden).
+Identification is offline and runs once per segment and statement. Query time reads the result.
 
-Example:
-
-| Original | Agent X sees |
+| Moment | What happens |
 |---|---|
-| "I have cancer, let's meet tomorrow at 10am." | "Let's meet tomorrow at 10am." |
-| "Your chemotherapy is scheduled for Thursday." | *(segment dropped; nothing safe remains)* |
+| **Rule creation** | The statement is registered and the backfill starts: candidate generation, verification, findings, sanitized overlay rows. The rule is `building` until the backlog is clear. |
+| **New or updated email** | The same pipeline runs incrementally against every active statement. |
+| **Classifier version change** | Affected findings are re-run in the background. The version is recorded on every finding. |
+| **Query time: retrieval** | Lookup of stored findings. The original affected segment is excluded and the overlay row is used. No classification happens. |
+| **Query time: JIT verification** | Any segment about to be returned that has no finding yet is verified synchronously. For `search` this covers the top-k results. For `get_item` it covers every segment of the item. |
+| **Query time: final gate** | Cross-segment check of the assembled context. |
 
-### 6.6 Sanitized overlay index
+Why not query time only:
 
-Rendering sanitized text on output is not enough. If the search index is built on the original text, a query for "cancer" would still rank and return the sanitized segment, which tells the agent that the segment is about cancer. This is an oracle leak, through both BM25 and embeddings.
+- **Ranking leak:** retrieving first and redacting after means a search for "cancer" ranks the meeting email high. Replacement must happen before ranking, which needs precomputed findings.
+- **Cost and latency:** an LLM call per candidate segment per request.
+- **Consistency:** the same sentence could be judged differently on different calls.
+
+Why not offline only:
+
+- New items and the build window have unprocessed segments (the JIT step covers this).
+- Cross-segment inference only exists at assembly time.
+- An offline miss would otherwise never get a second look.
+
+JIT verification is bounded by a per-request time budget. If it can't finish, behaviour follows `hold_until_ready` (default: return as-is and record the segments as pending in the audit; strict: return the redaction marker). JIT results are persisted so later reads are identical.
+
+### 6.6 Sanitization: cut and mark
+
+For an agent with an active rule, a flagged segment is rendered in advance (at build time or JIT), not at query time.
+
+1. **Cut:** remove the verifier's protected span by character offsets.
+2. **Mark:** insert the uniform redaction marker `[REDACTED BY PRIVACY POLICY]` where the span was. Adjacent redacted spans merge into one marker.
+3. **Verify safety:** a verifier pass confirms the result neither states nor implies the protected statement.
+4. **Verify utility:** date, time and entity extractors run on the original-minus-span and on the sanitized text. They must find the same things.
+5. **Fallback:** if either verification fails, the treatment falls back to `drop_segment`: the whole segment becomes one marker, never the whole email.
+6. **Store** the overlay row with two texts: `display_text` (with marker) and `index_text` (without marker).
+
+There is no LLM rewrite. Cutting plus a fixed token is deterministic and auditable.
+
+| Case | Original | Agent A sees |
+|---|---|---|
+| Separable clause | "I have cancer, let's meet tomorrow at 10am." | "[REDACTED BY PRIVACY POLICY], let's meet tomorrow at 10am." |
+| Entangled | "Chemo ends at 9, so let's meet at 10am." | "[REDACTED BY PRIVACY POLICY], so let's meet at 10am." (if verification fails, the whole segment becomes the marker) |
+| Not separable | "I can't do mornings because of the cancer, so 10am." | "[REDACTED BY PRIVACY POLICY]" The 10am is lost. |
+
+The third case is the real cost of fact-level filtering: information welded to the protected fact is lost. The evaluation set measures how often it happens.
+
+**Marker rules**
+
+- The marker is identical for every rule, agent and span length. It never names the rule, statement, category or policy ID.
+- The marker is **not indexed**. BM25 and embeddings use `index_text`, so searching "redacted" does not surface affected segments.
+- Responses also carry a machine-readable field so agents don't parse text:
+  `"redactions": [{ "segment": 0, "type": "privacy_policy" }]`
+- The MCP tool descriptions state that content may be redacted under the owner's privacy policy.
+
+The marker tells the agent that something sensitive exists at that position and that a rule is probably in force. The agent can say so honestly to its user. Probing through repeated fetches is deferred to Phase 6 (section 12).
+
+### 6.7 Sanitized overlay index
+
+If the search index were built on original text, a query for "cancer" would still rank the sanitized segment, which tells the agent what the segment is about. This is an oracle leak, through both BM25 and embeddings.
 
 Design:
 
 - The base index covers original segments.
-- For each active semantic scope, the build creates `search.segment_view` rows for the affected segments only: `scope_fingerprint, segment_id, sanitized_text, bm25 entry, embedding`.
+- For each active semantic scope, the build creates `search.segment_view` rows for the affected segments only: `scope_fingerprint, segment_id, display_text, index_text, bm25 entry, embedding`.
 - For an agent, retrieval searches the base index **excluding affected segments**, plus that agent's overlay rows.
 
 Overlays exist for a small fraction of segments, so storage and embedding cost stay modest. Overlays are keyed by scope fingerprint, so agents with the same rules share them. This design needs validation in the Phase 0 spike (section 14).
 
-### 6.7 Asynchronous build and coverage
+### 6.8 Asynchronous build and coverage
 
-- On confirmation, the rule enters `building`. Candidate generation and verification run over the archive in the background.
+- On confirmation, the rule enters `building`.
 - Coverage is reported as processed segments over total.
 - When the backlog is clear, the rule becomes `active`.
 - New and updated items go through the same pipeline incrementally. The dashboard shows a pending-items count.
-- If a classifier version changes, affected findings are re-run and the version is recorded on every finding.
 
-### 6.8 Metadata fields
+### 6.9 Metadata fields
 
 Subject lines and attachment names are segmented and sanitized like body text. Sender and entity names can themselves reveal a protected fact (an oncology clinic). Treatment of such entities is an open decision (section 15). They are not blocked by default.
 
@@ -377,75 +442,93 @@ Subject lines and attachment names are segmented and sanitized like body text. S
 
 ### 7.1 Responsibility
 
-RAG Filtering applies the `EffectiveScope` and the semantic views to the actual data. It does not interpret policies.
+RAG Filtering applies the `EffectiveScope` and the sanitized views to the actual data. It does not interpret policies.
 
-### 7.2 Where filtering happens
+### 7.2 Where each stage acts
 
-**A. Retrieval**
+| Stage | What happens |
+|---|---|
+| **Retrieval** | Mandatory exact-scope predicates (account, grants, participants, dates), which user-requested filters can only narrow. BM25 and vector search run over base minus affected segments, plus the agent's overlay. |
+| **Reranking** | Only authorized, sanitized candidates reach the reranker. It must run locally. |
+| **Pre-assembly** | JIT verification of segments with no finding yet. |
+| **Assembly** | Render `display_text`, deduplicate (quoted copies by content hash), provenance check that every returned item traces to authorized sources. |
+| **Final gate** | Local check of the combined context for the protected statements. A safety net, not a guarantee. If it can't establish safety, it replaces the least-certain segments with the marker. |
 
-- Exact-scope predicates (account, grants, participants, dates) are mandatory and cannot be overridden by user-requested filters.
-- BM25 and vector retrieval run over base minus affected segments, plus the agent's overlay.
-- Existing user-facing filters (sender, dates, tags, conversation) remain and combine with the mandatory scope by AND.
+### 7.3 Reading a full item (`get_item`)
 
-**B. Reranking**
+An agent that gets a source email ID from a search result can request the full email. This goes through the same sanitized path as search. There is no raw-email route for agents.
 
-Only authorized and sanitized candidates reach the reranker. The reranker must run locally.
+1. **Authorize.** The Policy Engine confirms a grant covers the item. If not, the response is identical to "not found".
+2. **Load segments, not the raw body.** The agent-facing DB role has no access to the raw body column. It reads through a view that maps each segment to original text (unaffected), overlay `display_text` (affected), or the marker (dropped).
+3. **Complete JIT verification** for every segment of the item.
+4. **Reassemble** in order, preserving paragraph structure.
+5. **Final gate** on the whole item, since this is the highest-context request.
+6. **Return** with the `redactions` field.
 
-**C. Context assembly**
+Consistency: the sanitized text returned by search and by `get_item` must be byte-identical. Both read the same stored overlay row, keyed by scope fingerprint and policy version, and nothing is regenerated per request.
 
-- Render sanitized text only. Original text of an affected segment never leaves the retrieval layer.
-- Deduplicate, including quoted copies by content hash.
-- Provenance check: every returned item traces to authorized sources.
-- **Final semantic gate:** a local check of the combined context for the protected statements. This is a safety net, not a guarantee. If the gate cannot establish safety, it drops the least-certain segments or abstains.
+| Field | Rule |
+|---|---|
+| Subject, preview, snippet | Segmented and sanitized like body text. |
+| Quoted blocks | Same content hash, same findings. |
+| HTML body, raw MIME / `.eml` | Not available to agents, or generated from sanitized segments only. |
+| Highlight offsets, content length, size | Computed on the sanitized text. |
+| Attachments | Names sanitized. Text extracted, segmented and treated like the body. Calendar invites included. |
+| Extractions, linked entities | Filtered by span provenance. |
+| Thread and reply-to links | Referenced by ID only. Each item goes through the same enforcement when fetched. |
+| Email IDs | Opaque, never derived from content. |
+| Fully redacted item | Returned as the item shell (sanitized metadata) with markers, not as "not found". |
 
-### 7.3 Database enforcement
+### 7.4 Database enforcement
 
 - Mandatory SQL predicates generated from the `EffectiveScope`.
 - The agent-facing read path uses a dedicated DB role limited to security-barrier views. Those views expose only authorized, sanitized text, never raw segment text of affected rows.
 - PostgreSQL RLS for exact scoping (account and agent grants), as defence in depth. The retrieval service must not run under an owner or superuser role that bypasses RLS.
 - **Filtered ANN:** HNSW with selective filters can return fewer than k results. Verify iterative-scan support in the pgvector version in use, or fall back to partitioning or a per-agent visibility table.
 
-### 7.4 All MCP tools use the same layer
+### 7.5 All MCP tools use the same layer
 
 | MCP tool | Enforcement |
 |---|---|
-| `search` | Scope plus overlay, then sanitized results. |
-| `get_item` | Authorize the item, render sanitized text. |
+| `search` | Scope plus overlay, JIT on top-k, sanitized results. |
+| `get_item` | Section 7.3. |
 | `get_thread` | Sanitize each message. Gaps must not reveal removed content. |
 | `get_context` | Sanitize each neighbouring item. |
 | `list_extractions` | Hide facts derived from hidden spans. |
 | `find_entity` | Restrict entities and handles that are access-restricted. |
 | `describe_capabilities` | No restricted coverage or metadata. |
 
-### 7.5 Side channels
+### 7.6 Side channels
 
-- A sanitized segment must be indistinguishable from an unaffected one: no markers, same result formats.
+- The marker is the only signal that content was removed, and it is identical everywhere.
 - Counts, totals and pagination are computed over the agent-visible set only.
-- Errors and empty results do not distinguish "nothing there" from "hidden".
+- Errors and empty results do not distinguish "nothing there" from "not permitted".
 - Cursors and caches are bound to `policy_version` and scope fingerprint.
 
 ---
 
 ## 8. Example: protecting a cancer diagnosis
 
-The user creates the rule: *"Agent X should not know that I have cancer."* Agent X has been granted access to the mailbox.
+The user creates the rule: *"Agent A should not know that I have cancer."* Agent A has been granted access to the mailbox.
 
-| Email | Original | Agent X sees |
+| Email | Original | Agent A sees |
 |---|---|---|
-| E1 — Doctor | "Your chemotherapy is scheduled for Thursday." | Segment dropped. |
-| E2 — Family | "How did your treatment go?" | Segment dropped (evidence). |
-| E3 — Employer | "I hope you feel better. We can postpone the meeting." | Flagging the first sentence depends on thresholds. "We can postpone the meeting." is always kept. |
+| E1 — Doctor | "Your chemotherapy is scheduled for Thursday." | "[REDACTED BY PRIVACY POLICY]" |
+| E2 — Family | "How did your treatment go?" | "[REDACTED BY PRIVACY POLICY]" (evidence) |
+| E3 — Employer | "I hope you feel better. We can postpone the meeting." | Flagging the first sentence depends on thresholds. "We can postpone the meeting." is kept. |
 | E4 — User | "I will be unavailable every other Thursday for medical appointments." | Borderline. Weak evidence, decided by evaluation results. |
-| E5 — User | "I have cancer, let's meet tomorrow at 10am." | "Let's meet tomorrow at 10am." |
+| E5 — User | "I have cancer, let's meet tomorrow at 10am." | "[REDACTED BY PRIVACY POLICY], let's meet tomorrow at 10am." |
 
 Flow:
 
 1. The interpreter produces a `confidentiality` PolicySpec. The user confirms the preview.
-2. The rule enters `building`. The dashboard shows coverage. Agent X is not blocked in the meantime, and the user was told the rule is not yet enforced.
-3. Candidate generation and verification flag spans. Sanitized overlay rows are created.
+2. The rule enters `building`. The dashboard shows coverage. Agent A is not blocked in the meantime, and the user was told the rule is not yet enforced.
+3. Candidate generation and verification flag spans. Findings and overlay rows are created.
 4. The rule becomes `active` and the user is notified.
-5. Agent X's search for "chemotherapy" finds nothing from E1, because the original segment is excluded from its index. Its search for "meeting tomorrow" returns E5 in sanitized form.
-6. The final gate inspects the assembled context for combinations that still imply the diagnosis.
+5. Agent A asks "when is the meeting?". Retrieval uses the overlay for E5, so the result is `[REDACTED BY PRIVACY POLICY], let's meet tomorrow at 10am.` with the source email ID.
+6. Agent A requests the full email. `get_item` returns the same sanitized text for that segment, plus the rest of the email, byte-identical to what search returned.
+7. Agent A's search for "chemotherapy" returns nothing from E1, because the original segment is excluded from its index.
+8. The owner sees in the audit: "Agent A read E5, 1 segment redacted under rule R12", and can open the agent-view diff.
 
 ---
 
@@ -457,6 +540,7 @@ Flow:
 | Which rules apply? | Evaluates grants, denies, precedence. | — | Does not reinterpret rules. |
 | Which spans are protected? | Names the protected statements. | Finds and verifies the spans. | Applies the results. |
 | What does the agent see of a flagged segment? | Specifies the treatment. | Builds sanitized text and overlay. | Serves only sanitized text. |
+| Segments with no finding yet? | — | Verifies them (JIT). | Calls the pipeline before returning. |
 | Which emails match a contact? | Defines the condition. | — | Executes it. |
 | Can combined content reveal a secret? | Supplies protected statements. | — | Final gate on assembled context. |
 | Who generates SQL? | Produces `EffectiveScope`. | — | Compiles it into queries. |
@@ -471,15 +555,15 @@ Flow:
 1. **Default deny for access.** No agent receives data without an applicable grant.
 2. **Non-blocking confidentiality.** A rule that is not ready is never silently assumed active. The user is told. Strict holding is opt-in via `hold_until_ready`.
 3. **Non-removable scope:** user-requested search filters cannot override authorization.
-4. **Consistent enforcement:** every MCP tool uses the same layer.
+4. **Consistent enforcement:** every MCP tool uses the same layer. No raw-content route for agents.
 5. **Policy versioning:** every request records the policy version and scope fingerprint it used.
-6. **Auditing:** principal, action, policy version, decision, scope fingerprint. Never log content.
-7. **Privacy-preserving errors and side channels** (section 7.5).
+6. **Auditing:** principal, action, policy version, decision, scope fingerprint, redacted segment IDs and hashes. Never log content.
+7. **Uniform markers and side-channel hardening** (sections 6.6 and 7.6).
 8. **Local processing:** interpretation, classification, verification and the final gate use local models only. Reranking is local.
 9. **Derived-data protection:** sensitivity propagates through provenance to facts, summaries and extractions.
 10. **Injection resistance** for every model that reads email text (section 6.3).
 11. **Revocation and change:** cursors, caches and assembled contexts are invalidated when the policy version changes.
-12. **Abuse limits:** per-agent rate limits and query-pattern anomaly flags. This is the realistic form of cross-query protection. It cannot prevent accumulation of permitted facts.
+12. **Abuse limits:** per-agent rate limits and query-pattern anomaly flags, to be extended in Phase 6.
 
 ---
 
@@ -487,13 +571,15 @@ Flow:
 
 The semantic pipeline is the main technical risk, so it is measured from the start.
 
-- **Synthetic mailboxes** with planted protected facts, direct, paraphrased, implied, quoted, cross-email and in attachments and subjects.
+- **Synthetic mailboxes** with planted protected facts: direct, paraphrased, implied, quoted, cross-email, and in attachments and subjects.
 - **Metrics:**
   - Leak rate (protected spans reaching the agent): the headline security metric.
   - Over-redaction rate (non-protected content removed): the utility metric.
-  - Rewrite leakage (sanitized text that still implies the fact).
-  - Overlay oracle test: do search results or ranking reveal hidden content?
-- **Adversarial agent:** scripted probing ("chemo", "hospital", "wig", "sick leave", "why unavailable Thursdays").
+  - Residual leakage in sanitized text (text that still implies the fact).
+  - Utility retention: non-protected facts (dates, times, entities) survive redaction.
+  - Overlay oracle test: search results and ranking must not reveal hidden content.
+  - Consistency test: search and `get_item` return byte-identical sanitized text.
+- **Adversarial agent:** scripted probing ("chemo", "hospital", "wig", "sick leave", "why unavailable Thursdays"), including inference from marker positions.
 - **Injection cases** embedded in emails.
 - **Regression gate:** a classifier or prompt change cannot ship if leak rate regresses.
 - Evaluation results drive thresholds and what the dashboard can honestly say about coverage.
@@ -503,8 +589,10 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 ## 12. Known limitations
 
 - Semantic protection is best-effort. Its recall is measured and bounded, not proven.
+- The marker reveals that something sensitive exists at a position, and that a rule is probably in force. Probing by fetching many items and inferring from marker positions and surrounding context is **not mitigated in v1**. Protections are on the Phase 6 backlog.
 - An agent can combine permitted information with its own world knowledge or with other data. Rosalind controls only what it returns.
 - In default (non-blocking) mode, there is an exposure window while a rule is building and while new items are pending. `hold_until_ready` closes it at the cost of availability.
+- Information welded to a protected fact is lost with it (section 6.6, third case).
 - Revocation cannot un-disclose what an agent already received.
 - Weak-evidence statements ("medical appointments") cannot be classified perfectly. Thresholds trade leakage against utility.
 
@@ -515,13 +603,14 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 | Component | Technology |
 |---|---|
 | Canonical policy | Versioned PolicySpec JSON Schema, Pydantic validation |
-| Persistence | PostgreSQL JSONB (`authz` schema) |
+| Persistence | PostgreSQL JSONB (`authz` and `audit` schemas) |
 | Policy Engine | Python evaluator, no OPA |
 | NL interpretation | Deterministic parsing plus local LLM (Ollama or llama.cpp) |
 | Entity resolution | Existing Rosalind entity system |
 | Segmentation | Sentence/clause splitter with stable hashing |
 | Candidate generation | Presidio and custom recognizers, taxonomy tagging, embeddings, LLM term expansion |
 | Verification | Local LLM or NLI model with constrained output |
+| Sanitization | Deterministic cut plus fixed marker, extractor-based utility check |
 | Sanitized views | `search.segment_view` overlay with BM25 and pgvector entries |
 | Lexical retrieval | Existing BM25 / ParadeDB |
 | Semantic retrieval | Existing pgvector / HNSW |
@@ -536,13 +625,13 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 ### Phase 0 — Evaluation harness and semantic spike
 
 - Build the synthetic mailbox and the leak and over-redaction metrics.
-- Prototype segmentation, candidate generation, verification and sanitized rewriting for one protected fact.
-- Validate the overlay index design and filtered ANN behaviour.
-- Output: measured recall and utility, and a go or adjust decision for Tier-2 scope.
+- Prototype segmentation, candidate generation, verification, and cut-plus-marker sanitization for one protected fact.
+- Validate the overlay index design, the utility check, and filtered ANN behaviour.
+- Output: measured recall and utility, and a go or adjust decision for semantic scope.
 
 ### Phase 1 — Policy model and storage
 
-- PolicySpec v2, `authz` tables, immutable revisions, status model.
+- PolicySpec v2, `authz` and `audit` tables, immutable revisions, status model.
 - Manual creation and validation of JSON policies.
 
 ### Phase 2 — Policy Engine and exact scoping
@@ -559,30 +648,31 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 
 ### Phase 4 — Sanitized retrieval and context
 
-- Overlay index, sanitized rendering and verifier.
-- Context assembly, final gate and side-channel hardening.
+- Overlay index, marker rendering, safety and utility verification.
+- JIT verification, full-item reads, context assembly, final gate.
 - Cache and cursor invalidation.
 
 ### Phase 5 — Interpreter and dashboard
 
 - Local intent classification, slot extraction, entity resolution.
 - Preview and confirmation, dashboard, notifications.
+- Audit views, agent-view diff, per-rule stats, spot-check queue.
 - `hold_until_ready` option.
 
 ### Phase 6 — Hardening
 
-- Red-team runs, injection suite, rate limits and anomaly flags.
-- Classifier regression gate in CI.
+- Red-team runs, injection suite, classifier regression gate in CI.
+- Probing protections: query-pattern analysis, limits on marker-position inference, tighter rate limits.
 
 ---
 
 ## 15. Open decisions
 
-1. **Marker or silent removal:** default is silent. A marker reveals that something exists.
-2. **Entity and sender metadata:** pseudonymize entities that themselves reveal a protected fact (e.g. an oncology clinic), or accept the residual risk?
-3. **Rewrite versus drop:** how aggressive the minimal rewrite should be before falling back to dropping the segment.
-4. **Definition of "ready":** full backlog processed, or also an evaluation-based coverage threshold per rule.
-5. **Weak evidence policy:** default thresholds, and whether the user can tune them per rule (e.g. "strict" and "relaxed").
+1. **Sender and entity metadata:** pseudonymize entities that themselves reveal a protected fact (e.g. an oncology clinic), or accept the residual risk?
+2. **Unverifiable attachments:** images and scans without usable OCR can't be checked. Options: return only name and type, or return the content and flag it in the dashboard.
+3. **Definition of "ready":** full backlog processed, or also an evaluation-based coverage threshold per rule.
+4. **Weak-evidence thresholds:** defaults, and whether the user can tune them per rule ("strict" and "relaxed").
+5. **JIT time budget:** the value, and the behaviour when it is exceeded in default mode.
 6. **Overlay storage cost** at larger archive sizes, and whether overlays are shared across agents with identical scope.
 
 ---
@@ -594,4 +684,4 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 - [Microsoft Presidio](https://microsoft.github.io/presidio/)
 - [pgvector](https://github.com/pgvector/pgvector)
 
-**Final architectural principle:** Rosalind owns the policies and enforces them internally. The Policy Engine decides what an agent may know, the Semantic Pipeline finds the protected information down to the span, and RAG Filtering ensures the agent only ever receives the authorized, sanitized remainder, with the user always informed of how far each rule has progressed.
+**Final architectural principle:** Rosalind owns the policies and enforces them internally. The Policy Engine decides what an agent may know, the Semantic Pipeline finds the protected information down to the span, and RAG Filtering ensures the agent only ever receives the authorized, visibly redacted remainder, with the owner always informed of how far each rule has progressed and what was hidden.
