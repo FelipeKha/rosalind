@@ -1,6 +1,13 @@
-# Rosalind — Policy Engine & RAG Filtering (v4)
+# Rosalind — Policy Engine & RAG Filtering (v5)
 
-**Changes since v3**
+**Changes since v4**
+
+- The policy interpreter (prompt to policy object) is now the **first implementation step**. It is specified in `rosalind_policy_interpreter.md`, and section 4.1 summarizes it.
+- Interpretation order: the protected statement is deduplicated in memory before confirmation, and term expansion runs after confirmation (sections 3.6 and 4.4).
+- The roadmap is reordered and renumbered (section 14): interpreter first, the evaluation spike in parallel, and the full dashboard split from the interpreter.
+- Added `audit.policy_event` and a requirement that policy creation is owner-only.
+
+**Earlier changes (v4)**
 
 - Every policy revision now stores the user's original prompt, the confirmed plain-language description and the interpreter version in a `source` block (section 3.5).
 - The protected statement is now a separate, shared object (section 3.6).
@@ -13,7 +20,7 @@
 - Sanitization is now *cut at verifier offsets plus a visible, uniform redaction marker*. The LLM rewrite step is gone (section 6.6).
 - Added full-item reads and the field-by-field rules (section 7.3).
 - Added owner-facing transparency: audit, agent-view diff, spot-check queue (section 4.2).
-- Agents and human readers see the same thing: redaction is visible. Probing protections are deferred to Phase 6.
+- Agents and human readers see the same thing: redaction is visible. Probing protections are deferred to Phase 7.
 
 ---
 
@@ -273,8 +280,8 @@ The statement is stored separately from the policy, so several policies (or agen
 ```
 
 - The statement is the normalized form of the prompt. First-person text is resolved ("I" becomes `person_self`), because verifiers can't use it.
-- Creation embeds the new statement and compares it with existing ones. A match reuses the existing `statement_id` and all its findings.
-- The expansion terms feed candidate generation only. They block nothing.
+- At interpretation the statement is embedded in memory and compared with existing statements. Reuse requires two-way entailment, not just similarity (interpreter document, section 5.4). Nothing is stored until the user confirms. A reused statement keeps all its findings.
+- The expansion terms are generated after confirmation and feed candidate generation only. They block nothing.
 - The statement is the secret in a different form, so it gets the same encryption and access restrictions as `source.prompt`.
 
 ---
@@ -293,26 +300,25 @@ Users create policies through a natural-language box.
 User instructions are themselves sensitive, so interpretation happens inside Rosalind.
 
 ```text
-Natural language
-      |  Intent classification
-      v
-Slot extraction (agent, subject, statement, scope)
-      |  Entity resolution
-      v
-PolicySpec construction
-      |  Pydantic / JSON Schema validation
-      v
-Preview and user confirmation
-      |
-      v
-Storage (revision with source prompt), then async build
+Prompt
+  |  [1] Segment into atomic constraints
+  |  [2] Route: access (exact) or confidentiality (semantic)
+  |  [3] Extract mentions (local LLM, constrained JSON, no IDs)
+  |  [4] Resolve to IDs (deterministic code)  <-- [5] Clarification questions
+  |  [6] Build and validate PolicySpec
+  |  [7] Impact and conflict check
+  |  [8] Preview rendered from the spec by templates
+  v
+User confirms -> revision persisted with source prompt -> async build
 ```
 
-The interpreter has access to registered agents, the entity directory and the PolicySpec schema. It does not need access to the email archive. It never produces SQL or executable policy code, only a validated PolicySpec.
+The split of responsibility is the core rule: **the local LLM proposes, code decides.** The LLM only extracts what the user said as raw text mentions. IDs, defaults, the spec and the preview text are produced by deterministic code. Nothing is persisted before confirmation.
 
-Deterministic parsing handles common phrasings. A local LLM (Ollama or llama.cpp) handles the rest.
+The interpreter has access to the agent registry, the entity directory, a count-only service over email metadata, and the PolicySpec schema. It has no access to email content, never produces SQL or executable policy code, and is reachable from the owner dashboard only, never through MCP.
 
-**Preview before confirmation:** the user sees the normalized rule in plain language ("Agent A will not receive anything stating or strongly implying that you have cancer. Affected sentences are replaced by a redaction marker, the rest of each email stays visible.") and, once the build runs, a sample of before and after.
+The full specification (data contracts, stage details, state machine, local-execution rules, evaluation) is in `rosalind_policy_interpreter.md`.
+
+**Preview before confirmation:** rendered from the spec by templates (never written by the LLM), the user sees the normalized rule in plain language ("Agent A will not receive anything stating or strongly implying that you have cancer. Affected sentences are replaced by a redaction marker, the rest of each email stays visible.") and, once the build runs, a sample of before and after.
 
 **On confirmation**, the revision is saved together with the user's verbatim prompt and the confirmed description (section 3.5). Before confirmation nothing is persisted.
 
@@ -340,6 +346,7 @@ PostgreSQL:
 | `semantic.protected_statement` | Canonical protected statements shared across policies (section 3.6). Encrypted and access-restricted. |
 | `audit.request_log` | Principal, action, policy version, scope fingerprint, item IDs, decision. |
 | `audit.redaction_event` | Request, segment ID and hash, rule, treatment. No content. |
+| `audit.policy_event` | Policy creation and change events: policy ID, revision, type, principal, interpreter version. No prompt and no statement text. |
 
 Each change creates a new immutable revision. The `source.prompt` is encrypted at rest and readable only in the owner dashboard. It is never exposed through MCP, ordinary logs, audit entries, external models or the semantic pipeline (section 3.5).
 
@@ -357,11 +364,10 @@ Two constraints for Agent A, illustrated with the email E5: "I have cancer, let'
 
 **At creation**
 
-1. **Interpret.** The local interpreter resolves "I" to the user's own entity and normalizes the statement to "The user has cancer".
-2. **Deduplicate the statement.** It is embedded and compared with existing statements. A match reuses the existing `statement_id` and its findings.
-3. **Expand.** A local LLM generates related terms and concepts, used for candidate generation only.
-4. **Preview and confirm.** The user sees: "Agent A will not receive anything stating or strongly implying that you have cancer. Affected parts are replaced by a redaction marker." On confirmation the revision is saved with the verbatim prompt and that description in `source`.
-5. **Build, asynchronously.** For each segment: candidate generation, local verification, findings and overlay rows. The dashboard shows coverage.
+1. **Interpret** (details in `rosalind_policy_interpreter.md`). The local interpreter resolves "I" to the user's own entity, normalizes the statement to "The user has cancer", and compares it in memory with existing statements (embedding plus two-way entailment). A match reuses the existing `statement_id` and its findings. Nothing is persisted.
+2. **Preview and confirm.** The user sees a template-rendered description, for example: "Agent A will not receive anything that states or strongly implies: 'The user has cancer'. Affected parts are replaced by a redaction marker." On confirmation the revision is saved with the verbatim prompt and that description in `source`, the statement is stored if it is new, and the build record is created.
+3. **Expand.** After confirmation, a local LLM generates related terms and concepts, used for candidate generation only.
+4. **Build, asynchronously.** For each segment: candidate generation, local verification, findings and overlay rows. The dashboard shows coverage.
 
 For E5 the build produces:
 
@@ -615,7 +621,7 @@ The third case is the real cost of fact-level filtering: information welded to t
   `"redactions": [{ "segment": 0, "type": "privacy_policy" }]`
 - The MCP tool descriptions state that content may be redacted under the owner's privacy policy.
 
-The marker tells the agent that something sensitive exists at that position and that a rule is probably in force. The agent can say so honestly to its user. Probing through repeated fetches is deferred to Phase 6 (section 12).
+The marker tells the agent that something sensitive exists at that position and that a rule is probably in force. The agent can say so honestly to its user. Probing through repeated fetches is deferred to Phase 7 (section 12).
 
 ### 6.7 Sanitized overlay index
 
@@ -627,7 +633,7 @@ Design:
 - For each active semantic scope, the build creates `search.segment_view` rows for the affected segments only: `scope_fingerprint, segment_id, display_text, index_text, bm25 entry, embedding`.
 - For an agent, retrieval searches the base index **excluding affected segments**, plus that agent's overlay rows.
 
-Overlays exist for a small fraction of segments, so storage and embedding cost stay modest. Overlays are keyed by scope fingerprint, so agents with the same rules share them. This design needs validation in the Phase 0 spike (section 14).
+Overlays exist for a small fraction of segments, so storage and embedding cost stay modest. Overlays are keyed by scope fingerprint, so agents with the same rules share them. This design needs validation in the Phase 2 spike (section 14).
 
 ### 6.8 Asynchronous build and coverage
 
@@ -767,8 +773,9 @@ Flow:
 9. **Derived-data protection:** sensitivity propagates through provenance to facts, summaries and extractions.
 10. **Injection resistance** for every model that reads email text (section 6.3).
 11. **Revocation and change:** cursors, caches and assembled contexts are invalidated when the policy version changes.
-12. **Abuse limits:** per-agent rate limits and query-pattern anomaly flags, to be extended in Phase 6.
+12. **Abuse limits:** per-agent rate limits and query-pattern anomaly flags, to be extended in Phase 7.
 13. **Protection of stored instructions and statements:** source prompts and protected statements are themselves sensitive. They are encrypted at rest, readable only in the owner dashboard, and excluded from MCP, logs, audit and external models.
+14. **Owner-only policy creation:** the interpreter and policy editing are reachable from the owner dashboard only. An agent can never create, edit or widen a policy through MCP.
 
 ---
 
@@ -795,7 +802,7 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 ## 12. Known limitations
 
 - Semantic protection is best-effort. Its recall is measured and bounded, not proven.
-- The marker reveals that something sensitive exists at a position, and that a rule is probably in force. Probing by fetching many items and inferring from marker positions and surrounding context is **not mitigated in v1**. Protections are on the Phase 6 backlog.
+- The marker reveals that something sensitive exists at a position, and that a rule is probably in force. Probing by fetching many items and inferring from marker positions and surrounding context is **not mitigated in v1**. Protections are on the Phase 7 backlog.
 - An agent can combine permitted information with its own world knowledge or with other data. Rosalind controls only what it returns.
 - In default (non-blocking) mode, there is an exposure window while a rule is building and while new items are pending. `hold_until_ready` closes it at the cost of availability.
 - Information welded to a protected fact is lost with it (section 6.6, third case).
@@ -812,7 +819,7 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 | Canonical policy | Versioned PolicySpec JSON Schema, Pydantic validation |
 | Persistence | PostgreSQL JSONB (`authz` and `audit` schemas) |
 | Policy Engine | Python evaluator, no OPA |
-| NL interpretation | Deterministic parsing plus local LLM (Ollama or llama.cpp) |
+| NL interpretation | Local LLM with constrained decoding (Ollama or llama.cpp) plus deterministic resolution. See `rosalind_policy_interpreter.md`. |
 | Entity resolution | Existing Rosalind entity system |
 | Segmentation | Sentence/clause splitter with stable hashing |
 | Candidate generation | Presidio and custom recognizers, taxonomy tagging, embeddings, LLM term expansion |
@@ -829,46 +836,52 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 
 ## 14. Implementation roadmap
 
-### Phase 0 — Evaluation harness and semantic spike
+### Phase 1 — Policy interpreter and policy storage (first implementation step)
+
+Full specification in `rosalind_policy_interpreter.md`.
+
+- PolicySpec v2 schema and Pydantic models.
+- Tables: `authz.policy`, `authz.policy_revision` (with the encrypted `source` block), `authz.policy_build`, `semantic.protected_statement`, `audit.policy_event`.
+- Interpreter pipeline: segmentation, routing, constrained local extraction, deterministic resolution, clarification, validation, impact and conflict checks, template-rendered previews, confirmation.
+- Minimal UI for the flow (prompt, clarification options, preview, confirm).
+- Golden-set evaluation with hard release gates (zero wrong agent or entity in a confirmed spec).
+- Manual creation of JSON policies through the API, for testing.
+- Output: confirmed policies persisted but **not enforced**. No real agent traffic is served under them until Phase 3.
+
+### Phase 2 — Evaluation harness and semantic spike (can run in parallel with Phase 1)
 
 - Build the synthetic mailbox and the leak and over-redaction metrics.
 - Prototype segmentation, candidate generation, verification, and cut-plus-marker sanitization for one protected fact.
 - Validate the overlay index design, the utility check, and filtered ANN behaviour.
-- Output: measured recall and utility, and a go or adjust decision for semantic scope.
+- Output: measured recall and utility, and a go or adjust decision for semantic scope. Phases 4 and 5 depend on this result.
 
-### Phase 1 — Policy model and storage
-
-- PolicySpec v2, `authz` and `audit` tables, immutable revisions, status model.
-- Encrypted `source` block (user prompt, confirmed description, interpreter version) and the `protected_statement` table.
-- Manual creation and validation of JSON policies.
-
-### Phase 2 — Policy Engine and exact scoping
+### Phase 3 — Policy Engine and exact scoping
 
 - Python evaluator and `EffectiveScope`.
 - Mandatory SQL predicates, RLS, agent-facing role and views.
 - Denied selectors (`sender_entity_id`) and content-hash masking of quoted copies.
 - Apply to all MCP tools. Audit and versioning.
 
-### Phase 3 — Semantic pipeline
+### Phase 4 — Semantic pipeline
 
 - Segment store, span and finding tables, provenance.
+- Consumers for the jobs enqueued at confirmation: term expansion, candidate backfill, verification.
 - Async build with coverage and incremental processing.
 - Status reporting.
 
-### Phase 4 — Sanitized retrieval and context
+### Phase 5 — Sanitized retrieval and context
 
 - Overlay index, marker rendering, safety and utility verification.
 - JIT verification, full-item reads, context assembly, final gate.
 - Cache and cursor invalidation.
 
-### Phase 5 — Interpreter and dashboard
+### Phase 6 — Dashboard
 
-- Local intent classification, slot extraction, entity resolution.
-- Preview and confirmation, dashboard, notifications.
+- Rule list with status and coverage, editing, pause and revocation, notifications.
 - Audit views, agent-view diff, per-rule stats, spot-check queue.
 - `hold_until_ready` option.
 
-### Phase 6 — Hardening
+### Phase 7 — Hardening
 
 - Red-team runs, injection suite, classifier regression gate in CI.
 - Probing protections: query-pattern analysis, limits on marker-position inference, tighter rate limits.
@@ -886,6 +899,7 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 7. **Entity visibility under a deny:** by default the entity stays findable (`find_entity`) even when its emails are denied. Confirm, or let the user choose per rule.
 8. **Copies of denied content:** default is best-effort masking by content-hash match. Confirm, or restrict to the exact-scope deny only.
 9. **Retention of source prompts:** purge with the policy when it is deleted (default), or keep an encrypted history.
+10. **Interpreter decisions** (whole-email topic requests, clarification rounds, model choice, draft store, preview languages and others) are tracked in `rosalind_policy_interpreter.md`, section 15.
 
 ---
 
