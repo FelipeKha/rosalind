@@ -1,6 +1,6 @@
 # Rosalind — Access Policy Enforcement in the RAG (Implementation Step 2)
 
-Companion to `rosalind_policy_engine_rag_filtering_v6.md` and `rosalind_policy_interpreter.md`. This document plans how **access-type policies** (permit and deny on exact selectors such as participants, accounts and dates) are enforced on every agent-facing read in Rosalind. It is the second implementation step.
+Companion to `rosalind_policy_engine_rag_filtering_v7.md` and `rosalind_policy_interpreter.md`. This document plans how **access-type policies** (permit and deny on exact selectors such as participants, accounts and dates) are enforced on every agent-facing read in Rosalind. It is the second implementation step.
 
 ---
 
@@ -8,19 +8,22 @@ Companion to `rosalind_policy_engine_rag_filtering_v6.md` and `rosalind_policy_i
 
 Step 1 produced confirmed, persisted policies. Step 2 makes the access ones **real**: an agent only ever receives data that its active access policies allow, on every MCP tool and every internal read path behind them.
 
+**What counts as an access constraint.** An access constraint is an exact condition on the stored attributes of an email (sender, recipients, account, date), so it can be decided by a SQL predicate without interpreting content. "No emails from John Smith" and "no emails before January 1st 2025" are access constraints. Step 2 is deliberately limited to this: **a pure SQL filter**. Anything that needs interpretation of text, including copies of denied text quoted inside other emails, belongs to later steps.
+
 **In scope**
 
 - Agent identity and the agent registry.
 - The Policy Engine: loading active access policies and producing an `EffectiveScope` (main document, section 5).
 - A scoped query layer that all agent-facing reads must go through (BM25, vector, hybrid, reranking input, item, thread, context, attachments, extractions, entities, capabilities).
 - Data-model changes needed to filter fast and correctly.
-- Quoted and forwarded content from denied emails.
 - Side-channel hardening (not-found behaviour, counts, cursors, caches).
 - Audit, the leak-test suite, performance benchmarks, rollout and migration.
 
 **Out of scope (later steps)**
 
 - Confidentiality policies: the semantic pipeline, overlay index, JIT verification, redaction markers inside text and the final gate (Phases 4 and 5). Confidentiality policies are loaded and carried in the scope, but **not applied** in this step.
+- Quoted and forwarded copies of denied content inside visible emails (Phase 5, section 5.8).
+- Content-based grants such as "flight reservations" (they need classification, and the interpreter already defers them).
 - The full dashboard, probing protections and rate limiting (Phases 6 and 7).
 
 **Result of this step:** the two example access constraints work end to end ("Agent A can't see emails from John Smith", "Agent Y can see my emails with John Smith"), with provable behaviour and a leak-test suite that gates releases.
@@ -39,7 +42,7 @@ We have not reviewed the Rosalind codebase for this plan. Everything below is as
 | A4 | MCP tools are the ones listed in section 5.9. | Each tool needs a declared enforcement. |
 | A5 | Attachments are stored content-addressed or per email. | Blob IDs must not allow cross-email fetches. |
 | A6 | Extractions and entity attributes carry provenance (source email IDs). | Derived data must follow the visibility of its sources. |
-| A7 | **Whether quoted text is currently indexed** and how replies and forwards are parsed. | Decides the design in section 5.8. |
+| A7 | **Whether quoted text is currently indexed** and how replies and forwards are stored. | Characterizes the known limitation in section 5.8 and informs Phase 5. |
 | A8 | There is a single place where the MCP server calls the retrieval layer. | The choke point in section 4. |
 | A9 | Agents authenticate to the MCP server with a credential that Rosalind controls. | Agent identity (section 5.1). |
 | A10 | Existing agents currently see everything and there is no real agent traffic yet. | Migration (section 9). |
@@ -82,7 +85,7 @@ MCP request (credential, tool, arguments)
 [4] Verify every returned item against the reference evaluator    (section 5.7)
         |
         v
-[5] Assemble: render fields, mask quoted blocks, placeholders     (sections 5.8, 5.9)
+[5] Assemble: render fields and thread placeholders              (section 5.9)
         |
         v
 [6] Respond, then write the audit entry                           (section 5.11)
@@ -232,7 +235,6 @@ Names are illustrative. WP0 maps them to the real schema.
 | `authz.entity_redirect` and a merge hook that rewrites the arrays and bumps `policy_version` | Merges and splits propagate to policies and denormalized data. |
 | `authz.agent`, `authz.agent_credential` | Section 5.1. |
 | A consistency job comparing the arrays with the participants table | Catches drift. A mismatch is an alert. |
-| Quoted-block tables (section 5.8) | Quoted and forwarded content. |
 
 The arrays are written at ingestion and by the merge hook. The backfill is a one-off migration with a progress report.
 
@@ -247,30 +249,28 @@ The arrays are written at ingestion and by the merge hook. The backfill is a one
 
 **RLS.** PostgreSQL row-level security would add a database-enforced layer, but a per-row policy function interacts badly with index scans and HNSW. It is **evaluated by benchmark in WP4**, not assumed. If it is cheap enough, it can be added as L4. Open decision 1.
 
-### 5.8 Quoted and forwarded content
+### 5.8 Quoted and forwarded content (not in this step)
 
-A permitted email can contain text from a denied email. Example: Mary's reply (permitted) quotes John's message (denied). Without handling, the denied text leaks through the reply.
+Step 2 is a pure SQL filter, so it does not handle text from a denied email that appears inside another, visible email. Example: Mary's reply (visible) quotes John's message (denied).
 
-**Design (best-effort, attribution-based)**
+**Known limitation in step 2**
 
-1. **Parse at ingestion.** Split each body into `new_content` and quoted or forwarded blocks, using the common markers: `>` prefixes, "On ... wrote:", "Original Message" separators, forwarded-message headers, HTML `blockquote` and mail-client quote classes. Nested quotes are parsed by level.
-2. **Attribute each block.** Compute a normalized text hash. Resolve the block's source: first by matching it against the `new_content` of earlier messages in the same thread (via `References` and `In-Reply-To`), then by the attribution line (name and address) as a fallback. Store `email.quoted_block(email_id, ordinal, level, text_hash, source_email_id, attributed_entity_id)`.
-3. **Index `new_content` only.** Quoted blocks are not searchable. This is also ordinary RAG hygiene (it avoids duplicate hits), and it removes the search oracle: a query matching John's words cannot hit Mary's reply through the quote. If Rosalind currently indexes quotes (A7), this means a re-index.
-4. **Mask at render time.** For an agent, a quoted or forwarded block is shown only if its source email is visible. Rules, in order:
-   - `source_email_id` known: visible iff that email is visible for the agent.
-   - Else `attributed_entity_id` known: masked if that entity matches any deny clause with a participant term whose roles include `from` (conservative, ignores other clause terms).
-   - Else: shown (documented limitation).
-5. **The mask** is the uniform marker, merged for adjacent blocks. The same rule applies to forwarded blocks, where the forwarder is the sender but the original author is the attributed entity.
-6. **Snippets, highlights and previews** are generated only from `new_content` and visible blocks.
+- A deny rule hides the denied emails themselves, their attachments and their derived data, but **not copies of their text inside visible emails** (quoted replies, forwarded messages).
+- Depending on whether quoted text is indexed (assumption A7), those copies can appear in search hits, snippets, `get_item` and `get_thread`.
+- The limitation is stated in the interpreter preview for deny rules, and recorded in the leak tests as expected-failure cases (section 7.2), so that it stays visible.
 
-**Known limits:** reformatted or paraphrased quotes, screenshots of text, and blocks that cannot be attributed are not masked. Section 11.
+**Planned handling (Phase 5)**
+
+Masking of quoted and forwarded copies is scheduled for Phase 5, on top of the segment store (stable content hashes per segment). A segment whose hash matches a segment of a denied email is replaced by the marker, as described in section 7.2 of the main document. Whether Phase 5 also needs attribution-based parsing of replies and forwards is open decision 4.
+
+**What WP0 does now:** it records whether quoted text is indexed and how replies and forwards are stored, so the exposure is characterized before step 2 ships.
 
 ### 5.9 Per-tool behaviour
 
 | Tool | Actions required | Behaviour under scope | Denied or hidden case |
 |---|---|---|---|
 | `search` | `email.search` + `email.read_content` | Scoped retrieval, verification, snippets from visible content only. Totals omitted or computed in-scope. | Items simply do not appear. |
-| `get_item` | `email.read_content` | `WHERE id AND scope`; body rendered with quoted blocks masked. | Same "not found" as an unknown ID. |
+| `get_item` | `email.read_content` | `WHERE id AND scope`; body rendered as stored (quoted copies are not masked, section 5.8). | Same "not found" as an unknown ID. |
 | `get_thread` | `email.read_content` | Each message checked. Thread subject, participant list, message count and dates are computed over visible messages only. | A denied message becomes one placeholder (uniform marker, no sender, date or size). Adjacent denied messages merge into one placeholder. If nothing is visible, "not found". |
 | `get_context` | `email.read_content` | Neighbours (by time or thread) are fetched through the scoped reader. | Skipped neighbours do not appear. |
 | Attachment fetch | `email.read_attachment` + parent email visible | Attachment IDs are bound to `(email_id, part)`. No fetch by content hash. | "Not found". |
@@ -328,12 +328,14 @@ Agent Y: permit [ { participants: [ { entity_ids: [person_123], roles: [from,to,
 
 | Request | Agent A | Agent Y |
 |---|---|---|
-| `search("quarterly numbers")` | No hits. E6 is denied, and E7's quote is not indexed. | E6 (from John). E7 is not a hit, because its quote is not indexed. |
+| `search("quarterly numbers")` | E6 is denied, so no hit on it. E7 can still be a hit if quoted text is indexed (known limitation). | E6 (from John), and E7 if quoted text is indexed. |
 | `get_item(E5)` | Visible. The confidentiality rule from step 1 is not applied yet (Phases 4 and 5 handle "cancer"). | Not found (no John). |
 | `get_item(E6)` | Not found. | Visible. |
-| `get_item(E7)` | Visible. The quoted block of E6 is replaced by the marker, because E6 is denied. | Visible, quoted block shown (E6 is visible). |
-| `get_thread(E6)` | One placeholder for E6, then E7 with its quote masked. | E6 and E7. |
+| `get_item(E7)` | Visible, including the quoted block of E6, shown as stored (known limitation until Phase 5). | Visible. |
+| `get_thread(E6)` | One placeholder for E6, then E7 (its quote is shown as stored). | E6 and E7. |
 | `find_entity("John Smith")` | Found. Interaction count and last-contact date computed from E7 only. | Found, with E6 and E7 in the stats. |
+
+E7 shows the known limitation: Agent A is denied E6, but E6's text reaches Agent A through Mary's reply until Phase 5.
 
 **Verification.** For every item returned, L2 recomputes visibility from the item's participants, account and timestamp. For Agent A, E6 can never pass.
 
@@ -348,10 +350,10 @@ Agent Y: permit [ { participants: [ { entity_ids: [person_123], roles: [from,to,
 
 ### 7.2 Leak tests
 
-Built on a synthetic mailbox with planted **canary strings** in denied content, including quoted copies, attachments and extractions.
+Built on a synthetic mailbox with planted **canary strings** in denied content, including attachments and extractions. Canaries in quoted copies of denied emails are also planted, but only as **expected-failure tests** that document the known limitation (section 5.8). They are not part of the gate until Phase 5.
 
 - An adversarial agent client tries every tool: searching canary words and semantic neighbours, fetching IDs, walking threads, listing extractions, reading entity stats, tampering with cursors, and reusing cursors across agents.
-- The release gate is **zero canary exposure**.
+- The release gate is **zero canary exposure**, excluding the expected-failure quoted-copy canaries.
 - Differential test: two agents with different scopes run the same queries in interleaved order. Nothing from one leaks into the other (caches, cursors).
 - Denied vs missing: compare response bodies exactly and timing distributions approximately.
 - **Mutation test:** deliberately break a predicate and confirm L2 catches it and raises a security event.
@@ -382,12 +384,11 @@ Built on a synthetic mailbox with planted **canary strings** in denied content, 
 | WP3 | Policy Engine | Loader, versioning, selector grammar, `EffectiveScope`, fingerprint, reference evaluator. | Property-test oracle in place. |
 | WP4 | Scoped query layer | `ScopedReader`, SQL compilation, retrieval strategy selector, L2 verification, L3 role and views, RLS benchmark. | Property tests pass, recall and latency targets met. |
 | WP5 | Tool integration | All tools in section 5.9, side-channel controls, cursors, placeholders, extraction and entity rules. | Leak tests pass for every tool. |
-| WP6 | Quoted and forwarded content | Parsing, attribution, `new_content` indexing, render-time masking, re-index if needed. | Canary tests for quoted copies pass. |
-| WP7 | Audit and security events | Request log, security events, alerts. | Every request audited. |
-| WP8 | Test harness | Synthetic mailbox with canaries, adversarial client, benchmarks, CI gates. Shared with the Phase 3 spike. | Gates run in CI. |
-| WP9 | Rollout and migration | Section 9. | Acceptance criteria met. |
+| WP6 | Audit and security events | Request log, security events, alerts. | Every request audited. |
+| WP7 | Test harness | Synthetic mailbox with canaries, adversarial client, benchmarks, CI gates. Shared with the Phase 3 spike. | Gates run in CI. |
+| WP8 | Rollout and migration | Section 9. | Acceptance criteria met. |
 
-**Order:** WP0 first. WP1 and WP2 in parallel. Then WP3, then WP4, then WP5. WP6 starts once WP2 and WP4 exist. WP7 runs alongside WP4 and WP5. WP8 starts at the beginning and grows with each package.
+**Order:** WP0 first. WP1 and WP2 in parallel. Then WP3, WP4 and WP5 in sequence. WP6 (audit) runs alongside WP4 and WP5. WP7 (test harness) starts at the beginning and grows with each package. WP8 (rollout) is last.
 
 ---
 
@@ -396,7 +397,7 @@ Built on a synthetic mailbox with planted **canary strings** in denied content, 
 - **Enforcement mode per agent:** `enforce` (default) or `shadow`. In shadow mode the scope is computed and the differences against what the agent would receive are logged, without changing the response. It is meant for the owner's own test agents only. Shadow mode is never a way to run a real agent unrestricted.
 - **Default deny breaks existing integrations.** An agent with no grant sees nothing after this step. For existing agents, the migration creates explicit **baseline grants** (`permit {all}`, marked `source.kind = migration`) so behaviour is unchanged until the owner narrows it, or the owner is asked to choose per agent (open decision 5). They show in the dashboard as migrated grants.
 - **Deny-only agents.** A deny with no permit does nothing, because default deny already hides everything. The interpreter should warn when a deny is created for an agent with no matching grant and offer a baseline grant in the same confirmation (section 10).
-- **Interpreter preview flag.** When the acceptance criteria pass, the `enforcement_available` flag (interpreter document, section 5.8) is turned on, so previews say "Takes effect immediately" and stop saying "not active". Confidentiality policies keep the "not enforced yet" notice until Phases 4 and 5.
+- **Interpreter preview flag.** When the acceptance criteria pass, the `enforcement_available` flag (interpreter document, section 5.8) is turned on, so previews say "Takes effect immediately" and stop saying "not active". Confidentiality policies keep the "not enforced yet" notice until Phases 4 and 5. Deny previews also state that quoted copies of denied text are not hidden yet.
 - **Runbook:** suspend an agent, roll back a policy revision, set the global deny-all flag, investigate an L2 alert.
 
 ---
@@ -408,10 +409,11 @@ Built on a synthetic mailbox with planted **canary strings** in denied content, 
 1. Pin the v1 selector grammar (section 5.3). A prompt naming several people becomes several policies, not a list in one selector. Add the `all` selector and a "can see all my emails" phrasing.
 2. Stage 7 (impact and conflicts): for a deny on an agent with no matching permit, warn that the rule changes nothing yet and offer a baseline grant.
 3. Flip the `enforcement_available` flag after acceptance.
+4. Access deny previews state that text from the denied emails that appears quoted inside other emails is not hidden yet (until Phase 5).
 
 **Main document**
 
-- Roadmap: this step is Phase 2, and the spike moves to Phase 3 (in v6).
+- Roadmap: this step is Phase 2, and the spike moves to Phase 3. Masking of quoted and forwarded copies of denied content is in Phase 5, not in this step (in v7).
 - Section 7.4 names RLS as defence in depth. This plan proposes post-retrieval verification as the second layer and benchmarks RLS (open decision 1).
 
 ---
@@ -424,7 +426,7 @@ Built on a synthetic mailbox with planted **canary strings** in denied content, 
 | Entity merge or split changes who a policy refers to | The merge hook bumps `policy_version` and rewrites arrays. A consistency job alerts on drift. |
 | Vector recall collapse under selective filters | Strategy selector with exact fallback, measured recall. |
 | A forgotten read path (new tool, cache, export) | Read-path inventory in WP0, CI structural checks, L2 verification, L3 role. |
-| Quoted or forwarded content that cannot be attributed | Best-effort. Documented. |
+| Copies of denied text inside visible emails (quotes, forwards) | Not handled in step 2. This is a real leak path for sender deny rules. Stated in the preview, tracked by expected-failure tests, handled in Phase 5. |
 | Role derivation ambiguities (Sender, Reply-To, mailing lists, "on behalf of", missing Bcc) | Rules fixed in WP0 (open decision 7). |
 | Timing differences between denied and missing | Single query path, tested. Not guaranteed constant. |
 | Scope races inside a request | One snapshot for scope and data. |
@@ -437,7 +439,7 @@ Built on a synthetic mailbox with planted **canary strings** in denied content, 
 ## 12. Acceptance criteria
 
 - Both example constraints work end to end on every tool in section 5.9.
-- The leak-test suite reports **zero canary exposure**, including quoted copies, attachments, extractions and entity stats.
+- The leak-test suite reports **zero canary exposure** across attachments, extractions and entity stats, and the quoted-copy canaries are recorded as known failures.
 - The property tests show the SQL results equal to the reference evaluator on all generated cases.
 - A denied item and a missing item are indistinguishable in responses, and their timing distributions are close.
 - A policy change, a suspension and an entity merge take effect on the next request.
@@ -454,7 +456,7 @@ Built on a synthetic mailbox with planted **canary strings** in denied content, 
 1. **Second and fourth layers:** post-retrieval verification as L2 (proposed), and whether RLS is added as L4 depending on the benchmark. Alternative: RLS as the second layer.
 2. **Extraction visibility:** visible only if all evidence emails are visible (default, conservative), or if any is. The default hides some facts that could be derived from visible evidence.
 3. **Entity visibility** (main document, decision 7) and the rule that derived entity attributes follow the visibility of their evidence.
-4. **Quoted and forwarded content scope for v1:** attribution-based masking as in section 5.8 (proposed), or defer to Phase 5.
+4. **Phase 5 approach to quoted and forwarded copies:** segment content-hash matching only, or also attribution-based parsing of replies and forwards. Not needed for step 2 (decided: step 2 is a pure SQL filter).
 5. **Migration:** automatic baseline grants for existing agents (proposed), or require the owner to choose per agent.
 6. **Deny-only agents:** warn in the interpreter and offer a baseline grant (proposed), or leave as is.
 7. **Role derivation rules:** how `from`, `to`, `cc`, `bcc` are derived from `From`, `Sender`, `Reply-To`, `Delivered-To`, mailing lists and "on behalf of". Whether Reply-To counts as a participant.

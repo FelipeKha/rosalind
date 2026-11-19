@@ -1,4 +1,11 @@
-# Rosalind — Policy Engine & RAG Filtering (v6)
+# Rosalind — Policy Engine & RAG Filtering (v7)
+
+**Changes since v6**
+
+- Step 2 (access enforcement) is a pure SQL filter. Masking of quoted and forwarded copies of denied content is **not** part of it and moves to Phase 5, on top of the segment store.
+- Until Phase 5, a sender deny rule does not hide that sender's text when it is quoted inside other visible emails. This is stated as a known limitation (section 12) and in the deny previews.
+
+**Earlier changes (v6)**
 
 **Changes since v5**
 
@@ -462,7 +469,7 @@ RLS repeats it as defence in depth. **Exact predicates run first, then the seman
 | `get_item` on John's email ID | Identical to "not found". |
 | `get_thread` containing John's messages | Placeholder with the redaction marker, no sender, date or size. |
 | Attachments and extractions from John's emails | Hidden with the email. |
-| Quoted copies of John's text in other emails | Segments whose content hash matches a segment of a denied email are replaced by the marker (best-effort, open decision 8). |
+| Quoted copies of John's text in other emails | Not handled in step 2 (known limitation). From Phase 5, segments whose content hash matches a segment of a denied email are replaced by the marker (best-effort, open decision 8). |
 | `find_entity("John Smith")` | Still returns him by default (open decision 7). |
 
 #### Side by side
@@ -666,7 +673,7 @@ RAG Filtering applies the `EffectiveScope` and the sanitized views to the actual
 
 | Stage | What happens |
 |---|---|
-| **Retrieval** | Mandatory exact-scope predicates (account, grants, denied selectors such as `sender_entity_id`, participants, dates), which user-requested filters can only narrow and which run before any semantic step. BM25 and vector search run over base minus affected segments, plus the agent's overlay. Segments whose content hash matches a segment of a denied email are replaced by the marker. |
+| **Retrieval** | Mandatory exact-scope predicates (account, grants, denied selectors such as `sender_entity_id`, participants, dates), which user-requested filters can only narrow and which run before any semantic step. BM25 and vector search run over base minus affected segments, plus the agent's overlay. From Phase 5, segments whose content hash matches a segment of a denied email are replaced by the marker. |
 | **Reranking** | Only authorized, sanitized candidates reach the reranker. It must run locally. |
 | **Pre-assembly** | JIT verification of segments with no finding yet. |
 | **Assembly** | Render `display_text`, deduplicate (quoted copies by content hash), provenance check that every returned item traces to authorized sources. |
@@ -799,7 +806,7 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
   - Utility retention: non-protected facts (dates, times, entities) survive redaction.
   - Overlay oracle test: search results and ranking must not reveal hidden content.
   - Consistency test: search and `get_item` return byte-identical sanitized text.
-  - Deny coverage: emails from a denied entity never appear in search, items, threads, counts or extractions, including copies matched by content hash.
+  - Deny coverage: emails from a denied entity never appear in search, items, threads, counts or extractions, Copies of their text inside other emails are covered from Phase 5.
 - **Adversarial agent:** scripted probing ("chemo", "hospital", "wig", "sick leave", "why unavailable Thursdays"), including inference from marker positions.
 - **Injection cases** embedded in emails.
 - **Regression gate:** a classifier or prompt change cannot ship if leak rate regresses.
@@ -814,7 +821,7 @@ The semantic pipeline is the main technical risk, so it is measured from the sta
 - An agent can combine permitted information with its own world knowledge or with other data. Rosalind controls only what it returns.
 - In default (non-blocking) mode, there is an exposure window while a rule is building and while new items are pending. `hold_until_ready` closes it at the cost of availability.
 - Information welded to a protected fact is lost with it (section 6.6, third case).
-- Copies of a denied email's text inside other emails are masked by content-hash match. Reformatted quotes are not caught.
+- Until Phase 5, copies of a denied email's text inside other emails (quotes, forwards) are not hidden. From Phase 5 they are masked by content-hash match, and reformatted quotes are still not caught.
 - Revocation cannot un-disclose what an agent already received.
 - Weak-evidence statements ("medical appointments") cannot be classified perfectly. Thresholds trade leakage against utility.
 
@@ -865,11 +872,10 @@ Full specification in `rosalind_access_enforcement.md`.
 - Scoped query layer that every agent-facing read goes through (BM25, vector, hybrid, item, thread, context, attachments, extractions, entities, capabilities).
 - Data-model changes: denormalized participant, account and date attributes with GIN indexes, public IDs, entity merge propagation.
 - Defence in depth: post-retrieval verification, restricted DB role and views, RLS benchmarked.
-- Quoted and forwarded content from denied emails.
 - Side-channel controls: denied equals missing, signed cursors, scoped counts and caches.
 - Audit and security events. Leak-test suite with canary strings and CI gates.
 - Rollout: migration baseline grants, interpreter preview flag turned on.
-- Output: access policies are enforced on every agent-facing read. Confidentiality policies are still recorded only.
+- Output: access policies are enforced on every agent-facing read, as a pure SQL filter. Confidentiality policies are still recorded only. Known limitation: quoted copies of denied content are not hidden until Phase 5.
 
 ### Phase 3 — Evaluation harness and semantic spike (can run in parallel with Phases 1 and 2)
 
@@ -890,6 +896,7 @@ Full specification in `rosalind_access_enforcement.md`.
 - Overlay index, marker rendering, safety and utility verification.
 - JIT verification, full-item reads, context assembly, final gate.
 - Cache and cursor invalidation.
+- Masking of quoted and forwarded copies of denied content (segment content-hash match).
 
 ### Phase 6 — Dashboard
 
@@ -913,10 +920,10 @@ Full specification in `rosalind_access_enforcement.md`.
 5. **JIT time budget:** the value, and the behaviour when it is exceeded in default mode.
 6. **Overlay storage cost** at larger archive sizes, and whether overlays are shared across agents with identical scope.
 7. **Entity visibility under a deny:** by default the entity stays findable (`find_entity`) even when its emails are denied. Confirm, or let the user choose per rule.
-8. **Copies of denied content:** default is best-effort masking by content-hash match. Confirm, or restrict to the exact-scope deny only.
+8. **Copies of denied content:** default is best-effort masking by content-hash match. Not in step 2, scheduled for Phase 5. Confirm, or restrict to the exact-scope deny only.
 9. **Retention of source prompts:** purge with the policy when it is deleted (default), or keep an encrypted history.
 10. **Interpreter decisions** (whole-email topic requests, clarification rounds, model choice, draft store, preview languages and others) are tracked in `rosalind_policy_interpreter.md`, section 15.
-11. **Access enforcement decisions** (second defence layer, extraction visibility, quoted-content scope, migration grants, role derivation and others) are tracked in `rosalind_access_enforcement.md`, section 13.
+11. **Access enforcement decisions** (second defence layer, extraction visibility, migration grants, role derivation and others) are tracked in `rosalind_access_enforcement.md`, section 13.
 
 ---
 

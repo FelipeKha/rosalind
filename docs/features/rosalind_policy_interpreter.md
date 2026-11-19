@@ -1,9 +1,10 @@
 # Rosalind — Policy Interpreter (Implementation Step 1)
 
-Companion to `rosalind_policy_engine_rag_filtering_v5.md`. This document specifies how a user's natural-language instruction becomes a validated, confirmed and persisted policy object. It is the first implementation step.
+Companion to `rosalind_policy_engine_rag_filtering_v7.md`. This document specifies how a user's natural-language instruction becomes a validated, confirmed and persisted policy object. It is the first implementation step.
 
 **Changes in this revision**
 
+- Access deny previews now state that text from denied emails quoted inside other emails is not hidden yet (section 5.8). Step 2 enforces access rules as a pure SQL filter, and quoted-copy masking comes in Phase 5.
 - Model decision: a bake-off among Qwen 3.5 9B, Gemma 4 E4B and Ministral 3 8B Instruct, with runtime settings and a memory and latency budget for a 16GB MacBook Pro M2 (section 5.3, "Model selection").
 - Segmentation and extraction now share one LLM call that returns a list of drafts, each with its `source_span` (sections 4.1, 5.1, 5.3). Routing is done by code from the extracted object type.
 - Entailment checks run only against the few most similar existing statements, and statement similarity reuses Rosalind's existing embedding model (section 5.4).
@@ -392,7 +393,7 @@ Validation (Pydantic plus semantic checks). Any failure rejects the draft:
 Rendered by templates from the final spec plus counts. Slots are filled from the spec, the registry and the count service. The LLM writes nothing the user reads.
 
 **Access, deny, participant:**
-> Agent A will not see the 312 emails sent by John Smith (john.smith@acme.com). Emails where he is only cc'd are not affected. Takes effect immediately.
+> Agent A will not see the 312 emails sent by John Smith (john.smith@acme.com). Emails where he is only cc'd are not affected. Text from his emails that other emails quote is not hidden yet. Takes effect immediately.
 
 **Confidentiality, deny, fact:**
 > Agent A will not receive anything that states or strongly implies the following: "The user has cancer".
@@ -403,7 +404,7 @@ Rendered by templates from the final spec plus counts. Slots are filled from the
 
 Every preview also includes:
 
-- **Assumptions** (role handling, "only" semantics, frozen dates, remaining grants).
+- **Assumptions** (role handling, "only" semantics, frozen dates, remaining grants, quoted copies of denied content).
 - **Resolution notes** ("John Smith matched by exact name").
 - **Enforcement status.** While enforcement is not live in the environment (a configuration flag), the preview adds: "Enforcement is not active yet. This rule is recorded only."
 
