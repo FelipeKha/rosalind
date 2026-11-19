@@ -1,4 +1,12 @@
-# Rosalind — Policy Engine & RAG Filtering (v5)
+# Rosalind — Policy Engine & RAG Filtering (v6)
+
+**Changes since v5**
+
+- Enforcement of access policies in the RAG is now the **second implementation step**. It is specified in `rosalind_access_enforcement.md`.
+- Roadmap (section 14): the old Phase 3 (Policy Engine and exact scoping) becomes Phase 2, and the evaluation spike becomes Phase 3, still able to run in parallel with Phases 1 and 2.
+- Section 7.4: the second defence layer proposed for access enforcement is post-retrieval verification, and RLS is benchmarked before adoption.
+
+**Earlier changes (v5)**
 
 **Changes since v4**
 
@@ -633,7 +641,7 @@ Design:
 - For each active semantic scope, the build creates `search.segment_view` rows for the affected segments only: `scope_fingerprint, segment_id, display_text, index_text, bm25 entry, embedding`.
 - For an agent, retrieval searches the base index **excluding affected segments**, plus that agent's overlay rows.
 
-Overlays exist for a small fraction of segments, so storage and embedding cost stay modest. Overlays are keyed by scope fingerprint, so agents with the same rules share them. This design needs validation in the Phase 2 spike (section 14).
+Overlays exist for a small fraction of segments, so storage and embedding cost stay modest. Overlays are keyed by scope fingerprint, so agents with the same rules share them. This design needs validation in the Phase 3 spike (section 14).
 
 ### 6.8 Asynchronous build and coverage
 
@@ -693,7 +701,7 @@ Consistency: the sanitized text returned by search and by `get_item` must be byt
 
 - Mandatory SQL predicates generated from the `EffectiveScope`.
 - The agent-facing read path uses a dedicated DB role limited to security-barrier views. Those views expose only authorized, sanitized text, never raw segment text of affected rows.
-- PostgreSQL RLS for exact scoping (account and agent grants), as defence in depth. The retrieval service must not run under an owner or superuser role that bypasses RLS.
+- PostgreSQL RLS for exact scoping (account and agent grants), as defence in depth. The retrieval service must not run under an owner or superuser role that bypasses RLS. Step 2 proposes post-retrieval verification as the second layer and benchmarks RLS before adopting it (`rosalind_access_enforcement.md`, open decision 1).
 - **Filtered ANN:** HNSW with selective filters can return fewer than k results. Verify iterative-scan support in the pgvector version in use, or fall back to partitioning or a per-agent visibility table.
 
 ### 7.5 All MCP tools use the same layer
@@ -846,21 +854,29 @@ Full specification in `rosalind_policy_interpreter.md`.
 - Minimal UI for the flow (prompt, clarification options, preview, confirm).
 - Golden-set evaluation with hard release gates (zero wrong agent or entity in a confirmed spec).
 - Manual creation of JSON policies through the API, for testing.
-- Output: confirmed policies persisted but **not enforced**. No real agent traffic is served under them until Phase 3.
+- Output: confirmed policies persisted but **not enforced**. No real agent traffic is served under them until Phase 2.
 
-### Phase 2 — Evaluation harness and semantic spike (can run in parallel with Phase 1)
+### Phase 2 — Access policy enforcement (second implementation step)
 
-- Build the synthetic mailbox and the leak and over-redaction metrics.
+Full specification in `rosalind_access_enforcement.md`.
+
+- Agent identity: registry, credentials, suspension, kill switch.
+- Python Policy Engine: selector grammar, `EffectiveScope`, versioning, reference evaluator.
+- Scoped query layer that every agent-facing read goes through (BM25, vector, hybrid, item, thread, context, attachments, extractions, entities, capabilities).
+- Data-model changes: denormalized participant, account and date attributes with GIN indexes, public IDs, entity merge propagation.
+- Defence in depth: post-retrieval verification, restricted DB role and views, RLS benchmarked.
+- Quoted and forwarded content from denied emails.
+- Side-channel controls: denied equals missing, signed cursors, scoped counts and caches.
+- Audit and security events. Leak-test suite with canary strings and CI gates.
+- Rollout: migration baseline grants, interpreter preview flag turned on.
+- Output: access policies are enforced on every agent-facing read. Confidentiality policies are still recorded only.
+
+### Phase 3 — Evaluation harness and semantic spike (can run in parallel with Phases 1 and 2)
+
+- Build the synthetic mailbox (shared with the Phase 2 leak tests) and the leak and over-redaction metrics.
 - Prototype segmentation, candidate generation, verification, and cut-plus-marker sanitization for one protected fact.
 - Validate the overlay index design, the utility check, and filtered ANN behaviour.
 - Output: measured recall and utility, and a go or adjust decision for semantic scope. Phases 4 and 5 depend on this result.
-
-### Phase 3 — Policy Engine and exact scoping
-
-- Python evaluator and `EffectiveScope`.
-- Mandatory SQL predicates, RLS, agent-facing role and views.
-- Denied selectors (`sender_entity_id`) and content-hash masking of quoted copies.
-- Apply to all MCP tools. Audit and versioning.
 
 ### Phase 4 — Semantic pipeline
 
@@ -900,6 +916,7 @@ Full specification in `rosalind_policy_interpreter.md`.
 8. **Copies of denied content:** default is best-effort masking by content-hash match. Confirm, or restrict to the exact-scope deny only.
 9. **Retention of source prompts:** purge with the policy when it is deleted (default), or keep an encrypted history.
 10. **Interpreter decisions** (whole-email topic requests, clarification rounds, model choice, draft store, preview languages and others) are tracked in `rosalind_policy_interpreter.md`, section 15.
+11. **Access enforcement decisions** (second defence layer, extraction visibility, quoted-content scope, migration grants, role derivation and others) are tracked in `rosalind_access_enforcement.md`, section 13.
 
 ---
 
