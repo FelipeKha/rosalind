@@ -13,6 +13,39 @@ Companion to `rosalind_policy_engine_rag_filtering_v7.md`. This document specifi
 
 ---
 
+## 0. Current implementation decisions (Phase 1)
+
+These decisions supersede the earlier dashboard-only / bake-off framing for the
+first implementation:
+
+* **Deployable boundary.** The interpreter runs in a separate policy service
+  (`rosalind.policy`, entrypoint `rosalind-policy`, default port 8001). It
+  shares PostgreSQL but owns `authz`, `semantic` and `audit` and has its own
+  Alembic version table. It never imports the RAG/search stack.
+* **UI.** The owner uses the `rosalind` CLI (`rosalind policy …`). The CLI is a
+  thin HTTP client; it never interprets prompts or touches the database.
+* **Model selection.** The client may send a `model` name per request. The
+  service accepts only names in its configured allowlist and only local Ollama
+  endpoints (loopback). The runtime keeps one model resident at a time and
+  records the model in `interpreter_version`.
+* **Generic principal.** Phase 1 policies apply to all agents
+  (`principal: {"type": "all_agents"}`). Agent-specific scoping is a later
+  schema extension. If a prompt names an agent, the preview states that the
+  rule applies to all agents.
+* **No enforcement.** Confirmed policies are recorded only. The preview says
+  so. Access rules are `active`; confidentiality rules are
+  `pending_enforcement` with a build record and no consumer.
+* **Scope cuts.** Statement reuse uses exact canonical-text comparison; the
+  embedding + two-way-entailment check waits for the semantic phase. Date
+  resolution supports explicit dates and a small deterministic set of relative
+  expressions; anything else is reported as unsupported.
+* **Participant linkage.** `core.email_participant` has no `entity_id` yet, so
+  person selectors store both the resolved `person_id` and a normalized address
+  snapshot. Enforcement must join on addresses until participant→person
+  linkage exists.
+
+---
+
 ## 1. Purpose and scope
 
 **Input:** a prompt typed by the owner in the dashboard, such as "Agent A can't know I have cancer".

@@ -785,6 +785,75 @@ objects.
 
 ---
 
+## `authz` / `semantic` / `audit` — policy service
+
+Owned by the policy service, not the data backend. The service has its own
+Alembic version table (`alembic_version_policy`) so it can migrate
+independently while sharing the database. It reads directory/account metadata
+only; it never reads email bodies or search chunks.
+
+### `authz.policy`
+
+Stable identity and status of a policy.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `account_id` | uuid | no | FK → `account.id` `CASCADE`; indexed |
+| `title` | text | no | Template-rendered summary |
+| `principal_kind` | text | no | `all_agents` in Phase 1 |
+| `policy_type` | text | no | `access` / `confidentiality` |
+| `status` | text | no | `active`, `pending_enforcement`, `paused`, … |
+| `current_revision` | int | no | |
+| `created_at` / `updated_at` | timestamptz | no | |
+
+### `authz.policy_revision`
+
+Immutable revisions. The evaluated spec is JSONB; the owner's verbatim prompt
+and the confirmed description are stored Fernet-encrypted in `source_encrypted`
+and are never exposed through MCP or logs.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `policy_id` | uuid | no | FK → `authz.policy.id` `CASCADE` |
+| `revision` | int | no | Unique on `(policy_id, revision)` |
+| `spec` | jsonb | no | `PolicySpec` without the `source` block |
+| `source_encrypted` | text | no | Encrypted `PolicySource` |
+| `interpreter_version` | text | no | Model + quant + prompt + schema + resolvers |
+| `model_id` | text | no | Concrete parser model |
+| `confirmed_at` | timestamptz | no | |
+
+### `authz.policy_build`
+
+Build record for confidentiality rules. Phase 1 creates it as
+`pending_enforcement`; no consumer runs yet.
+
+`id`, `policy_id`, `revision`, `status`, `coverage_processed`,
+`coverage_total`, `classifier_version`, `created_at`, `updated_at`.
+
+### `authz.policy_draft`
+
+Encrypted, short-lived drafts. Nothing is written to `authz.policy` before
+confirmation. `payload_encrypted` contains the prompt, model choice, and
+per-constraint state; `expires_at` drives cleanup.
+
+### `semantic.protected_statement`
+
+Encrypted canonical statement for confidentiality rules.
+
+`id`, `account_id`, `canonical_encrypted`, `subject`, `kind`
+(`fact` / `topic`), `version`, `created_at`.
+
+### `audit.policy_event`
+
+Policy lifecycle events. No prompt and no statement text.
+
+`id`, `policy_id`, `revision`, `event` (`created`, …), `principal_kind`,
+`interpreter_version`, `model_id`, `created_at`.
+
+---
+
 ## `public` (default) — operational tables
 
 These support ingestion and identity, not the canonical model itself.

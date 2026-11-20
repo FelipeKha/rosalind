@@ -860,6 +860,15 @@ Full specification in `rosalind_policy_interpreter.md`.
 - Interpreter pipeline: segmentation, routing, constrained local extraction, deterministic resolution, clarification, validation, impact and conflict checks, template-rendered previews, confirmation.
 - Minimal UI for the flow (prompt, clarification options, preview, confirm).
 - Golden-set evaluation with hard release gates (zero wrong agent or entity in a confirmed spec).
+
+**Implementation note.** Phase 1 ships as a separate policy service
+(`rosalind-policy`, default port 8001) with its own `authz` / `semantic` /
+`audit` schemas and Alembic version table, sharing PostgreSQL but not importing
+the RAG/search stack. The UI is the `rosalind policy` CLI. Policies are generic
+(`principal: all_agents`) for now. Model choice is per request from a local-only
+allowlist, recorded in `interpreter_version`. Enforcement is still out of scope:
+access rules are `active` but not applied; confidentiality rules are
+`pending_enforcement`.
 - Manual creation of JSON policies through the API, for testing.
 - Output: confirmed policies persisted but **not enforced**. No real agent traffic is served under them until Phase 2.
 

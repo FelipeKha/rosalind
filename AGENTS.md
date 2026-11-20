@@ -34,6 +34,7 @@ clients include AI agents (via MCP) and web/native apps.
 | `docs/providers/<name>.md` | touching a provider parser/adapter |
 | `docs/auth.md` | touching authn, tokens, accounts, Keycloak, the CLI login flow, or adding a route/tool |
 | `docs/eval.md` | touching the eval subsystem (`rosalind eval`), eval mode, or datasets |
+| `docs/features/rosalind_policy_*.md` | touching the policy service, policy interpreter, or enforcement phases |
 | `docs/invariants.md` | anything ingestion- or canonicalization-related |
 
 ---

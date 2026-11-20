@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -35,6 +35,56 @@ class EvalSettings(BaseModel):
 
     enabled: bool = False
     runs_dir: Path = Path("runs")
+
+
+class ParserModelSettings(BaseModel):
+    """One prompt-parsing model the policy service is allowed to use.
+
+    Models are local Ollama models only. ``base_url`` is checked at startup and
+    must be a loopback address; hosted endpoints are never accepted.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    provider: Literal["ollama"] = "ollama"
+    model: str
+    base_url: str = "http://127.0.0.1:11434"
+    quantization: str | None = None
+    context_window: int = 8192
+    keep_alive: str = "5m"
+    enabled: bool = True
+
+
+class PolicySettings(BaseModel):
+    """Policy service settings.
+
+    ``models`` is the allowlist a client may choose from. Per-request model
+    selection is accepted, but the runtime keeps one model resident at a time
+    and records the choice in ``interpreter_version``.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = True
+    default_model: str | None = None
+    models: list[ParserModelSettings] = Field(default_factory=list)
+    draft_ttl_seconds: int = 3600
+    request_timeout_seconds: float = 120.0
+    enforcement_live: bool = False
+
+    def model_for(self, name: str) -> ParserModelSettings | None:
+        for candidate in self.models:
+            if candidate.name == name and candidate.enabled:
+                return candidate
+        return None
+
+    def resolve_model(self, name: str | None) -> ParserModelSettings | None:
+        if name is None:
+            if self.default_model is None:
+                return None
+            name = self.default_model
+        return self.model_for(name)
 
 
 class YamlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -89,6 +139,7 @@ class Settings(BaseSettings):
         )
 
     eval: EvalSettings = EvalSettings()
+    policy: PolicySettings = PolicySettings()
 
     database_url: str = "postgresql+psycopg://rosalind:rosalind@localhost:5432/rosalind"
     s3_bucket: str = "rosalind"

@@ -42,6 +42,7 @@ credentials, e.g. `--profile eval`.
 - [rosalind index](#rosalind-index)
 - [rosalind query](#rosalind-query)
 - [rosalind search](#rosalind-search)
+- [rosalind policy](#rosalind-policy)
 
 ### Exit codes
 
@@ -720,3 +721,43 @@ Example:
 ```bash
 ROSALIND_API_URL=http://some-server:8000 uv run rosalind status
 ```
+
+## rosalind policy
+
+Create and manage privacy policies. Policies are interpreted and stored by the
+**policy service**, a separate deployable (`ROSALIND_POLICY_API_URL`, default
+`http://localhost:8001`). Nothing is persisted until you confirm, and Phase 1
+rules are recorded only — enforcement is not active yet.
+
+```
+rosalind policy [command]
+```
+
+### Available commands
+
+- `rosalind policy models` — list allowed prompt-parsing models.
+- `rosalind policy create "<prompt>" [--model NAME]` — interpret a prompt.
+- `rosalind policy answer <draft_id> <constraint_index> <option_id>` — answer a clarification.
+- `rosalind policy confirm <draft_id> [--constraint N]` — persist ready constraints.
+- `rosalind policy delete-draft <draft_id>` — abandon a draft.
+- `rosalind policy list` / `show <policy_id>` — inspect confirmed policies.
+- `rosalind policy pause|resume|revoke <policy_id>` — change status.
+
+### Example
+
+```bash
+$ rosalind policy create "Agent A can't see emails from John Smith" --model qwen3.5-9b
+Draft ... (model qwen3.5-9b)
+[0] ready
+    Applies to all agents. Agents will not see emails sent by john@example.com. ...
+    Currently matches 312 emails.
+    Enforcement is not active yet. This rule is recorded only.
+
+Confirm with: rosalind policy confirm <draft_id>
+```
+
+Phase 1 policies apply to **all agents**. Agent-specific scoping comes later.
+
+### See also
+
+- [rosalind](#rosalind)
