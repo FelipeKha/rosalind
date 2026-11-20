@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     DateTime,
     ForeignKey,
     Index,
@@ -23,6 +24,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from rosalind.adapters.outbound.persistence.models.account import (
@@ -82,6 +84,19 @@ class PolicyModel(PolicyBase):
     current_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+class PolicyVersionModel(PolicyBase):
+    __tablename__ = "policy_version"
+    __table_args__ = ({"schema": "authz"},)
+
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    version: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
@@ -200,6 +215,20 @@ class PostgresPolicyRepository:
 
     def rollback(self) -> None:
         self._session.rollback()
+
+    def _bump_policy_version(self, account_id: uuid.UUID) -> None:
+        stmt = (
+            pg_insert(PolicyVersionModel)
+            .values(account_id=account_id, version=1)
+            .on_conflict_do_update(
+                index_elements=[PolicyVersionModel.account_id],
+                set_={
+                    "version": PolicyVersionModel.version + 1,
+                    "updated_at": utcnow(),
+                },
+            )
+        )
+        self._session.execute(stmt)
 
     # ------------------------------------------------------------------ identity
     def get_or_create_account(self, issuer: str, subject: str) -> AccountRef:
@@ -425,6 +454,7 @@ class PostgresPolicyRepository:
         )
         self._session.add(model)
         self._session.flush()
+        self._bump_policy_version(policy.account_id)
 
         revision = PolicyRevisionModel(
             policy_id=model.id,
@@ -531,6 +561,7 @@ class PostgresPolicyRepository:
             return None
         model.status = status
         self._session.flush()
+        self._bump_policy_version(model.account_id)
         return PolicySummary(
             policy_id=model.id,
             revision=model.current_revision,

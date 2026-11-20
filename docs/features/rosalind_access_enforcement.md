@@ -2,6 +2,27 @@
 
 Companion to `rosalind_policy_engine_rag_filtering_v7.md` and `rosalind_policy_interpreter.md`. This document plans how **access-type policies** (permit and deny on exact selectors such as participants, accounts and dates) are enforced on every agent-facing read in Rosalind. It is the second implementation step.
 
+> **Implementation status (Phase 2 v1).** The first enforcement slice is live behind
+> `policy.access_enforcement_enabled` (default off) for the MCP `search` tool.
+> Deviations from this plan, intentionally:
+>
+> - enforcement is `all_agents` only; per-agent identity is deferred;
+> - when no permit policy exists the scope is **implicit permit-all** (deny rules
+>   still apply), so no baseline-grant migration is required;
+> - `search.chunk` carries `from/to/cc/bcc_handles` arrays, backfilled from
+>   `core.email_participant`, instead of entity-ID arrays;
+> - L1 SQL filtering and L2 independent verification are implemented; L3
+>   restricted roles/views and RLS are deferred;
+> - only `search` exists today, so `get_item`, `get_thread`, `get_context`,
+>   attachment fetch and extractions are not yet in scope;
+> - quoted/forwarded copies of denied text remain the documented Phase 5 gap.
+>
+> **Before enabling:** apply both Alembic chains (`just migrate` and
+> `just policy-migrate`). The data migration `0022` backfills role handles and
+> `0023` adds the policy audit columns; the policy chain adds
+> `authz.policy_version` and `audit.security_event`. If the policy tables are
+> missing or unreadable, scoped searches fail closed.
+
 ---
 
 ## 1. Purpose and scope

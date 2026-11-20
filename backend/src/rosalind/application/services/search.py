@@ -18,10 +18,22 @@ pgvector, ParadeDB, and the embedding implementation.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from dataclasses import dataclass
 
+from rosalind.application.authz.errors import AccessPolicyError
+from rosalind.application.authz.evaluator import build_effective_scope
+from rosalind.application.authz.models import (
+    EffectiveScope,
+    PolicyDecision,
+    deny_all_scope,
+)
+from rosalind.application.authz.ports import (
+    AccessPolicyRepository,
+    SecurityEventPort,
+)
 from rosalind.application.canonicalization.email import normalize_email
 from rosalind.application.search import (
     Cursor,
@@ -51,6 +63,7 @@ from rosalind.application.search.plan import (
     WarningCode,
 )
 from rosalind.application.search.ports import (
+    AccessVerifierPort,
     AuditEvent,
     AuditPort,
     ChunkTextPort,
@@ -89,6 +102,10 @@ class PrepareContext:
     account_id: uuid.UUID
     client_id: str
     timezone: str | None = None
+    # Agent-facing transports set this from the access-enforcement setting.
+    # Owner transports (REST/eval) leave it false and stay unscoped.
+    enforce_access: bool = False
+    agent_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +144,9 @@ class SearchService:
         result_data: SearchResultDataPort,
         list_retriever: MessageListPort,
         trace_recorder: TraceRecorderPort | None = None,
+        access_policies: AccessPolicyRepository | None = None,
+        access_verifier: AccessVerifierPort | None = None,
+        security_events: SecurityEventPort | None = None,
     ):
         self._scope = scope
         self._metadata = metadata
@@ -144,6 +164,9 @@ class SearchService:
         self._token_counter = token_counter
         self._result_data = result_data
         self._list = list_retriever
+        self._access_policies = access_policies
+        self._access_verifier = access_verifier
+        self._security_events = security_events
         self._pipeline = SearchPipeline(
             lexical=lexical,
             semantic=semantic,
@@ -156,6 +179,8 @@ class SearchService:
             rerank_config=rerank_config,
             token_counter=token_counter,
             trace_recorder=trace_recorder,
+            access_verifier=access_verifier,
+            security_events=security_events,
         )
 
     async def prepare(
@@ -173,6 +198,7 @@ class SearchService:
             request_id=uuid.uuid4(),
             audit_id=uuid.uuid4(),
             client_id=context.client_id,
+            agent_id=context.agent_id,
         )
 
         cursor = self._decode_cursor(request.cursor, context.account_id)
@@ -197,6 +223,60 @@ class SearchService:
         scope = Scope(
             account_id=context.account_id, source_account_ids=frozenset(effective)
         )
+
+        access_scope: EffectiveScope | None = None
+        if context.enforce_access:
+            try:
+                if self._access_policies is None:
+                    raise AccessPolicyError(
+                        "access policy repository is not configured"
+                    )
+                loaded = await self._access_policies.load_access_policies(
+                    context.account_id
+                )
+                access_scope = build_effective_scope(context.account_id, loaded)
+            except Exception:  # noqa: BLE001 - any policy failure is fail-closed
+                await self._record_security_event(
+                    account_id=context.account_id,
+                    request_id=request_context.request_id,
+                    event="access_policy_load_failed",
+                )
+                return await self._short_circuit(
+                    request_context,
+                    context,
+                    scope=scope,
+                    access_scope=deny_all_scope(context.account_id),
+                    reason=ShortCircuitReason.EMPTY_SCOPE,
+                    explanation="no data is available for this request",
+                    filters=None,
+                    mode_requested=None,
+                    mode_effective=None,
+                    validate_ms=validate_ms,
+                    started=started,
+                )
+
+            if access_scope.decision is PolicyDecision.DENY_ALL:
+                await self._record_security_event(
+                    account_id=context.account_id,
+                    request_id=request_context.request_id,
+                    event="access_policy_deny_all",
+                    detail={
+                        "scope_fingerprint": access_scope.scope_fingerprint,
+                    },
+                )
+                return await self._short_circuit(
+                    request_context,
+                    context,
+                    scope=scope,
+                    access_scope=access_scope,
+                    reason=ShortCircuitReason.EMPTY_SCOPE,
+                    explanation="no data is available for this request",
+                    filters=None,
+                    mode_requested=None,
+                    mode_effective=None,
+                    validate_ms=validate_ms,
+                    started=started,
+                )
 
         timezone_name = resolve_timezone(
             context.timezone, self._config.default_timezone
@@ -236,8 +316,14 @@ class SearchService:
 
         resolve_started = time.perf_counter()
         thread_id, metadata, resolved_lookups, embed_result = await asyncio.gather(
-            self._resolve_thread(scope, request),
-            self._metadata.get_metadata(scope.source_account_ids),
+            self._resolve_thread(scope, request, access_scope),
+            (
+                self._metadata.get_metadata(scope.source_account_ids)
+                if access_scope is None
+                else self._metadata.get_metadata(
+                    scope.source_account_ids, access_scope=access_scope
+                )
+            ),
             self._resolve_lookups(scope, request),
             self._embed_timed(semantic_text) if needs_embedding else _no_embed(),
         )
@@ -382,6 +468,7 @@ class SearchService:
                 reranker=self._config.reranker,
             ),
             fusion=self._config.fusion,
+            access_scope=access_scope,
             cursor=cursor,
             warnings=tuple(warnings),
             timings=PrepareTimings(
@@ -409,6 +496,7 @@ class SearchService:
                 tuple(warnings),
                 None,
                 plan.timings,
+                access_scope=access_scope,
             )
         )
         return plan
@@ -436,6 +524,28 @@ class SearchService:
     async def search(self, plan: SearchPlan) -> SearchResponse:
         """Run retrieval, fusion, reranking, and assembly for a prepared plan."""
         return (await self.run(plan)).response
+
+    async def _record_security_event(
+        self,
+        *,
+        account_id: uuid.UUID | None,
+        request_id: uuid.UUID | None,
+        event: str,
+        detail: dict[str, object] | None = None,
+    ) -> None:
+        if self._security_events is None:
+            return
+        try:
+            await self._security_events.record(
+                account_id=account_id,
+                request_id=request_id,
+                event=event,
+                detail=detail,
+            )
+        except Exception:
+            logging.getLogger("rosalind.search.audit").warning(
+                "security_event_record_failed", exc_info=True
+            )
 
     # -- validation -------------------------------------------------------
 
@@ -495,10 +605,21 @@ class SearchService:
 
     # -- resolution -------------------------------------------------------
 
-    async def _resolve_thread(self, scope: Scope, request: SearchRequest):
+    async def _resolve_thread(
+        self,
+        scope: Scope,
+        request: SearchRequest,
+        access_scope: EffectiveScope | None,
+    ):
         if request.filters.thread_of is None:
             return None
-        return await self._threads.resolve_thread(scope, request.filters.thread_of)
+        if access_scope is None:
+            return await self._threads.resolve_thread(scope, request.filters.thread_of)
+        return await self._threads.resolve_thread(
+            scope,
+            request.filters.thread_of,
+            access_scope=access_scope,
+        )
 
     async def _resolve_lookups(self, scope: Scope, request: SearchRequest):
         values = _lookup_values(request)
@@ -588,6 +709,7 @@ class SearchService:
         embed_ms: float | None = None,
         resolved_entities: tuple[ResolvedEntity, ...] = (),
         warnings: tuple[PlanWarning, ...] = (),
+        access_scope: EffectiveScope | None = None,
     ) -> ShortCircuit:
         result = ShortCircuit(
             context=request_context,
@@ -615,6 +737,7 @@ class SearchService:
                 warnings,
                 reason,
                 timings,
+                access_scope=access_scope,
             )
         )
         return result
@@ -862,6 +985,8 @@ def _audit_event(
     warnings: tuple[PlanWarning, ...],
     short_circuit_reason: ShortCircuitReason | None,
     timings: PrepareTimings | None,
+    *,
+    access_scope: EffectiveScope | None = None,
 ) -> AuditEvent:
     return AuditEvent(
         request_id=request_context.request_id,
@@ -880,6 +1005,16 @@ def _audit_event(
             short_circuit_reason.value if short_circuit_reason is not None else None
         ),
         timings=timings,
+        agent_id=str(context.agent_id) if context.agent_id is not None else None,
+        policy_version=(
+            access_scope.policy_version if access_scope is not None else None
+        ),
+        scope_fingerprint=(
+            access_scope.scope_fingerprint if access_scope is not None else None
+        ),
+        policy_decision=(
+            access_scope.decision.value if access_scope is not None else None
+        ),
     )
 
 

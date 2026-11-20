@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from rosalind.application.authz.models import EffectiveScope
 from rosalind.application.search.assemble import ListResult, SearchResultData
 from rosalind.application.search.plan import (
     Budgets,
@@ -132,9 +133,16 @@ class SearchScopePort(Protocol):
 
 class SearchMetadataPort(Protocol):
     async def get_metadata(
-        self, source_account_ids: frozenset[uuid.UUID]
+        self,
+        source_account_ids: frozenset[uuid.UUID],
+        *,
+        access_scope: EffectiveScope | None = None,
     ) -> SearchMetadata:
-        """Date coverage and the tag/language vocabulary for the given scope."""
+        """Date coverage and vocabulary for the visible scope.
+
+        When an access scope is present, coverage and vocabulary must be
+        computed over the visible set only, never the whole mailbox.
+        """
 
 
 class EntityResolverPort(Protocol):
@@ -155,10 +163,13 @@ class ThreadResolverPort(Protocol):
         self,
         scope: Scope,
         message_id: uuid.UUID,
+        *,
+        access_scope: EffectiveScope | None = None,
     ) -> uuid.UUID | None:
-        """The current thread of a message within ``scope``, or ``None``.
+        """The current thread of a visible message, or ``None``.
 
-        Must never resolve a message outside ``scope.source_account_ids``.
+        Must never resolve a message outside ``scope.source_account_ids`` or the
+        access scope. A denied message is indistinguishable from a missing one.
         """
 
 
@@ -290,11 +301,27 @@ class AuditEvent:
     warnings: tuple[PlanWarning, ...]
     short_circuit_reason: str | None
     timings: PrepareTimings | None
+    agent_id: str | None = None
+    policy_version: int | None = None
+    scope_fingerprint: str | None = None
+    policy_decision: str | None = None
 
 
 class AuditPort(Protocol):
     async def record(self, event: AuditEvent) -> None:
         """Record one Prepare outcome (logs today; a durable table later)."""
+
+
+class AccessVerifierPort(Protocol):
+    async def visible_item_ids(
+        self, plan: SearchPlan, item_ids: tuple[uuid.UUID, ...]
+    ) -> frozenset[uuid.UUID]:
+        """Independently re-check which returned items the scope permits.
+
+        Implementations must fetch authorization attributes separately from the
+        retrieval query and run the reference evaluator in Python. They must not
+        reuse the compiled SQL predicates, so a bug in L1 is actually caught.
+        """
 
 
 class TraceRecorderPort(Protocol):

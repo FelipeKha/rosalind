@@ -68,7 +68,8 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
     Filters are ANDed across fields; lists within a field are ORed. Prepare
     validates and normalizes the request into a search plan (or a short circuit
     when nothing can match); the ranked or list strategy then retrieves, fuses,
-    reranks, and assembles a bounded page of results.
+    reranks, and assembles a bounded page of results. Results may omit items
+    that the owner's privacy policy hides from this agent.
     """
     auth = _auth_context()
     if auth is None:
@@ -77,7 +78,10 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
     request = to_search_request(input)
     service = composition.build_search_service(SessionLocal)
     context = PrepareContext(
-        account_id=account_id, client_id=client_id, timezone=zoneinfo
+        account_id=account_id,
+        client_id=client_id,
+        timezone=zoneinfo,
+        enforce_access=config.settings.policy.access_enforcement_enabled,
     )
     prepared = await service.prepare(context, request)
     if isinstance(prepared, ShortCircuit):

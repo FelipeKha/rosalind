@@ -24,7 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.outbound.persistence import models
-from rosalind.adapters.outbound.search.filters import scope_nums
+from rosalind.adapters.outbound.search.filters import access_conditions, scope_nums
 from rosalind.application.search import SearchPlan
 from rosalind.application.search.assemble import AssemblyError, SearchResultData
 from rosalind.domain.search import ChunkKind
@@ -83,6 +83,7 @@ class PostgresSearchResultDataRepository:
                 .where(
                     chunk.id.in_(chunk_ids),
                     chunk.source_account_num.in_(nums),
+                    *access_conditions(plan),
                 )
             )
             rows = session.execute(stmt).all()

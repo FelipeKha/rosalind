@@ -22,6 +22,11 @@ from rosalind.adapters.outbound.google.auth import GoogleAuthGateway
 from rosalind.adapters.outbound.google.people import GooglePeopleGateway
 from rosalind.adapters.outbound.keycloak.jwt import KeycloakJwtVerifier
 from rosalind.adapters.outbound.object_storage.s3 import S3ObjectStorage
+from rosalind.adapters.outbound.persistence.authz_repository import (
+    PostgresAccessPolicyRepository,
+    PostgresAccessVerifier,
+    PostgresSecurityEventRepository,
+)
 from rosalind.adapters.outbound.persistence.embedding_spaces import embedding_space
 from rosalind.adapters.outbound.persistence.repositories.person import (
     PostgresPersonRepository,
@@ -392,6 +397,9 @@ def build_search_service(session_factory: Callable[[], Session]) -> SearchServic
         result_data=PostgresSearchResultDataRepository(session_factory),
         list_retriever=PostgresMessageListRetriever(session_factory),
         trace_recorder=SearchTraceRecorder(session_factory),
+        access_policies=PostgresAccessPolicyRepository(session_factory),
+        access_verifier=PostgresAccessVerifier(session_factory),
+        security_events=PostgresSecurityEventRepository(session_factory),
     )
 
 

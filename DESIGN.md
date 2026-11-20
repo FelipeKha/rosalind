@@ -319,9 +319,22 @@ Boundary rules:
 * Phase 1 policies are **generic** (`principal: all_agents`). Agent-specific
   scoping is a later schema extension.
 
-Phase 1 does not enforce policies. A confirmed rule is recorded only, and the
-preview says so. The current interpreter details are in
-[`docs/features/rosalind_policy_interpreter.md`](docs/features/rosalind_policy_interpreter.md).
+**Phase 2 status (access enforcement).** Confirmed access policies are enforced
+on MCP `search` when `policy.access_enforcement_enabled` is true (default:
+false). The scope is loaded per request from the active policy revisions and
+compiled into every retrieval leg; L2 independently re-checks returned items
+with the reference evaluator, and policy decisions are recorded in
+`search.request_log`. Enforcement is `all_agents` only until the agent registry
+lands. When an account has no permit policies the scope is **implicit
+permit-all** (deny rules still apply), which deliberately deviates from the
+design document's default-deny to avoid a baseline-grant migration for existing
+agents. L3 restricted roles and RLS are deferred. Confidentiality policies are
+still recorded but not enforced.
+
+Phase 1 recorded rules only. The current interpreter details are in
+[`docs/features/rosalind_policy_interpreter.md`](docs/features/rosalind_policy_interpreter.md)
+and the enforcement deviations are tracked in
+[`docs/features/rosalind_access_enforcement.md`](docs/features/rosalind_access_enforcement.md).
 
 ---
 

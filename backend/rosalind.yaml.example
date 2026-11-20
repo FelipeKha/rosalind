@@ -24,6 +24,7 @@ policy:
   enabled: true
   default_model: qwen3.5-9b
   enforcement_live: false
+  access_enforcement_enabled: false
   draft_ttl_seconds: 3600
   models:
     - name: qwen3.5-9b

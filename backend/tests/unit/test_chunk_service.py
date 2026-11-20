@@ -69,6 +69,10 @@ def _item(
         recipient_handles=("alex.dupont@gmail.com",),
         recipient_display=("Alex Dupont <alex.dupont@gmail.com>",),
         participant_handles=("alex.dupont@gmail.com", "mike@turnerroofing.com"),
+        from_handles=(sender_handle,),
+        to_handles=("alex.dupont@gmail.com",),
+        cc_handles=(),
+        bcc_handles=(),
         direction="received",
         has_attachment=has_attachment,
         is_trash_or_spam=False,
@@ -110,6 +114,10 @@ def test_roof_email_golden_chunks() -> None:
     assert ChunkKind.EMAIL_BODY in kinds
     assert ChunkKind.EMAIL_QUOTE in kinds
     assert ChunkKind.ATTACHMENT in kinds
+
+    assert all(d.from_handles == ("mike@turnerroofing.com",) for d in drafts)
+    assert all(d.to_handles == ("alex.dupont@gmail.com",) for d in drafts)
+    assert all(d.cc_handles == () and d.bcc_handles == () for d in drafts)
 
     quote_drafts = [d for d in drafts if d.kind is ChunkKind.EMAIL_QUOTE]
     assert any("$9,200" in d.text_for_display for d in quote_drafts)

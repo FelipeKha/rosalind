@@ -74,6 +74,10 @@ class ChunkWorkItem:
     recipient_handles: tuple[str, ...]
     recipient_display: tuple[str, ...]
     participant_handles: tuple[str, ...]
+    from_handles: tuple[str, ...]
+    to_handles: tuple[str, ...]
+    cc_handles: tuple[str, ...]
+    bcc_handles: tuple[str, ...]
     direction: str
     has_attachment: bool
     is_trash_or_spam: bool

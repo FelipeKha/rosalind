@@ -15,14 +15,25 @@ from __future__ import annotations
 import uuid
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import and_, false, or_, select, true
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from rosalind.adapters.outbound.persistence import models
+from rosalind.application.authz.models import (
+    AccessClause,
+    EffectiveScope,
+    ParticipantTerm,
+    PolicyDecision,
+)
 from rosalind.application.search import SearchPlan
 
-__all__ = ["filter_conditions", "scope_nums"]
+__all__ = [
+    "access_conditions",
+    "filter_conditions",
+    "scope_conditions",
+    "scope_nums",
+]
 
 
 def scope_nums(session: Session, source_account_ids: frozenset[uuid.UUID]) -> list[int]:
@@ -75,4 +86,71 @@ def filter_conditions(plan: SearchPlan) -> list[ColumnElement[bool]]:
     if not filters.include_trash_spam:
         conditions.append(chunk.is_trash_or_spam.is_(False))
 
+    conditions.extend(access_conditions(plan))
     return cast(list[ColumnElement[bool]], conditions)
+
+
+def access_conditions(plan: SearchPlan) -> list[ColumnElement[bool]]:
+    """Mandatory predicates from the agent's effective access scope.
+
+    User-requested filters can only narrow the result; they never relax these.
+    ``None`` means policy enforcement is off for this plan.
+    """
+    return scope_conditions(plan.access_scope)
+
+
+def scope_conditions(
+    scope: EffectiveScope | None,
+) -> list[ColumnElement[bool]]:
+    """Render an effective scope as predicates on ``search.chunk``."""
+    if scope is None:
+        return []
+    if scope.decision is PolicyDecision.DENY_ALL:
+        return [false()]
+
+    chunk = models.Chunk
+    conditions: list[ColumnElement[bool]] = []
+
+    if not scope.implicit_permit_all:
+        conditions.append(
+            or_(*[_clause_condition(chunk, clause) for clause in scope.permits])
+        )
+    for clause in scope.denies:
+        conditions.append(~_clause_condition(chunk, clause))
+
+    return conditions
+
+
+def _clause_condition(chunk, clause: AccessClause) -> ColumnElement[bool]:
+    parts: list[ColumnElement[bool]] = []
+    if clause.source_account_id is not None:
+        parts.append(chunk.source_account_id == clause.source_account_id)
+    if clause.sent_from is not None:
+        parts.append(chunk.sent_at >= clause.sent_from)
+    if clause.sent_before is not None:
+        parts.append(chunk.sent_at < clause.sent_before)
+    if clause.direction is not None:
+        parts.append(chunk.direction == clause.direction)
+    parts.extend(_participant_condition(chunk, term) for term in clause.participants)
+    if not parts:
+        return true()
+    return and_(*parts)
+
+
+def _participant_condition(chunk, term: ParticipantTerm) -> ColumnElement[bool]:
+    addresses = sorted(term.addresses)
+    if not addresses:
+        return false()
+    roles = term.roles or frozenset({"from", "to", "cc", "bcc"})
+    if roles == frozenset({"from", "to", "cc", "bcc"}):
+        return chunk.participant_handles.overlap(addresses)
+
+    columns = {
+        "from": chunk.from_handles,
+        "to": chunk.to_handles,
+        "cc": chunk.cc_handles,
+        "bcc": chunk.bcc_handles,
+    }
+    return or_(
+        *[columns[role].overlap(addresses) for role in sorted(roles) if role in columns]
+    )

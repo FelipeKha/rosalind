@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from rosalind.application.authz.models import EffectiveScope
 from rosalind.application.search.request import (
     Direction,
     GroupBy,
@@ -124,6 +125,7 @@ class RequestContext:
     request_id: uuid.UUID
     audit_id: uuid.UUID
     client_id: str
+    agent_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +404,7 @@ class SearchPlan:
     budgets: Budgets
     versions: IndexVersions
     fusion: FusionConfig = FusionConfig()
+    access_scope: EffectiveScope | None = None
     cursor: Cursor | None = None
     warnings: tuple[PlanWarning, ...] = ()
     hints: PlanHints = PlanHints()
@@ -536,6 +539,11 @@ class SearchPlan:
                 fu.convex_alpha,
                 fu.max_chunks_per_item,
             ],
+            "access_scope": (
+                self.access_scope.scope_fingerprint
+                if self.access_scope is not None
+                else None
+            ),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()

@@ -325,10 +325,15 @@ class InterpreterService:
         state.impact = impact
         state.assumptions = resolved.assumptions
         state.resolution_notes = resolved.resolution_notes
+        enforcement_live = (
+            self._settings.access_enforcement_enabled
+            if routed.kind == "access"
+            else self._settings.enforcement_live
+        )
         state.preview = render_preview(
             resolved,
             impact,
-            enforcement_live=self._settings.enforcement_live,
+            enforcement_live=enforcement_live,
         )
         state.state = ConstraintStateName.READY
         return state

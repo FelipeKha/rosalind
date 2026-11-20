@@ -83,6 +83,10 @@ class SearchTraceRecorder:
             timings_ms=summary.timings_ms,
             returned_chunk_ids=list(summary.returned_chunk_ids),
             returned_item_ids=list(summary.returned_item_ids),
+            agent_id=str(summary.agent_id) if summary.agent_id is not None else None,
+            policy_version=summary.policy_version,
+            scope_fingerprint=summary.scope_fingerprint,
+            policy_decision=summary.policy_decision,
         )
         with factory() as session:
             session.add(row)
@@ -137,4 +141,8 @@ def _log_fields(summary: TraceSummary) -> dict[str, Any]:
         "timings_ms": summary.timings_ms,
         "returned_chunk_ids": [str(cid) for cid in summary.returned_chunk_ids],
         "returned_item_ids": [str(iid) for iid in summary.returned_item_ids],
+        "agent_id": str(summary.agent_id) if summary.agent_id is not None else None,
+        "policy_version": summary.policy_version,
+        "scope_fingerprint": summary.scope_fingerprint,
+        "policy_decision": summary.policy_decision,
     }

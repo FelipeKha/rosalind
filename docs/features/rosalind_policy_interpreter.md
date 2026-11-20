@@ -439,7 +439,11 @@ Every preview also includes:
 
 - **Assumptions** (role handling, "only" semantics, frozen dates, remaining grants, quoted copies of denied content).
 - **Resolution notes** ("John Smith matched by exact name").
-- **Enforcement status.** While enforcement is not live in the environment (a configuration flag), the preview adds: "Enforcement is not active yet. This rule is recorded only."
+- **Enforcement status.** Access previews use `policy.access_enforcement_enabled`
+  (Phase 2). Confidentiality previews still use `policy.enforcement_live`. While
+  the relevant flag is off, the preview adds: "Enforcement is not active yet.
+  This rule is recorded only." When access enforcement is on, the access preview
+  says it takes effect on the next request.
 
 ### 5.9 Confirm and persist
 

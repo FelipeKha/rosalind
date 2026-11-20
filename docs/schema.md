@@ -612,6 +612,7 @@ while the HNSW index remains deferred.
 | `sender_handle` | text | no | first `from` address (empty when missing) |
 | `recipient_handles` | text[] | no | to/cc/bcc |
 | `participant_handles` | text[] | no | sorted union of all roles |
+| `from_handles` / `to_handles` / `cc_handles` / `bcc_handles` | text[] | no | role-specific addresses for access predicates; backfilled from `core.email_participant` |
 | `direction` | text | no | `received` / `sent` / `self` / `unknown` |
 | `has_attachment` | boolean | no | |
 | `is_trash_or_spam` | boolean | no | |
@@ -621,6 +622,9 @@ while the HNSW index remains deferred.
 | `emb_bge_m3_v1` | halfvec(1024) | yes | null until the embed job runs |
 | `emb_bge_m3_v1_text_sha256` | text | yes | hash of the text that was embedded |
 
+- GIN indexes on every role array (`chunk_from_handles_idx`,
+  `chunk_to_handles_idx`, `chunk_cc_handles_idx`, `chunk_bcc_handles_idx`), in
+  addition to the existing recipient/participant indexes.
 - `uq_chunk_key` unique on `(email_id, chunk_kind, attachment_id, seq)`
   `NULLS NOT DISTINCT`.
 - The chunk upsert never writes the embedding columns. Staleness is detected
@@ -832,6 +836,14 @@ Build record for confidentiality rules. Phase 1 creates it as
 `id`, `policy_id`, `revision`, `status`, `coverage_processed`,
 `coverage_total`, `classifier_version`, `created_at`, `updated_at`.
 
+### `authz.policy_version`
+
+Monotonic per-account policy counter. Bumped when a policy is created or its
+status changes; the RAG records it on every scoped search and includes the
+scope fingerprint derived from the active clauses.
+
+`account_id` (PK), `version` (bigint), `updated_at`.
+
 ### `authz.policy_draft`
 
 Encrypted, short-lived drafts. Nothing is written to `authz.policy` before
@@ -851,6 +863,14 @@ Policy lifecycle events. No prompt and no statement text.
 
 `id`, `policy_id`, `revision`, `event` (`created`, …), `principal_kind`,
 `interpreter_version`, `model_id`, `created_at`.
+
+### `audit.security_event`
+
+Content-free security events written by the data backend: fail-closed policy
+loads, deny-all decisions, and L2 verification failures/drops.
+
+`id`, `account_id` (nullable), `request_id` (nullable), `event`, `detail`
+(jsonb, counts and fingerprints only), `created_at`; indexed on `created_at`.
 
 ---
 

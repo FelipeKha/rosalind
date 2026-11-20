@@ -39,6 +39,10 @@ class LoggingAudit:
                     "embedding_version": event.embedding_version,
                     "warnings": [warning.code.value for warning in event.warnings],
                     "short_circuit_reason": event.short_circuit_reason,
+                    "agent_id": event.agent_id,
+                    "policy_version": event.policy_version,
+                    "scope_fingerprint": event.scope_fingerprint,
+                    "policy_decision": event.policy_decision,
                     "timings_ms": _timings(event),
                 },
             )

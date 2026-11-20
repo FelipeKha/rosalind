@@ -72,6 +72,9 @@ class PolicySettings(BaseModel):
     draft_ttl_seconds: int = 3600
     request_timeout_seconds: float = 120.0
     enforcement_live: bool = False
+    # Gates real access-policy enforcement in the RAG path. When off, search
+    # behaves exactly as before. Stored policies are not read or applied.
+    access_enforcement_enabled: bool = False
 
     def model_for(self, name: str) -> ParserModelSettings | None:
         for candidate in self.models:
