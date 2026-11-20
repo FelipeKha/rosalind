@@ -19,6 +19,7 @@ from rosalind.application.authz.models import (
     empty_scope,
     scope_from_clauses,
 )
+from rosalind.application.authz.semantic_levels import SemanticEnforcementLevels
 
 __all__ = [
     "AccessAttributes",
@@ -29,6 +30,7 @@ __all__ = [
     "LoadedPolicy",
     "ParticipantTerm",
     "PolicyDecision",
+    "SemanticEnforcementLevels",
     "build_effective_scope",
     "deny_all_scope",
     "empty_scope",

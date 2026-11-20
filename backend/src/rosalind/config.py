@@ -76,6 +76,42 @@ class AccessEnforcementLevelSettings(BaseModel):
     verification: bool = True
 
 
+class SemanticEnforcementLevelSettings(BaseModel):
+    """Per-stage gates for confidentiality (semantic) enforcement.
+
+    Every level defaults to on. The master ``semantic_enforcement_enabled``
+    switch gates everything above these. Disabling a retrieval, metadata or
+    rerank level is a degraded mode: output may still be sanitized by
+    ``assembly`` or ``final_gate``, but ranking, counts or existence signals can
+    leak. At least one of ``assembly``/``final_gate`` must remain enabled, and
+    at least one of ``sanitization``/``jit`` must remain enabled, when the
+    master flag is on.
+
+    The first three levels drive the offline worker; the rest shape the online
+    query path (and future tools).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    # Offline build.
+    candidate_generation: bool = True
+    verification: bool = True
+    sanitization: bool = True
+    # Online read path.
+    lexical: bool = True
+    semantic: bool = True
+    listing: bool = True
+    metadata: bool = True
+    thread: bool = True
+    rerank: bool = True
+    assembly: bool = True
+    jit: bool = True
+    final_gate: bool = True
+    derived: bool = True
+    term_features: bool = True
+    quoted_copy: bool = True
+
+
 class PolicySettings(BaseModel):
     """Policy service settings.
 
@@ -98,6 +134,13 @@ class PolicySettings(BaseModel):
     access_enforcement_levels: AccessEnforcementLevelSettings = Field(
         default_factory=AccessEnforcementLevelSettings
     )
+    # Gates real confidentiality (semantic) enforcement in the RAG path. When
+    # off, search behaves exactly as before. Confidentiality policies are not
+    # read or applied and no semantic tables are queried.
+    semantic_enforcement_enabled: bool = False
+    semantic_enforcement_levels: SemanticEnforcementLevelSettings = Field(
+        default_factory=SemanticEnforcementLevelSettings
+    )
 
     @model_validator(mode="after")
     def _validate_access_levels(self) -> PolicySettings:
@@ -107,6 +150,21 @@ class PolicySettings(BaseModel):
         ):
             raise ValueError(
                 "access enforcement requires assembly or verification to be enabled"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_semantic_levels(self) -> PolicySettings:
+        if not self.semantic_enforcement_enabled:
+            return self
+        levels = self.semantic_enforcement_levels
+        if not (levels.assembly or levels.final_gate):
+            raise ValueError(
+                "semantic enforcement requires assembly or final_gate to be enabled"
+            )
+        if not (levels.sanitization or levels.jit):
+            raise ValueError(
+                "semantic enforcement requires sanitization or jit to be enabled"
             )
         return self
 

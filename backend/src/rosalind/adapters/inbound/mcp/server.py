@@ -31,7 +31,10 @@ from rosalind.adapters.inbound.mcp.search import (
 from rosalind.adapters.inbound.mcp.verifier import KeycloakMCPTokenVerifier
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
-from rosalind.application.authz import AccessEnforcementLevels
+from rosalind.application.authz import (
+    AccessEnforcementLevels,
+    SemanticEnforcementLevels,
+)
 from rosalind.application.read_models import (
     CurrentAccount,
     PersonProfile,
@@ -80,12 +83,14 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
     request = to_search_request(input)
     service = composition.build_search_service(SessionLocal)
     enforce_access = config.settings.policy.access_enforcement_enabled
+    enforce_semantic = config.settings.policy.semantic_enforcement_enabled
     context = PrepareContext(
         account_id=account_id,
         client_id=client_id,
         timezone=zoneinfo,
         enforce_access=enforce_access,
         access_levels=_access_levels() if enforce_access else None,
+        semantic_levels=_semantic_levels() if enforce_semantic else None,
     )
     prepared = await service.prepare(context, request)
     if isinstance(prepared, ShortCircuit):
@@ -140,6 +145,28 @@ def _access_levels() -> AccessEnforcementLevels:
         thread=levels.thread,
         assembly=levels.assembly,
         verification=levels.verification,
+    )
+
+
+def _semantic_levels() -> SemanticEnforcementLevels:
+    """Map configuration onto the application's plain level dataclass."""
+    levels = config.settings.policy.semantic_enforcement_levels
+    return SemanticEnforcementLevels(
+        candidate_generation=levels.candidate_generation,
+        verification=levels.verification,
+        sanitization=levels.sanitization,
+        lexical=levels.lexical,
+        semantic=levels.semantic,
+        listing=levels.listing,
+        metadata=levels.metadata,
+        thread=levels.thread,
+        rerank=levels.rerank,
+        assembly=levels.assembly,
+        jit=levels.jit,
+        final_gate=levels.final_gate,
+        derived=levels.derived,
+        term_features=levels.term_features,
+        quoted_copy=levels.quoted_copy,
     )
 
 
@@ -242,6 +269,21 @@ def main() -> None:
             logging.getLogger(__name__).warning(
                 "access_enforcement_degraded",
                 extra={"disabled_levels": list(disabled)},
+            )
+    if config.settings.policy.semantic_enforcement_enabled:
+        semantic_levels = _semantic_levels()
+        disabled = semantic_levels.disabled_names()
+        if disabled:
+            logging.getLogger(__name__).warning(
+                "semantic_enforcement_degraded",
+                extra={"disabled_levels": list(disabled)},
+            )
+        if not semantic_levels.output_safe or not (
+            semantic_levels.can_produce_sanitized_text
+        ):
+            raise RuntimeError(
+                "semantic enforcement is enabled but its output-safety or "
+                "sanitization levels are disabled"
             )
     composition.warm_search_models()
     if config.settings.mcp_transport == "streamable-http":

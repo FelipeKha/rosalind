@@ -618,6 +618,7 @@ while the HNSW index remains deferred.
 | `is_trash_or_spam` | boolean | no | |
 | `tags` | text[] | no | namespaced labels |
 | `meta` | jsonb | no | `header_only`, `truncated`, `partial` flags |
+| `replaced_in_sets` | text[] | no | semantic set ids whose overlay replaces this base chunk (GIN-indexed); maintained by the overlay builder |
 | `created_at` | timestamptz | no | |
 | `emb_bge_m3_v1` | halfvec(1024) | yes | null until the embed job runs |
 | `emb_bge_m3_v1_text_sha256` | text | yes | hash of the text that was embedded |
@@ -772,8 +773,33 @@ with the account and are pruned by `search_request_log_retention_days`.
 
 The access-enforcement fields are `agent_id`, `policy_version`,
 `scope_fingerprint`, `policy_decision` (`permit_all` / `scoped` / `deny_all` /
-`error`), and `access_levels` (the enabled stage names). They make degraded-mode
-investigations possible without storing content.
+`error`), and `access_levels` (the enabled stage names). The semantic fields are
+`semantic_set_id`, `semantic_policy_version` and `semantic_levels`. They make
+degraded-mode investigations possible without storing content.
+
+### Semantic enforcement tables (Phase 3)
+
+These tables are owned by the data backend because they are derived from email
+and chunk text. They are sensitive metadata: the agent-facing DB role has no
+access to them, and statement text stays encrypted in the policy service.
+
+| Table | Purpose |
+|---|---|
+| `search.segment` | Sentence/clause segment: `email_id`, `field`, `chunk_id`, `ordinal`, offsets, `text_hash`, `language`, `is_quoted`, `segmentation_version`, embedding + hash. Distinct from the coarse structural `derived.email_segment`. |
+| `derived.finding` | `(text_hash, statement_id)` → verdict, `subject_matches`, spans, score, `classifier_version`. Positives propagate by hash; negatives do not. |
+| `derived.finding_override` | Owner spot-check correction for one `(text_hash, statement_id)`. |
+| `search.semantic_coverage` | `(segment_id, statement_id, stage)` marks processed segments and negative results. |
+| `search.semantic_candidate` | Funnel provenance: segment/statement/source/score. |
+| `search.semantic_model_run` | Model, quantization, runtime, prompt/schema/window config; hash is `classifier_version`. |
+| `search.chunk_overlay` | Sanitized chunk copy per `set_id`: `display_text`, `index_text`, redactions, embedding, BM25 entry, copied access attributes, `status` (`provisional`/`complete`). |
+| `search.field_overlay` | Sanitized subject / attachment-name copy per `set_id`. |
+| `search.semantic_job` | Postgres-backed worker queue (priority, checkpoint, state). |
+| `search.semantic_review_item` | Spot-check queue for low-confidence and borderline cases. |
+| `search.redaction_event` | Per-request redacted segment ids/hashes and treatment; never content. |
+
+Overlay rows carry the base row's access attributes so the access-scope
+predicates apply to them unchanged. A provisional overlay row has no embedding
+yet, so it is reachable by lexical search only.
 
 ---
 
@@ -842,11 +868,13 @@ and are never exposed through MCP or logs.
 
 ### `authz.policy_build`
 
-Build record for confidentiality rules. Phase 1 creates it as
-`pending_enforcement`; no consumer runs yet.
+Build record for confidentiality rules. The worker consumes it and moves the
+rule through `building` → `active` (or `failed`/`paused`).
 
 `id`, `policy_id`, `revision`, `status`, `coverage_processed`,
-`coverage_total`, `classifier_version`, `created_at`, `updated_at`.
+`coverage_total`, `classifier_version`, `created_at`, `updated_at`, plus the
+Phase-3 counters `segments_total`, `candidates`, `verified`, `flagged`,
+`pending`, `eta_seconds`, `state`, `error`.
 
 ### `authz.policy_version`
 
@@ -868,6 +896,23 @@ Encrypted canonical statement for confidentiality rules.
 
 `id`, `account_id`, `canonical_encrypted`, `subject`, `kind`
 (`fact` / `topic`), `version`, `created_at`.
+
+### `semantic.statement_expansion`
+
+Local expansion terms and concepts generated after confirmation. Feed
+candidate generation only; they block nothing.
+
+`id`, `statement_id` (FK → `semantic.protected_statement` `CASCADE`),
+`language`, `terms` text[], `concepts` jsonb, `expansion_version`, `created_at`;
+unique on `(statement_id, language, expansion_version)`.
+
+### `semantic.statement_set` / `semantic.statement_set_member`
+
+A reusable set of protected statements, keyed by `set_id`, so agents with the
+same rules share findings and overlays. `statement_set` holds `id` (the
+`set_id`), `account_id`, `created_at`. `statement_set_member` holds `set_id`,
+`policy_id`, `statement_id`, `match_levels` text[], `treatment_mode`,
+`treatment_fallback`; PK `(set_id, policy_id, statement_id)`.
 
 ### `audit.policy_event`
 

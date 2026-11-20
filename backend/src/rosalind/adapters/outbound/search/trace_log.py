@@ -92,6 +92,13 @@ class SearchTraceRecorder:
                 if summary.access_levels is not None
                 else None
             ),
+            semantic_set_id=summary.semantic_set_id,
+            semantic_policy_version=summary.semantic_policy_version,
+            semantic_levels=(
+                list(summary.semantic_levels)
+                if summary.semantic_levels is not None
+                else None
+            ),
         )
         with factory() as session:
             session.add(row)
@@ -152,5 +159,12 @@ def _log_fields(summary: TraceSummary) -> dict[str, Any]:
         "policy_decision": summary.policy_decision,
         "access_levels": (
             list(summary.access_levels) if summary.access_levels is not None else None
+        ),
+        "semantic_set_id": summary.semantic_set_id,
+        "semantic_policy_version": summary.semantic_policy_version,
+        "semantic_levels": (
+            list(summary.semantic_levels)
+            if summary.semantic_levels is not None
+            else None
         ),
     }

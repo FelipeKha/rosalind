@@ -2,6 +2,34 @@
 
 Companion to `rosalind_policy_engine_rag_filtering_v7.md`, `rosalind_policy_interpreter.md` and `rosalind_access_enforcement.md`. This document plans how **confidentiality policies** (protected statements and topics) are enforced in the RAG, down to the span. It is the third implementation step.
 
+> **Implementation status (Phase 3, in progress).** The flag foundation and data
+> model are landing first, all defaulting off:
+>
+> - `policy.semantic_enforcement_enabled` (default off) is the master switch.
+>   With it off, search behaves exactly as before: no confidentiality policy is
+>   read and no semantic table is queried.
+> - `policy.semantic_enforcement_levels` has one gate per component:
+>   `candidate_generation`, `verification`, `sanitization` (offline build) and
+>   `lexical`, `semantic`, `listing`, `metadata`, `thread`, `rerank`,
+>   `assembly`, `jit`, `final_gate`, `derived`, `term_features`, `quoted_copy`
+>   (online path). All default `true`.
+> - When the master flag is on, at least one of `assembly`/`final_gate` and one
+>   of `sanitization`/`jit` must remain enabled, or the process refuses to
+>   start. The enabled level set is part of the plan fingerprint and is recorded
+>   in `search.request_log.semantic_levels`.
+> - The offline worker, segmentation/verification/overlay consumers and JIT are
+>   not implemented yet. Slice order: flags + schema (done), walking skeleton,
+>   scale/async, completeness, quality.
+>
+> **Before enabling:** apply both Alembic chains (`just migrate` and
+> `just policy-migrate`). The backend chain adds the segment/finding/overlay/
+> job tables; the policy chain adds statement expansion and sets.
+>
+> This step still assumes the recommended decisions: the offline pipeline runs
+> in a backend worker (it reads email/chunk text; the policy service does not),
+> findings are keyed by `(text_hash, statement_id)` with positive propagation,
+> and overlays are keyed by `set_id`.
+
 ---
 
 ## 1. Purpose and scope

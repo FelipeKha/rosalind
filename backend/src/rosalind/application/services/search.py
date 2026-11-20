@@ -35,6 +35,7 @@ from rosalind.application.authz.ports import (
     AccessPolicyRepository,
     SecurityEventPort,
 )
+from rosalind.application.authz.semantic_levels import SemanticEnforcementLevels
 from rosalind.application.canonicalization.email import normalize_email
 from rosalind.application.search import (
     Cursor,
@@ -108,6 +109,9 @@ class PrepareContext:
     enforce_access: bool = False
     agent_id: uuid.UUID | None = None
     access_levels: AccessEnforcementLevels | None = None
+    # Agent-facing transports set this from the semantic-enforcement setting.
+    # Owner transports leave it None and never load confidentiality policies.
+    semantic_levels: SemanticEnforcementLevels | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +231,7 @@ class SearchService:
         )
 
         levels = context.access_levels or AccessEnforcementLevels()
+        semantic_levels = context.semantic_levels or SemanticEnforcementLevels()
         access_scope: EffectiveScope | None = None
         if context.enforce_access:
             try:
@@ -479,6 +484,7 @@ class SearchService:
             fusion=self._config.fusion,
             access_scope=access_scope,
             access_levels=levels,
+            semantic_levels=semantic_levels,
             cursor=cursor,
             warnings=tuple(warnings),
             timings=PrepareTimings(

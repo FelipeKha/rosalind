@@ -33,6 +33,23 @@ policy:
     thread: true
     assembly: true
     verification: true
+  semantic_enforcement_enabled: false
+  semantic_enforcement_levels:
+    candidate_generation: true
+    verification: true
+    sanitization: true
+    lexical: true
+    semantic: true
+    listing: true
+    metadata: true
+    thread: true
+    rerank: true
+    assembly: true
+    jit: true
+    final_gate: true
+    derived: true
+    term_features: true
+    quoted_copy: true
   draft_ttl_seconds: 3600
   models:
     - name: qwen3.5-9b

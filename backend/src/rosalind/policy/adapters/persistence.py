@@ -23,7 +23,7 @@ from sqlalchemy import (
     func,
     select,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -144,6 +144,14 @@ class PolicyBuildModel(PolicyBase):
     coverage_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     coverage_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     classifier_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    segments_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    candidates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    verified: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    flagged: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pending: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    eta_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -185,6 +193,74 @@ class ProtectedStatementModel(PolicyBase):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class StatementExpansionModel(PolicyBase):
+    __tablename__ = "statement_expansion"
+    __table_args__ = (
+        UniqueConstraint(
+            "statement_id",
+            "language",
+            "expansion_version",
+            name="uq_statement_expansion_key",
+        ),
+        {"schema": "semantic"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    statement_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("semantic.protected_statement.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    language: Mapped[str] = mapped_column(Text, nullable=False)
+    terms: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    concepts: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    expansion_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class StatementSetModel(PolicyBase):
+    __tablename__ = "statement_set"
+    __table_args__ = (
+        Index("ix_statement_set_account", "account_id"),
+        {"schema": "semantic"},
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class StatementSetMemberModel(PolicyBase):
+    __tablename__ = "statement_set_member"
+    __table_args__ = (
+        Index("ix_statement_set_member_statement", "statement_id"),
+        {"schema": "semantic"},
+    )
+
+    set_id: Mapped[str] = mapped_column(
+        ForeignKey("semantic.statement_set.id", ondelete="CASCADE"), primary_key=True
+    )
+    policy_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    statement_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("semantic.protected_statement.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    match_levels: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list
+    )
+    treatment_mode: Mapped[str] = mapped_column(
+        Text, nullable=False, default="redact_span"
+    )
+    treatment_fallback: Mapped[str] = mapped_column(
+        Text, nullable=False, default="drop_segment"
     )
 
 

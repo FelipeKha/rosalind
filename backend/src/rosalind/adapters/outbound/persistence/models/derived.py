@@ -16,11 +16,13 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
     Uuid,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from rosalind.adapters.outbound.persistence.models.base import Base, utcnow
@@ -129,4 +131,62 @@ class AttachmentText(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+class Finding(Base):
+    """A verifier verdict linking a segment's text to a protected statement.
+
+    Keyed by ``(text_hash, statement_id)`` so an identical sentence quoted
+    elsewhere inherits the finding (positives propagate; negatives do not).
+    ``segment_id`` is provenance for the segment that produced it. Spans are
+    character offsets into the normalized segment text.
+    """
+
+    __tablename__ = "finding"
+    __table_args__ = (
+        CheckConstraint(
+            "verdict IN ('asserts', 'implies', 'evidence', 'none')",
+            name="ck_finding_verdict",
+        ),
+        UniqueConstraint("text_hash", "statement_id", name="uq_finding_text_statement"),
+        Index("finding_segment_idx", "segment_id"),
+        {"schema": "derived"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    segment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("search.segment.id", ondelete="CASCADE"), nullable=False
+    )
+    text_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    statement_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    subject_matches: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    spans: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
+    raw_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    classifier_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+class FindingOverride(Base):
+    """Owner spot-check correction for one ``(text_hash, statement_id)``.
+
+    ``disabled`` suppresses the finding; otherwise the stored verdict overrides
+    the model. Later verification runs respect it.
+    """
+
+    __tablename__ = "finding_override"
+    __table_args__ = ({"schema": "derived"},)
+
+    text_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    statement_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
     )

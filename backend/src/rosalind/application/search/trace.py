@@ -127,6 +127,9 @@ class TraceSummary:
     scope_fingerprint: str | None = None
     policy_decision: str | None = None
     access_levels: tuple[str, ...] | None = None
+    semantic_set_id: str | None = None
+    semantic_policy_version: int | None = None
+    semantic_levels: tuple[str, ...] | None = None
     lexical_candidate_ids: tuple[uuid.UUID, ...] | None = None
     semantic_candidate_ids: tuple[uuid.UUID, ...] | None = None
     fused_candidate_ids: tuple[uuid.UUID, ...] | None = None
@@ -219,6 +222,19 @@ def _summarize(
         access_levels=(
             plan.access_levels.enabled_names()
             if plan.access_scope is not None
+            else None
+        ),
+        semantic_set_id=(
+            plan.semantic_scope.set_id if plan.semantic_scope is not None else None
+        ),
+        semantic_policy_version=(
+            plan.semantic_scope.policy_version
+            if plan.semantic_scope is not None
+            else None
+        ),
+        semantic_levels=(
+            plan.semantic_levels.enabled_names()
+            if plan.semantic_scope is not None
             else None
         ),
         lexical_candidate_ids=(
