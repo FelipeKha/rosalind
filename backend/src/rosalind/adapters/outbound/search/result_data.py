@@ -22,6 +22,7 @@ from typing import cast
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.search.filters import access_conditions, scope_nums
@@ -76,15 +77,17 @@ class PostgresSearchResultDataRepository:
             ]
             if include_text:
                 base.append(chunk.text_for_display)
+            conditions: list[ColumnElement[bool]] = [
+                chunk.id.in_(chunk_ids),
+                chunk.source_account_num.in_(nums),
+            ]
+            if plan.access_levels.assembly:
+                conditions.extend(access_conditions(plan))
             stmt = (
                 select(*base)
                 .join(message, message.id == chunk.email_id)
                 .outerjoin(attachment, attachment.id == chunk.attachment_id)
-                .where(
-                    chunk.id.in_(chunk_ids),
-                    chunk.source_account_num.in_(nums),
-                    *access_conditions(plan),
-                )
+                .where(*conditions)
             )
             rows = session.execute(stmt).all()
 

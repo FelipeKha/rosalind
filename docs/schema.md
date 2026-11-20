@@ -763,6 +763,18 @@ never edited by hand. Switching the embedding model is additive:
 3. create the HNSW index (if adopted) and switch the `embedding_space` config;
 4. drop the old column once no query references it.
 
+### `search.request_log`
+
+Content-free summary of one completed online search run: the plan fingerprint,
+versions, per-stage counts/flags, timings, and returned IDs. It never holds
+query text, filter values (only names/sizes), or chunk text. Rows cascade-delete
+with the account and are pruned by `search_request_log_retention_days`.
+
+The access-enforcement fields are `agent_id`, `policy_version`,
+`scope_fingerprint`, `policy_decision` (`permit_all` / `scoped` / `deny_all` /
+`error`), and `access_levels` (the enabled stage names). They make degraded-mode
+investigations possible without storing content.
+
 ---
 
 ## `agent` — derived read models

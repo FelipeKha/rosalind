@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -56,6 +56,26 @@ class ParserModelSettings(BaseModel):
     enabled: bool = True
 
 
+class AccessEnforcementLevelSettings(BaseModel):
+    """Per-stage gates for access-policy enforcement.
+
+    Every level defaults to on. Turning a retrieval/metadata level off is a
+    degraded mode: output may still be filtered by ``assembly`` or
+    ``verification``, but ranking, counts or coverage can leak. The master
+    ``access_enforcement_enabled`` switch still gates everything above these.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    lexical: bool = True
+    semantic: bool = True
+    listing: bool = True
+    metadata: bool = True
+    thread: bool = True
+    assembly: bool = True
+    verification: bool = True
+
+
 class PolicySettings(BaseModel):
     """Policy service settings.
 
@@ -75,6 +95,20 @@ class PolicySettings(BaseModel):
     # Gates real access-policy enforcement in the RAG path. When off, search
     # behaves exactly as before. Stored policies are not read or applied.
     access_enforcement_enabled: bool = False
+    access_enforcement_levels: AccessEnforcementLevelSettings = Field(
+        default_factory=AccessEnforcementLevelSettings
+    )
+
+    @model_validator(mode="after")
+    def _validate_access_levels(self) -> PolicySettings:
+        levels = self.access_enforcement_levels
+        if self.access_enforcement_enabled and not (
+            levels.assembly or levels.verification
+        ):
+            raise ValueError(
+                "access enforcement requires assembly or verification to be enabled"
+            )
+        return self
 
     def model_for(self, name: str) -> ParserModelSettings | None:
         for candidate in self.models:

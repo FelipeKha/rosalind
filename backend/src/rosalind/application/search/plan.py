@@ -30,7 +30,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from rosalind.application.authz.models import EffectiveScope
+from rosalind.application.authz.models import (
+    AccessEnforcementLevels,
+    EffectiveScope,
+)
 from rosalind.application.search.request import (
     Direction,
     GroupBy,
@@ -405,6 +408,9 @@ class SearchPlan:
     versions: IndexVersions
     fusion: FusionConfig = FusionConfig()
     access_scope: EffectiveScope | None = None
+    access_levels: AccessEnforcementLevels = field(
+        default_factory=AccessEnforcementLevels
+    )
     cursor: Cursor | None = None
     warnings: tuple[PlanWarning, ...] = ()
     hints: PlanHints = PlanHints()
@@ -541,6 +547,11 @@ class SearchPlan:
             ],
             "access_scope": (
                 self.access_scope.scope_fingerprint
+                if self.access_scope is not None
+                else None
+            ),
+            "access_levels": (
+                list(self.access_levels.enabled_names())
                 if self.access_scope is not None
                 else None
             ),

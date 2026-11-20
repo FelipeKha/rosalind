@@ -43,6 +43,7 @@ class LoggingAudit:
                     "policy_version": event.policy_version,
                     "scope_fingerprint": event.scope_fingerprint,
                     "policy_decision": event.policy_decision,
+                    "access_levels": event.access_levels,
                     "timings_ms": _timings(event),
                 },
             )

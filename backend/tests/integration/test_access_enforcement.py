@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -20,8 +21,15 @@ from rosalind.adapters.outbound.persistence.authz_repository import (
     PostgresAccessPolicyRepository,
     PostgresAccessVerifier,
 )
-from rosalind.adapters.outbound.search.filters import scope_conditions
-from rosalind.application.authz import build_effective_scope
+from rosalind.adapters.outbound.search.filters import (
+    filter_conditions,
+    scope_conditions,
+)
+from rosalind.adapters.outbound.search.search_repository import PostgresSearchRepository
+from rosalind.application.authz import (
+    AccessEnforcementLevels,
+    build_effective_scope,
+)
 from rosalind.application.authz.errors import AccessPolicyError
 from rosalind.application.search import (
     Budgets,
@@ -87,6 +95,7 @@ def _email_and_chunk(
     bcc_handles: tuple[str, ...] = (),
     direction: str = "received",
     sent_at: datetime = SENT_AT,
+    thread_id: uuid.UUID | None = None,
 ):
     message = models.EmailMessage(
         id=uuid.uuid4(),
@@ -98,6 +107,7 @@ def _email_and_chunk(
         subject="subject",
         has_attachments=False,
         is_trash_or_spam=False,
+        thread_id=thread_id,
         parser_version="p/1",
         canonicalizer_version="c/1",
         metadata_={},
@@ -491,3 +501,174 @@ def test_no_policies_is_permit_all(
     migrated_db_session.commit()
     scope = _scope(migrated_engine, account.id)
     assert message.id in _visible(migrated_engine, source, scope)
+
+
+def test_lexical_level_gate_changes_sql(
+    migrated_engine, migrated_uow, migrated_db_session
+) -> None:
+    from tests._account import ensure_account
+
+    account = ensure_account(migrated_uow)
+    source = _source(migrated_db_session, account.id, "in-scope")
+    john = _person_with_addresses(migrated_db_session, JOHN)
+    denied = _email_and_chunk(
+        migrated_db_session, source, from_handles=(JOHN,), to_handles=(MARY,)
+    )
+    visible = _email_and_chunk(
+        migrated_db_session, source, from_handles=(MARY,), to_handles=(MARY,)
+    )
+    _add_policy(
+        migrated_db_session,
+        account.id,
+        effect="deny",
+        roles=["from"],
+        person_id=john.id,
+    )
+    scope = _scope(migrated_engine, account.id)
+    plan = _plan(account.id, source, scope)
+
+    factory = sessionmaker(
+        bind=migrated_engine, autoflush=False, expire_on_commit=False
+    )
+    with factory() as session:
+        filtered = set(
+            session.scalars(
+                select(models.Chunk.email_id).where(
+                    models.Chunk.source_account_id == source.id,
+                    *filter_conditions(plan, apply_access=True),
+                )
+            )
+        )
+        unfiltered = set(
+            session.scalars(
+                select(models.Chunk.email_id).where(
+                    models.Chunk.source_account_id == source.id,
+                    *filter_conditions(plan, apply_access=False),
+                )
+            )
+        )
+
+    assert filtered == {visible.id}
+    assert unfiltered == {denied.id, visible.id}
+
+
+def test_metadata_level_gate_changes_coverage(
+    migrated_engine, migrated_uow, migrated_db_session
+) -> None:
+    from tests._account import ensure_account
+
+    account = ensure_account(migrated_uow)
+    source = _source(migrated_db_session, account.id, "in-scope")
+    john = _person_with_addresses(migrated_db_session, JOHN)
+    _email_and_chunk(
+        migrated_db_session,
+        source,
+        from_handles=(JOHN,),
+        to_handles=(MARY,),
+        sent_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    visible_at = datetime(2026, 3, 1, tzinfo=UTC)
+    _email_and_chunk(
+        migrated_db_session,
+        source,
+        from_handles=(MARY,),
+        to_handles=(MARY,),
+        sent_at=visible_at,
+    )
+    _add_policy(
+        migrated_db_session,
+        account.id,
+        effect="deny",
+        roles=["from"],
+        person_id=john.id,
+    )
+    scope = _scope(migrated_engine, account.id)
+    factory = sessionmaker(
+        bind=migrated_engine, autoflush=False, expire_on_commit=False
+    )
+    repo = PostgresSearchRepository(factory)
+
+    filtered = asyncio.run(
+        repo.get_metadata(frozenset({source.id}), access_scope=scope, apply_access=True)
+    )
+    unfiltered = asyncio.run(
+        repo.get_metadata(
+            frozenset({source.id}), access_scope=scope, apply_access=False
+        )
+    )
+
+    assert filtered.min_sent_at == visible_at
+    assert unfiltered.min_sent_at == datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def test_thread_level_gate_changes_resolution(
+    migrated_engine, migrated_uow, migrated_db_session
+) -> None:
+    from tests._account import ensure_account
+
+    account = ensure_account(migrated_uow)
+    source = _source(migrated_db_session, account.id, "in-scope")
+    john = _person_with_addresses(migrated_db_session, JOHN)
+    thread = models.EmailThread(
+        id=uuid.uuid4(), source_account_id=source.id, root_message_id="root"
+    )
+    migrated_db_session.add(thread)
+    migrated_db_session.flush()
+    denied = _email_and_chunk(
+        migrated_db_session,
+        source,
+        from_handles=(JOHN,),
+        to_handles=(MARY,),
+        thread_id=thread.id,
+    )
+    _add_policy(
+        migrated_db_session,
+        account.id,
+        effect="deny",
+        roles=["from"],
+        person_id=john.id,
+    )
+    scope = _scope(migrated_engine, account.id)
+    search_scope = Scope(
+        account_id=account.id, source_account_ids=frozenset({source.id})
+    )
+    factory = sessionmaker(
+        bind=migrated_engine, autoflush=False, expire_on_commit=False
+    )
+    repo = PostgresSearchRepository(factory)
+
+    assert (
+        asyncio.run(
+            repo.resolve_thread(
+                search_scope,
+                denied.id,
+                access_scope=scope,
+                apply_access=True,
+            )
+        )
+        is None
+    )
+    assert (
+        asyncio.run(
+            repo.resolve_thread(
+                search_scope,
+                denied.id,
+                access_scope=scope,
+                apply_access=False,
+            )
+        )
+        == thread.id
+    )
+
+
+def test_levels_change_the_plan_fingerprint(
+    migrated_engine, migrated_uow, migrated_db_session
+) -> None:
+    from tests._account import ensure_account
+
+    account = ensure_account(migrated_uow)
+    source = _source(migrated_db_session, account.id, "in-scope")
+    scope = _scope(migrated_engine, account.id)
+    plan = _plan(account.id, source, scope)
+    changed = replace(plan, access_levels=AccessEnforcementLevels(lexical=False))
+    assert plan.fingerprint != changed.fingerprint

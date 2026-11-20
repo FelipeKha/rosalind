@@ -48,21 +48,23 @@ class PostgresSearchRepository:
         source_account_ids: frozenset[uuid.UUID],
         *,
         access_scope: EffectiveScope | None = None,
+        apply_access: bool = True,
     ) -> SearchMetadata:
         return await asyncio.to_thread(
-            self._get_metadata, source_account_ids, access_scope
+            self._get_metadata, source_account_ids, access_scope, apply_access
         )
 
     def _get_metadata(
         self,
         source_account_ids: frozenset[uuid.UUID],
         access_scope: EffectiveScope | None,
+        apply_access: bool,
     ) -> SearchMetadata:
         chunk = models.Chunk
         with self._factory() as session:
             scope = and_(
                 chunk.source_account_id.in_(source_account_ids),
-                *scope_conditions(access_scope),
+                *(scope_conditions(access_scope) if apply_access else []),
             )
             bounds = session.execute(
                 select(func.min(chunk.sent_at), func.max(chunk.sent_at)).where(scope)
@@ -170,9 +172,10 @@ class PostgresSearchRepository:
         message_id: uuid.UUID,
         *,
         access_scope: EffectiveScope | None = None,
+        apply_access: bool = True,
     ) -> uuid.UUID | None:
         return await asyncio.to_thread(
-            self._resolve_thread, scope, message_id, access_scope
+            self._resolve_thread, scope, message_id, access_scope, apply_access
         )
 
     def _resolve_thread(
@@ -180,12 +183,13 @@ class PostgresSearchRepository:
         scope: Scope,
         message_id: uuid.UUID,
         access_scope: EffectiveScope | None,
+        apply_access: bool,
     ) -> uuid.UUID | None:
         base = select(models.EmailMessage.thread_id).where(
             models.EmailMessage.id == message_id,
             models.EmailMessage.source_account_id.in_(scope.source_account_ids),
         )
-        if access_scope is not None:
+        if access_scope is not None and apply_access:
             base = (
                 base.join(models.Chunk, models.Chunk.email_id == models.EmailMessage.id)
                 .where(*scope_conditions(access_scope))

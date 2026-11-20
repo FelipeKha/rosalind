@@ -28,6 +28,59 @@ from rosalind.policy.domain.spec import AccessPolicySpec
 _ALL_ROLES = frozenset({"from", "to", "cc", "bcc"})
 
 
+@dataclass(frozen=True, slots=True)
+class AccessEnforcementLevels:
+    """Per-stage enforcement switches carried on the search plan.
+
+    Configuration is mapped into this plain type at the composition boundary so
+    the application layer never imports settings. A disabled level omits the
+    access predicate at that stage; it does not skip the operation.
+    """
+
+    lexical: bool = True
+    semantic: bool = True
+    listing: bool = True
+    metadata: bool = True
+    thread: bool = True
+    assembly: bool = True
+    verification: bool = True
+
+    @property
+    def output_safe(self) -> bool:
+        """Whether at least one output safety net is enabled."""
+        return self.assembly or self.verification
+
+    def enabled_names(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name in (
+                "lexical",
+                "semantic",
+                "listing",
+                "metadata",
+                "thread",
+                "assembly",
+                "verification",
+            )
+            if getattr(self, name)
+        )
+
+    def disabled_names(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name in (
+                "lexical",
+                "semantic",
+                "listing",
+                "metadata",
+                "thread",
+                "assembly",
+                "verification",
+            )
+            if not getattr(self, name)
+        )
+
+
 class PolicyDecision(StrEnum):
     PERMIT_ALL = "permit_all"
     SCOPED = "scoped"

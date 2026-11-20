@@ -47,13 +47,15 @@ def scope_nums(session: Session, source_account_ids: frozenset[uuid.UUID]) -> li
     )
 
 
-def filter_conditions(plan: SearchPlan) -> list[ColumnElement[bool]]:
+def filter_conditions(
+    plan: SearchPlan, *, apply_access: bool = True
+) -> list[ColumnElement[bool]]:
     """Render the resolved filters as SQLAlchemy predicates.
 
     Lists are OR within a field; fields are AND. ``sender_handle`` is a scalar
     equality against the ``senders`` set; the array columns (recipients,
     participants, tags) use overlap. Excluded tags and the default trash/spam
-    exclusion round it out.
+    exclusion round it out. ``apply_access`` is the per-leg enforcement gate.
     """
     chunk = models.Chunk
     filters = plan.filters
@@ -86,7 +88,8 @@ def filter_conditions(plan: SearchPlan) -> list[ColumnElement[bool]]:
     if not filters.include_trash_spam:
         conditions.append(chunk.is_trash_or_spam.is_(False))
 
-    conditions.extend(access_conditions(plan))
+    if apply_access:
+        conditions.extend(access_conditions(plan))
     return cast(list[ColumnElement[bool]], conditions)
 
 

@@ -283,6 +283,7 @@ class SearchRequestLog(Base):
     policy_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     scope_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     policy_decision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_levels: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )

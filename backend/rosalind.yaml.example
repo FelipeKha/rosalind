@@ -25,6 +25,14 @@ policy:
   default_model: qwen3.5-9b
   enforcement_live: false
   access_enforcement_enabled: false
+  access_enforcement_levels:
+    lexical: true
+    semantic: true
+    listing: true
+    metadata: true
+    thread: true
+    assembly: true
+    verification: true
   draft_ttl_seconds: 3600
   models:
     - name: qwen3.5-9b

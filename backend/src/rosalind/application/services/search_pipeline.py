@@ -188,14 +188,22 @@ class SearchPipeline:
         plan: SearchPlan,
         data: tuple[SearchResultData, ...],
     ) -> tuple[SearchResultData, ...]:
-        if self._access_verifier is None or plan.access_scope is None:
+        if (
+            self._access_verifier is None
+            or plan.access_scope is None
+            or not plan.access_levels.verification
+        ):
             return data
         item_ids = tuple({record.item_id for record in data})
         visible = await self._visible(plan, item_ids)
         return tuple(record for record in data if record.item_id in visible)
 
     async def _verify_list(self, plan: SearchPlan, listed: ListResult) -> ListResult:
-        if self._access_verifier is None or plan.access_scope is None:
+        if (
+            self._access_verifier is None
+            or plan.access_scope is None
+            or not plan.access_levels.verification
+        ):
             return listed
         item_ids = tuple({item.item_id for item in listed.items})
         visible = await self._visible(plan, item_ids)

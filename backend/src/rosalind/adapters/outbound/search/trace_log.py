@@ -87,6 +87,11 @@ class SearchTraceRecorder:
             policy_version=summary.policy_version,
             scope_fingerprint=summary.scope_fingerprint,
             policy_decision=summary.policy_decision,
+            access_levels=(
+                list(summary.access_levels)
+                if summary.access_levels is not None
+                else None
+            ),
         )
         with factory() as session:
             session.add(row)
@@ -145,4 +150,7 @@ def _log_fields(summary: TraceSummary) -> dict[str, Any]:
         "policy_version": summary.policy_version,
         "scope_fingerprint": summary.scope_fingerprint,
         "policy_decision": summary.policy_decision,
+        "access_levels": (
+            list(summary.access_levels) if summary.access_levels is not None else None
+        ),
     }

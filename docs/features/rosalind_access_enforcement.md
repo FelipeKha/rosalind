@@ -22,6 +22,15 @@ Companion to `rosalind_policy_engine_rag_filtering_v7.md` and `rosalind_policy_i
 > `0023` adds the policy audit columns; the policy chain adds
 > `authz.policy_version` and `audit.security_event`. If the policy tables are
 > missing or unreadable, scoped searches fail closed.
+>
+> **Per-level gates.** `policy.access_enforcement_levels` controls each stage:
+> `lexical`, `semantic`, `listing`, `metadata`, `thread`, `assembly` and
+> `verification`. All default to `true`. Disabling a retrieval, metadata or
+> thread level is a degraded mode: output may still be filtered by `assembly`
+> or `verification`, but ranking, counts, coverage or existence signals can
+> leak. At least one of `assembly`/`verification` must remain enabled when the
+> master flag is on, or the process refuses to start. The level set is part of
+> the plan fingerprint and is recorded in `search.request_log.access_levels`.
 
 ---
 

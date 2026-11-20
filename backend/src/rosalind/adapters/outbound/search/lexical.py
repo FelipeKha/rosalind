@@ -123,7 +123,9 @@ class ParadeDbLexicalRetriever:
             cast(ColumnElement[bool], text("text_for_index @@@ :q")),
             chunk.source_account_num.in_(nums),
         ]
-        conditions.extend(filter_conditions(plan))
+        conditions.extend(
+            filter_conditions(plan, apply_access=plan.access_levels.lexical)
+        )
 
         limit = plan.budgets.lexical_k + 1
         stmt = (

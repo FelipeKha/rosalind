@@ -293,5 +293,30 @@ def test_search_access_enforcement_flag(migrated_engine: Engine, monkeypatch) ->
         )
         assert on is not None
         assert on.results == []
+
+        levels = config.settings.policy.access_enforcement_levels
+        for name in (
+            "lexical",
+            "semantic",
+            "listing",
+            "metadata",
+            "thread",
+            "assembly",
+        ):
+            monkeypatch.setattr(levels, name, False)
+        monkeypatch.setattr(levels, "verification", True)
+        verification_only = asyncio.run(
+            mcp_server.search(SearchEmailsInput(query="canary", mode="lexical"))
+        )
+        assert verification_only is not None
+        assert verification_only.results == []
+
+        monkeypatch.setattr(levels, "verification", False)
+        monkeypatch.setattr(levels, "assembly", True)
+        assembly_only = asyncio.run(
+            mcp_server.search(SearchEmailsInput(query="canary", mode="lexical"))
+        )
+        assert assembly_only is not None
+        assert assembly_only.results == []
     finally:
         auth_context_var.reset(reset)

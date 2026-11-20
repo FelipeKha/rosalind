@@ -103,7 +103,7 @@ def _list_conditions(
         chunk.source_account_num.in_(nums),
         chunk.chunk_kind == ChunkKind.EMAIL_BODY.value,
         chunk.seq == 0,
-        *filter_conditions(plan),
+        *filter_conditions(plan, apply_access=plan.access_levels.listing),
     ]
 
 

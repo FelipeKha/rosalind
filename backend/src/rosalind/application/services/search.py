@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from rosalind.application.authz.errors import AccessPolicyError
 from rosalind.application.authz.evaluator import build_effective_scope
 from rosalind.application.authz.models import (
+    AccessEnforcementLevels,
     EffectiveScope,
     PolicyDecision,
     deny_all_scope,
@@ -106,6 +107,7 @@ class PrepareContext:
     # Owner transports (REST/eval) leave it false and stay unscoped.
     enforce_access: bool = False
     agent_id: uuid.UUID | None = None
+    access_levels: AccessEnforcementLevels | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +226,7 @@ class SearchService:
             account_id=context.account_id, source_account_ids=frozenset(effective)
         )
 
+        levels = context.access_levels or AccessEnforcementLevels()
         access_scope: EffectiveScope | None = None
         if context.enforce_access:
             try:
@@ -246,6 +249,7 @@ class SearchService:
                     context,
                     scope=scope,
                     access_scope=deny_all_scope(context.account_id),
+                    access_levels=levels,
                     reason=ShortCircuitReason.EMPTY_SCOPE,
                     explanation="no data is available for this request",
                     filters=None,
@@ -269,6 +273,7 @@ class SearchService:
                     context,
                     scope=scope,
                     access_scope=access_scope,
+                    access_levels=levels,
                     reason=ShortCircuitReason.EMPTY_SCOPE,
                     explanation="no data is available for this request",
                     filters=None,
@@ -316,12 +321,16 @@ class SearchService:
 
         resolve_started = time.perf_counter()
         thread_id, metadata, resolved_lookups, embed_result = await asyncio.gather(
-            self._resolve_thread(scope, request, access_scope),
+            self._resolve_thread(
+                scope, request, access_scope, apply_access=levels.thread
+            ),
             (
                 self._metadata.get_metadata(scope.source_account_ids)
                 if access_scope is None
                 else self._metadata.get_metadata(
-                    scope.source_account_ids, access_scope=access_scope
+                    scope.source_account_ids,
+                    access_scope=access_scope,
+                    apply_access=levels.metadata,
                 )
             ),
             self._resolve_lookups(scope, request),
@@ -469,6 +478,7 @@ class SearchService:
             ),
             fusion=self._config.fusion,
             access_scope=access_scope,
+            access_levels=levels,
             cursor=cursor,
             warnings=tuple(warnings),
             timings=PrepareTimings(
@@ -497,6 +507,7 @@ class SearchService:
                 None,
                 plan.timings,
                 access_scope=access_scope,
+                access_levels=levels if access_scope is not None else None,
             )
         )
         return plan
@@ -610,6 +621,8 @@ class SearchService:
         scope: Scope,
         request: SearchRequest,
         access_scope: EffectiveScope | None,
+        *,
+        apply_access: bool = True,
     ):
         if request.filters.thread_of is None:
             return None
@@ -619,6 +632,7 @@ class SearchService:
             scope,
             request.filters.thread_of,
             access_scope=access_scope,
+            apply_access=apply_access,
         )
 
     async def _resolve_lookups(self, scope: Scope, request: SearchRequest):
@@ -710,6 +724,7 @@ class SearchService:
         resolved_entities: tuple[ResolvedEntity, ...] = (),
         warnings: tuple[PlanWarning, ...] = (),
         access_scope: EffectiveScope | None = None,
+        access_levels: AccessEnforcementLevels | None = None,
     ) -> ShortCircuit:
         result = ShortCircuit(
             context=request_context,
@@ -738,6 +753,7 @@ class SearchService:
                 reason,
                 timings,
                 access_scope=access_scope,
+                access_levels=access_levels,
             )
         )
         return result
@@ -987,6 +1003,7 @@ def _audit_event(
     timings: PrepareTimings | None,
     *,
     access_scope: EffectiveScope | None = None,
+    access_levels: AccessEnforcementLevels | None = None,
 ) -> AuditEvent:
     return AuditEvent(
         request_id=request_context.request_id,
@@ -1014,6 +1031,9 @@ def _audit_event(
         ),
         policy_decision=(
             access_scope.decision.value if access_scope is not None else None
+        ),
+        access_levels=(
+            access_levels.enabled_names() if access_levels is not None else None
         ),
     )
 

@@ -324,7 +324,11 @@ on MCP `search` when `policy.access_enforcement_enabled` is true (default:
 false). The scope is loaded per request from the active policy revisions and
 compiled into every retrieval leg; L2 independently re-checks returned items
 with the reference evaluator, and policy decisions are recorded in
-`search.request_log`. Enforcement is `all_agents` only until the agent registry
+`search.request_log`. Each stage can be gated independently under
+`policy.access_enforcement_levels` (`lexical`, `semantic`, `listing`,
+`metadata`, `thread`, `assembly`, `verification`); all default to true, and at
+least one of `assembly`/`verification` must stay on when enforcement is enabled.
+Enforcement is `all_agents` only until the agent registry
 lands. When an account has no permit policies the scope is **implicit
 permit-all** (deny rules still apply), which deliberately deviates from the
 design document's default-deny to avoid a baseline-grant migration for existing

@@ -137,6 +137,7 @@ class SearchMetadataPort(Protocol):
         source_account_ids: frozenset[uuid.UUID],
         *,
         access_scope: EffectiveScope | None = None,
+        apply_access: bool = True,
     ) -> SearchMetadata:
         """Date coverage and vocabulary for the visible scope.
 
@@ -165,6 +166,7 @@ class ThreadResolverPort(Protocol):
         message_id: uuid.UUID,
         *,
         access_scope: EffectiveScope | None = None,
+        apply_access: bool = True,
     ) -> uuid.UUID | None:
         """The current thread of a visible message, or ``None``.
 
@@ -305,6 +307,7 @@ class AuditEvent:
     policy_version: int | None = None
     scope_fingerprint: str | None = None
     policy_decision: str | None = None
+    access_levels: tuple[str, ...] | None = None
 
 
 class AuditPort(Protocol):

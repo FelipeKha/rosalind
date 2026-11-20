@@ -9,6 +9,7 @@ from rosalind.application.authz.evaluator import build_effective_scope
 from rosalind.application.authz.models import (
     AccessAttributes,
     AccessClause,
+    AccessEnforcementLevels,
     EffectiveScope,
     LoadedAccessPolicies,
     LoadedPolicy,
@@ -22,6 +23,7 @@ from rosalind.application.authz.models import (
 __all__ = [
     "AccessAttributes",
     "AccessClause",
+    "AccessEnforcementLevels",
     "EffectiveScope",
     "LoadedAccessPolicies",
     "LoadedPolicy",

@@ -7,6 +7,7 @@ MCP tool calls instead of HTTP requests. It reuses the backend's single
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -30,6 +31,7 @@ from rosalind.adapters.inbound.mcp.search import (
 from rosalind.adapters.inbound.mcp.verifier import KeycloakMCPTokenVerifier
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.application.authz import AccessEnforcementLevels
 from rosalind.application.read_models import (
     CurrentAccount,
     PersonProfile,
@@ -77,11 +79,13 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
     account_id, client_id, zoneinfo = auth
     request = to_search_request(input)
     service = composition.build_search_service(SessionLocal)
+    enforce_access = config.settings.policy.access_enforcement_enabled
     context = PrepareContext(
         account_id=account_id,
         client_id=client_id,
         timezone=zoneinfo,
-        enforce_access=config.settings.policy.access_enforcement_enabled,
+        enforce_access=enforce_access,
+        access_levels=_access_levels() if enforce_access else None,
     )
     prepared = await service.prepare(context, request)
     if isinstance(prepared, ShortCircuit):
@@ -123,6 +127,20 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
             account_id, person_id
         )
     return _to_result(profile) if profile is not None else None
+
+
+def _access_levels() -> AccessEnforcementLevels:
+    """Map configuration onto the application's plain level dataclass."""
+    levels = config.settings.policy.access_enforcement_levels
+    return AccessEnforcementLevels(
+        lexical=levels.lexical,
+        semantic=levels.semantic,
+        listing=levels.listing,
+        metadata=levels.metadata,
+        thread=levels.thread,
+        assembly=levels.assembly,
+        verification=levels.verification,
+    )
 
 
 def _current_account_id() -> uuid.UUID | None:
@@ -218,6 +236,13 @@ def main() -> None:
         config.settings.log_format,
         log_query_text=config.settings.log_query_text,
     )
+    if config.settings.policy.access_enforcement_enabled:
+        disabled = _access_levels().disabled_names()
+        if disabled:
+            logging.getLogger(__name__).warning(
+                "access_enforcement_degraded",
+                extra={"disabled_levels": list(disabled)},
+            )
     composition.warm_search_models()
     if config.settings.mcp_transport == "streamable-http":
         mcp.run(
