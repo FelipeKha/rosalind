@@ -57,7 +57,13 @@ from rosalind.security import decrypt_secret, encrypt_secret
 
 
 class PolicyBase(DeclarativeBase):
-    pass
+    """Metadata for the tables the policy service owns.
+
+    Cross-service FKs to ``account.id`` are declared in the Alembic migration,
+    not here: ``account`` belongs to the data backend's metadata, and
+    SQLAlchemy cannot resolve a ``ForeignKey`` across metadata objects during
+    ORM flushes. The database still enforces the constraint.
+    """
 
 
 class PolicyModel(PolicyBase):
@@ -68,9 +74,7 @@ class PolicyModel(PolicyBase):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    account_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("account.id", ondelete="CASCADE"), nullable=False
-    )
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False, default="")
     principal_kind: Mapped[str] = mapped_column(Text, nullable=False)
     policy_type: Mapped[str] = mapped_column(Text, nullable=False)
@@ -141,9 +145,7 @@ class PolicyDraftModel(PolicyBase):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    account_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("account.id", ondelete="CASCADE"), nullable=False
-    )
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     payload_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -161,9 +163,7 @@ class ProtectedStatementModel(PolicyBase):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    account_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("account.id", ondelete="CASCADE"), nullable=False
-    )
+    account_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     canonical_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     subject: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
