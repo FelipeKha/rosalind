@@ -1,6 +1,3 @@
-
-
-
 Thoughts:
 Define freedom, privacy, democracy, data - we need a lexi
 

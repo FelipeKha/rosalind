@@ -122,6 +122,14 @@ class TraceSummary:
     timings_ms: dict[str, float]
     returned_chunk_ids: tuple[uuid.UUID, ...]
     returned_item_ids: tuple[uuid.UUID, ...]
+    agent_id: uuid.UUID | None = None
+    policy_version: int | None = None
+    scope_fingerprint: str | None = None
+    policy_decision: str | None = None
+    access_levels: tuple[str, ...] | None = None
+    semantic_set_id: str | None = None
+    semantic_policy_version: int | None = None
+    semantic_levels: tuple[str, ...] | None = None
     lexical_candidate_ids: tuple[uuid.UUID, ...] | None = None
     semantic_candidate_ids: tuple[uuid.UUID, ...] | None = None
     fused_candidate_ids: tuple[uuid.UUID, ...] | None = None
@@ -199,6 +207,36 @@ def _summarize(
         timings_ms=dict(trace.timings_ms),
         returned_chunk_ids=tuple(record.chunk_id for record in response.results),
         returned_item_ids=tuple(record.item_id for record in response.results),
+        agent_id=plan.context.agent_id,
+        policy_version=(
+            plan.access_scope.policy_version if plan.access_scope is not None else None
+        ),
+        scope_fingerprint=(
+            plan.access_scope.scope_fingerprint
+            if plan.access_scope is not None
+            else None
+        ),
+        policy_decision=(
+            plan.access_scope.decision.value if plan.access_scope is not None else None
+        ),
+        access_levels=(
+            plan.access_levels.enabled_names()
+            if plan.access_scope is not None
+            else None
+        ),
+        semantic_set_id=(
+            plan.semantic_scope.set_id if plan.semantic_scope is not None else None
+        ),
+        semantic_policy_version=(
+            plan.semantic_scope.policy_version
+            if plan.semantic_scope is not None
+            else None
+        ),
+        semantic_levels=(
+            plan.semantic_levels.enabled_names()
+            if plan.semantic_scope is not None
+            else None
+        ),
         lexical_candidate_ids=(
             tuple(hit.chunk_id for hit in lexical.hits)
             if keep_candidates and lexical is not None

@@ -168,10 +168,12 @@ Bandit · pip-audit · Gitleaks · Hadolint · Trivy · ShellCheck · shfmt
 structlog
 ```
 
-The backend is a single application (no microservices) for now. The CLI is
-a separate client project (may use Typer) and is not a backend dependency.
-Rust and Celery/Redis are deliberately deferred until a measured bottleneck
-or workload requires them.
+The data backend is a single application. The policy service (§6.5) is the
+one deliberate second deployable: it has its own process, API and database
+schemas, and never imports the RAG/search stack. The CLI is a separate client
+project (may use Typer) and is not a backend dependency. Rust and
+Celery/Redis are deliberately deferred until a measured bottleneck or
+workload requires them.
 
 External services: PostgreSQL, object storage (SeaweedFS in the compose
 stack), and Keycloak (identity provider, with its own dedicated Postgres
@@ -294,6 +296,49 @@ Rules:
   production setting.
 
 Full details, configuration, and operational notes: [`docs/auth.md`](docs/auth.md).
+
+### 6.5 Policy service
+
+The policy engine is a **separate deployable** that interprets owner prompts
+into confirmed policies. It shares PostgreSQL with the data backend but owns
+the `authz`, `semantic` and `audit` schemas and has its own Alembic version
+table. It is reachable only by the owner (via the `rosalind` CLI); there is no
+MCP surface.
+
+Boundary rules:
+
+* The policy service must not import `application.search`,
+  `adapters.inbound.mcp`, `adapters.outbound.search`, eval, or the ingestion
+  adapters. A unit test enforces this.
+* It reads only directory/account metadata (`core.person`,
+  `core.person_email`, `source_account`, and participant addresses for
+  counts). It never reads email bodies or search chunks.
+* It produces `PolicySpec` revisions and protected statements. Enforcement
+  (access filtering and the semantic pipeline) is a later phase and lives in
+  the RAG path, never here.
+* Phase 1 policies are **generic** (`principal: all_agents`). Agent-specific
+  scoping is a later schema extension.
+
+**Phase 2 status (access enforcement).** Confirmed access policies are enforced
+on MCP `search` when `policy.access_enforcement_enabled` is true (default:
+false). The scope is loaded per request from the active policy revisions and
+compiled into every retrieval leg; L2 independently re-checks returned items
+with the reference evaluator, and policy decisions are recorded in
+`search.request_log`. Each stage can be gated independently under
+`policy.access_enforcement_levels` (`lexical`, `semantic`, `listing`,
+`metadata`, `thread`, `assembly`, `verification`); all default to true, and at
+least one of `assembly`/`verification` must stay on when enforcement is enabled.
+Enforcement is `all_agents` only until the agent registry
+lands. When an account has no permit policies the scope is **implicit
+permit-all** (deny rules still apply), which deliberately deviates from the
+design document's default-deny to avoid a baseline-grant migration for existing
+agents. L3 restricted roles and RLS are deferred. Confidentiality policies are
+still recorded but not enforced.
+
+Phase 1 recorded rules only. The current interpreter details are in
+[`docs/features/rosalind_policy_interpreter.md`](docs/features/rosalind_policy_interpreter.md)
+and the enforcement deviations are tracked in
+[`docs/features/rosalind_access_enforcement.md`](docs/features/rosalind_access_enforcement.md).
 
 ---
 

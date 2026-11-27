@@ -13,10 +13,12 @@ import uuid
 from collections.abc import Callable
 from typing import cast
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from rosalind.adapters.outbound.persistence import models
+from rosalind.adapters.outbound.search.filters import scope_conditions
+from rosalind.application.authz.models import EffectiveScope
 from rosalind.application.search import ResolvedEntity, Scope
 from rosalind.application.search.ports import SearchMetadata
 
@@ -42,14 +44,28 @@ class PostgresSearchRepository:
         return frozenset(ids)
 
     async def get_metadata(
-        self, source_account_ids: frozenset[uuid.UUID]
+        self,
+        source_account_ids: frozenset[uuid.UUID],
+        *,
+        access_scope: EffectiveScope | None = None,
+        apply_access: bool = True,
     ) -> SearchMetadata:
-        return await asyncio.to_thread(self._get_metadata, source_account_ids)
+        return await asyncio.to_thread(
+            self._get_metadata, source_account_ids, access_scope, apply_access
+        )
 
-    def _get_metadata(self, source_account_ids: frozenset[uuid.UUID]) -> SearchMetadata:
+    def _get_metadata(
+        self,
+        source_account_ids: frozenset[uuid.UUID],
+        access_scope: EffectiveScope | None,
+        apply_access: bool,
+    ) -> SearchMetadata:
         chunk = models.Chunk
         with self._factory() as session:
-            scope = chunk.source_account_id.in_(source_account_ids)
+            scope = and_(
+                chunk.source_account_id.in_(source_account_ids),
+                *(scope_conditions(access_scope) if apply_access else []),
+            )
             bounds = session.execute(
                 select(func.min(chunk.sent_at), func.max(chunk.sent_at)).where(scope)
             ).one()
@@ -151,15 +167,33 @@ class PostgresSearchRepository:
         )
 
     async def resolve_thread(
-        self, scope: Scope, message_id: uuid.UUID
+        self,
+        scope: Scope,
+        message_id: uuid.UUID,
+        *,
+        access_scope: EffectiveScope | None = None,
+        apply_access: bool = True,
     ) -> uuid.UUID | None:
-        return await asyncio.to_thread(self._resolve_thread, scope, message_id)
+        return await asyncio.to_thread(
+            self._resolve_thread, scope, message_id, access_scope, apply_access
+        )
 
-    def _resolve_thread(self, scope: Scope, message_id: uuid.UUID) -> uuid.UUID | None:
-        with self._factory() as session:
-            return session.scalar(
-                select(models.EmailMessage.thread_id).where(
-                    models.EmailMessage.id == message_id,
-                    models.EmailMessage.source_account_id.in_(scope.source_account_ids),
-                )
+    def _resolve_thread(
+        self,
+        scope: Scope,
+        message_id: uuid.UUID,
+        access_scope: EffectiveScope | None,
+        apply_access: bool,
+    ) -> uuid.UUID | None:
+        base = select(models.EmailMessage.thread_id).where(
+            models.EmailMessage.id == message_id,
+            models.EmailMessage.source_account_id.in_(scope.source_account_ids),
+        )
+        if access_scope is not None and apply_access:
+            base = (
+                base.join(models.Chunk, models.Chunk.email_id == models.EmailMessage.id)
+                .where(*scope_conditions(access_scope))
+                .limit(1)
             )
+        with self._factory() as session:
+            return session.scalar(base)

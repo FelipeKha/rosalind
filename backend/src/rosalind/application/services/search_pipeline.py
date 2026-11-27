@@ -19,9 +19,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from dataclasses import replace
 
+from rosalind.application.authz.ports import SecurityEventPort
 from rosalind.application.search.assemble import (
+    ListResult,
+    SearchResultData,
     assemble_list,
     assemble_ranked,
 )
@@ -34,6 +38,7 @@ from rosalind.application.search.plan import (
     WarningCode,
 )
 from rosalind.application.search.ports import (
+    AccessVerifierPort,
     ChunkTextPort,
     CursorCodecPort,
     LexicalRetrieverPort,
@@ -74,6 +79,8 @@ class SearchPipeline:
         rerank_config: RerankConfig | None = None,
         token_counter: TokenCounter | None = None,
         trace_recorder: TraceRecorderPort | None = None,
+        access_verifier: AccessVerifierPort | None = None,
+        security_events: SecurityEventPort | None = None,
     ) -> None:
         self._lexical = lexical
         self._semantic = semantic
@@ -86,6 +93,8 @@ class SearchPipeline:
         self._rerank_config = rerank_config
         self._token_counter = token_counter
         self._trace_recorder = trace_recorder
+        self._access_verifier = access_verifier
+        self._security_events = security_events
 
     async def run(
         self,
@@ -119,6 +128,7 @@ class SearchPipeline:
             chunk_ids,
             include_text=plan.presentation.view is ResultView.SNIPPET,
         )
+        data = await self._verify_results(plan, data)
         timings["results_ms"] = (time.perf_counter() - results_started) * 1000
 
         assemble_started = time.perf_counter()
@@ -155,6 +165,7 @@ class SearchPipeline:
     ) -> SearchTrace:
         list_started = time.perf_counter()
         listed = await self._list.list(plan)
+        listed = await self._verify_list(plan, listed)
         timings["list_ms"] = (time.perf_counter() - list_started) * 1000
         response = assemble_list(
             plan,
@@ -171,6 +182,80 @@ class SearchPipeline:
         )
         await self._record(trace)
         return trace
+
+    async def _verify_results(
+        self,
+        plan: SearchPlan,
+        data: tuple[SearchResultData, ...],
+    ) -> tuple[SearchResultData, ...]:
+        if (
+            self._access_verifier is None
+            or plan.access_scope is None
+            or not plan.access_levels.verification
+        ):
+            return data
+        item_ids = tuple({record.item_id for record in data})
+        visible = await self._visible(plan, item_ids)
+        return tuple(record for record in data if record.item_id in visible)
+
+    async def _verify_list(self, plan: SearchPlan, listed: ListResult) -> ListResult:
+        if (
+            self._access_verifier is None
+            or plan.access_scope is None
+            or not plan.access_levels.verification
+        ):
+            return listed
+        item_ids = tuple({item.item_id for item in listed.items})
+        visible = await self._visible(plan, item_ids)
+        items = tuple(item for item in listed.items if item.item_id in visible)
+        dropped = len(listed.items) - len(items)
+        return ListResult(items=items, total=max(0, listed.total - dropped))
+
+    async def _visible(
+        self, plan: SearchPlan, item_ids: tuple[uuid.UUID, ...]
+    ) -> frozenset[uuid.UUID]:
+        verifier = self._access_verifier
+        if verifier is None:
+            return frozenset(item_ids)
+        try:
+            visible = await verifier.visible_item_ids(plan, item_ids)
+        except Exception:  # noqa: BLE001 - fail closed on verification errors
+            await self._record_security_event(
+                plan,
+                event="access_verification_failed",
+                detail={"candidates": len(item_ids)},
+            )
+            return frozenset()
+
+        dropped = len(set(item_ids) - visible)
+        if dropped:
+            await self._record_security_event(
+                plan,
+                event="access_verification_dropped",
+                detail={"dropped": dropped},
+            )
+        return visible
+
+    async def _record_security_event(
+        self,
+        plan: SearchPlan,
+        *,
+        event: str,
+        detail: dict[str, object] | None = None,
+    ) -> None:
+        if self._security_events is None:
+            return
+        try:
+            await self._security_events.record(
+                account_id=plan.scope.account_id,
+                request_id=plan.context.request_id,
+                event=event,
+                detail=detail,
+            )
+        except Exception:
+            logging.getLogger("rosalind.search.audit").warning(
+                "security_event_record_failed", exc_info=True
+            )
 
     async def _record(self, trace: SearchTrace) -> None:
         """Best-effort summary recording. Never fails the search."""

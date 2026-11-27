@@ -35,9 +35,21 @@ serve:
 mcp-serve:
     uv run rosalind-mcp
 
+# Start the policy service
+policy-serve:
+    uv run rosalind-policy
+
 # Apply database migrations
 migrate:
     uv run alembic upgrade head
+
+# Apply policy service migrations
+policy-migrate:
+    uv run alembic -c alembic-policy.ini upgrade head
+
+# Generate a new policy service migration
+policy-revision *ARGS:
+    uv run alembic -c alembic-policy.ini revision --autogenerate {{ARGS}}
 
 # Generate a new database migration
 revision *ARGS:

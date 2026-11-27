@@ -7,6 +7,7 @@ MCP tool calls instead of HTTP requests. It reuses the backend's single
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -30,6 +31,10 @@ from rosalind.adapters.inbound.mcp.search import (
 from rosalind.adapters.inbound.mcp.verifier import KeycloakMCPTokenVerifier
 from rosalind.adapters.outbound.persistence.session import SessionLocal
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.application.authz import (
+    AccessEnforcementLevels,
+    SemanticEnforcementLevels,
+)
 from rosalind.application.read_models import (
     CurrentAccount,
     PersonProfile,
@@ -68,7 +73,8 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
     Filters are ANDed across fields; lists within a field are ORed. Prepare
     validates and normalizes the request into a search plan (or a short circuit
     when nothing can match); the ranked or list strategy then retrieves, fuses,
-    reranks, and assembles a bounded page of results.
+    reranks, and assembles a bounded page of results. Results may omit items
+    that the owner's privacy policy hides from this agent.
     """
     auth = _auth_context()
     if auth is None:
@@ -76,8 +82,15 @@ async def search(input: SearchEmailsInput) -> SearchResult | None:
     account_id, client_id, zoneinfo = auth
     request = to_search_request(input)
     service = composition.build_search_service(SessionLocal)
+    enforce_access = config.settings.policy.access_enforcement_enabled
+    enforce_semantic = config.settings.policy.semantic_enforcement_enabled
     context = PrepareContext(
-        account_id=account_id, client_id=client_id, timezone=zoneinfo
+        account_id=account_id,
+        client_id=client_id,
+        timezone=zoneinfo,
+        enforce_access=enforce_access,
+        access_levels=_access_levels() if enforce_access else None,
+        semantic_levels=_semantic_levels() if enforce_semantic else None,
     )
     prepared = await service.prepare(context, request)
     if isinstance(prepared, ShortCircuit):
@@ -119,6 +132,42 @@ def get_person(person_id: uuid.UUID) -> PersonProfileResult | None:
             account_id, person_id
         )
     return _to_result(profile) if profile is not None else None
+
+
+def _access_levels() -> AccessEnforcementLevels:
+    """Map configuration onto the application's plain level dataclass."""
+    levels = config.settings.policy.access_enforcement_levels
+    return AccessEnforcementLevels(
+        lexical=levels.lexical,
+        semantic=levels.semantic,
+        listing=levels.listing,
+        metadata=levels.metadata,
+        thread=levels.thread,
+        assembly=levels.assembly,
+        verification=levels.verification,
+    )
+
+
+def _semantic_levels() -> SemanticEnforcementLevels:
+    """Map configuration onto the application's plain level dataclass."""
+    levels = config.settings.policy.semantic_enforcement_levels
+    return SemanticEnforcementLevels(
+        candidate_generation=levels.candidate_generation,
+        verification=levels.verification,
+        sanitization=levels.sanitization,
+        lexical=levels.lexical,
+        semantic=levels.semantic,
+        listing=levels.listing,
+        metadata=levels.metadata,
+        thread=levels.thread,
+        rerank=levels.rerank,
+        assembly=levels.assembly,
+        jit=levels.jit,
+        final_gate=levels.final_gate,
+        derived=levels.derived,
+        term_features=levels.term_features,
+        quoted_copy=levels.quoted_copy,
+    )
 
 
 def _current_account_id() -> uuid.UUID | None:
@@ -214,6 +263,28 @@ def main() -> None:
         config.settings.log_format,
         log_query_text=config.settings.log_query_text,
     )
+    if config.settings.policy.access_enforcement_enabled:
+        disabled = _access_levels().disabled_names()
+        if disabled:
+            logging.getLogger(__name__).warning(
+                "access_enforcement_degraded",
+                extra={"disabled_levels": list(disabled)},
+            )
+    if config.settings.policy.semantic_enforcement_enabled:
+        semantic_levels = _semantic_levels()
+        disabled = semantic_levels.disabled_names()
+        if disabled:
+            logging.getLogger(__name__).warning(
+                "semantic_enforcement_degraded",
+                extra={"disabled_levels": list(disabled)},
+            )
+        if not semantic_levels.output_safe or not (
+            semantic_levels.can_produce_sanitized_text
+        ):
+            raise RuntimeError(
+                "semantic enforcement is enabled but its output-safety or "
+                "sanitization levels are disabled"
+            )
     composition.warm_search_models()
     if config.settings.mcp_transport == "streamable-http":
         mcp.run(

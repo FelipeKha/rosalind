@@ -612,15 +612,20 @@ while the HNSW index remains deferred.
 | `sender_handle` | text | no | first `from` address (empty when missing) |
 | `recipient_handles` | text[] | no | to/cc/bcc |
 | `participant_handles` | text[] | no | sorted union of all roles |
+| `from_handles` / `to_handles` / `cc_handles` / `bcc_handles` | text[] | no | role-specific addresses for access predicates; backfilled from `core.email_participant` |
 | `direction` | text | no | `received` / `sent` / `self` / `unknown` |
 | `has_attachment` | boolean | no | |
 | `is_trash_or_spam` | boolean | no | |
 | `tags` | text[] | no | namespaced labels |
 | `meta` | jsonb | no | `header_only`, `truncated`, `partial` flags |
+| `replaced_in_sets` | text[] | no | semantic set ids whose overlay replaces this base chunk (GIN-indexed); maintained by the overlay builder |
 | `created_at` | timestamptz | no | |
 | `emb_bge_m3_v1` | halfvec(1024) | yes | null until the embed job runs |
 | `emb_bge_m3_v1_text_sha256` | text | yes | hash of the text that was embedded |
 
+- GIN indexes on every role array (`chunk_from_handles_idx`,
+  `chunk_to_handles_idx`, `chunk_cc_handles_idx`, `chunk_bcc_handles_idx`), in
+  addition to the existing recipient/participant indexes.
 - `uq_chunk_key` unique on `(email_id, chunk_kind, attachment_id, seq)`
   `NULLS NOT DISTINCT`.
 - The chunk upsert never writes the embedding columns. Staleness is detected
@@ -759,6 +764,43 @@ never edited by hand. Switching the embedding model is additive:
 3. create the HNSW index (if adopted) and switch the `embedding_space` config;
 4. drop the old column once no query references it.
 
+### `search.request_log`
+
+Content-free summary of one completed online search run: the plan fingerprint,
+versions, per-stage counts/flags, timings, and returned IDs. It never holds
+query text, filter values (only names/sizes), or chunk text. Rows cascade-delete
+with the account and are pruned by `search_request_log_retention_days`.
+
+The access-enforcement fields are `agent_id`, `policy_version`,
+`scope_fingerprint`, `policy_decision` (`permit_all` / `scoped` / `deny_all` /
+`error`), and `access_levels` (the enabled stage names). The semantic fields are
+`semantic_set_id`, `semantic_policy_version` and `semantic_levels`. They make
+degraded-mode investigations possible without storing content.
+
+### Semantic enforcement tables (Phase 3)
+
+These tables are owned by the data backend because they are derived from email
+and chunk text. They are sensitive metadata: the agent-facing DB role has no
+access to them, and statement text stays encrypted in the policy service.
+
+| Table | Purpose |
+|---|---|
+| `search.segment` | Sentence/clause segment: `email_id`, `field`, `chunk_id`, `ordinal`, offsets, `text_hash`, `language`, `is_quoted`, `segmentation_version`, embedding + hash. Distinct from the coarse structural `derived.email_segment`. |
+| `derived.finding` | `(text_hash, statement_id)` → verdict, `subject_matches`, spans, score, `classifier_version`. Positives propagate by hash; negatives do not. |
+| `derived.finding_override` | Owner spot-check correction for one `(text_hash, statement_id)`. |
+| `search.semantic_coverage` | `(segment_id, statement_id, stage)` marks processed segments and negative results. |
+| `search.semantic_candidate` | Funnel provenance: segment/statement/source/score. |
+| `search.semantic_model_run` | Model, quantization, runtime, prompt/schema/window config; hash is `classifier_version`. |
+| `search.chunk_overlay` | Sanitized chunk copy per `set_id`: `display_text`, `index_text`, redactions, embedding, BM25 entry, copied access attributes, `status` (`provisional`/`complete`). |
+| `search.field_overlay` | Sanitized subject / attachment-name copy per `set_id`. |
+| `search.semantic_job` | Postgres-backed worker queue (priority, checkpoint, state). |
+| `search.semantic_review_item` | Spot-check queue for low-confidence and borderline cases. |
+| `search.redaction_event` | Per-request redacted segment ids/hashes and treatment; never content. |
+
+Overlay rows carry the base row's access attributes so the access-scope
+predicates apply to them unchanged. A provisional overlay row has no embedding
+yet, so it is reachable by lexical search only.
+
 ---
 
 ## `agent` — derived read models
@@ -782,6 +824,110 @@ It is the backing read model for the `PersonProfile` value object
 (`application/read_models.py`) used by REST and MCP. It is not (yet) used to
 answer arbitrary SQL — application services project it through typed value
 objects.
+
+---
+
+## `authz` / `semantic` / `audit` — policy service
+
+Owned by the policy service, not the data backend. The service has its own
+Alembic version table (`alembic_version_policy`) so it can migrate
+independently while sharing the database. It reads directory/account metadata
+only; it never reads email bodies or search chunks.
+
+### `authz.policy`
+
+Stable identity and status of a policy.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `account_id` | uuid | no | FK → `account.id` `CASCADE`; indexed |
+| `title` | text | no | Template-rendered summary |
+| `principal_kind` | text | no | `all_agents` in Phase 1 |
+| `policy_type` | text | no | `access` / `confidentiality` |
+| `status` | text | no | `active`, `pending_enforcement`, `paused`, … |
+| `current_revision` | int | no | |
+| `created_at` / `updated_at` | timestamptz | no | |
+
+### `authz.policy_revision`
+
+Immutable revisions. The evaluated spec is JSONB; the owner's verbatim prompt
+and the confirmed description are stored Fernet-encrypted in `source_encrypted`
+and are never exposed through MCP or logs.
+
+| Column | Type | Nullable | Notes |
+|---|---|---|---|
+| `id` | uuid | no | PK |
+| `policy_id` | uuid | no | FK → `authz.policy.id` `CASCADE` |
+| `revision` | int | no | Unique on `(policy_id, revision)` |
+| `spec` | jsonb | no | `PolicySpec` without the `source` block |
+| `source_encrypted` | text | no | Encrypted `PolicySource` |
+| `interpreter_version` | text | no | Model + quant + prompt + schema + resolvers |
+| `model_id` | text | no | Concrete parser model |
+| `confirmed_at` | timestamptz | no | |
+
+### `authz.policy_build`
+
+Build record for confidentiality rules. The worker consumes it and moves the
+rule through `building` → `active` (or `failed`/`paused`).
+
+`id`, `policy_id`, `revision`, `status`, `coverage_processed`,
+`coverage_total`, `classifier_version`, `created_at`, `updated_at`, plus the
+Phase-3 counters `segments_total`, `candidates`, `verified`, `flagged`,
+`pending`, `eta_seconds`, `state`, `error`.
+
+### `authz.policy_version`
+
+Monotonic per-account policy counter. Bumped when a policy is created or its
+status changes; the RAG records it on every scoped search and includes the
+scope fingerprint derived from the active clauses.
+
+`account_id` (PK), `version` (bigint), `updated_at`.
+
+### `authz.policy_draft`
+
+Encrypted, short-lived drafts. Nothing is written to `authz.policy` before
+confirmation. `payload_encrypted` contains the prompt, model choice, and
+per-constraint state; `expires_at` drives cleanup.
+
+### `semantic.protected_statement`
+
+Encrypted canonical statement for confidentiality rules.
+
+`id`, `account_id`, `canonical_encrypted`, `subject`, `kind`
+(`fact` / `topic`), `version`, `created_at`.
+
+### `semantic.statement_expansion`
+
+Local expansion terms and concepts generated after confirmation. Feed
+candidate generation only; they block nothing.
+
+`id`, `statement_id` (FK → `semantic.protected_statement` `CASCADE`),
+`language`, `terms` text[], `concepts` jsonb, `expansion_version`, `created_at`;
+unique on `(statement_id, language, expansion_version)`.
+
+### `semantic.statement_set` / `semantic.statement_set_member`
+
+A reusable set of protected statements, keyed by `set_id`, so agents with the
+same rules share findings and overlays. `statement_set` holds `id` (the
+`set_id`), `account_id`, `created_at`. `statement_set_member` holds `set_id`,
+`policy_id`, `statement_id`, `match_levels` text[], `treatment_mode`,
+`treatment_fallback`; PK `(set_id, policy_id, statement_id)`.
+
+### `audit.policy_event`
+
+Policy lifecycle events. No prompt and no statement text.
+
+`id`, `policy_id`, `revision`, `event` (`created`, …), `principal_kind`,
+`interpreter_version`, `model_id`, `created_at`.
+
+### `audit.security_event`
+
+Content-free security events written by the data backend: fail-closed policy
+loads, deny-all decisions, and L2 verification failures/drops.
+
+`id`, `account_id` (nullable), `request_id` (nullable), `event`, `detail`
+(jsonb, counts and fingerprints only), `created_at`; indexed on `created_at`.
 
 ---
 

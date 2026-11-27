@@ -14,6 +14,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy.halfvec import HALFVEC
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -62,7 +63,16 @@ class Chunk(Base):
         Index("chunk_email_idx", "email_id"),
         Index("chunk_recipients_idx", "recipient_handles", postgresql_using="gin"),
         Index("chunk_participants_idx", "participant_handles", postgresql_using="gin"),
+        Index("chunk_from_handles_idx", "from_handles", postgresql_using="gin"),
+        Index("chunk_to_handles_idx", "to_handles", postgresql_using="gin"),
+        Index("chunk_cc_handles_idx", "cc_handles", postgresql_using="gin"),
+        Index("chunk_bcc_handles_idx", "bcc_handles", postgresql_using="gin"),
         Index("chunk_tags_idx", "tags", postgresql_using="gin"),
+        Index(
+            "chunk_replaced_in_sets_idx",
+            "replaced_in_sets",
+            postgresql_using="gin",
+        ),
         Index(
             "chunk_list_idx",
             "source_account_num",
@@ -109,6 +119,19 @@ class Chunk(Base):
     participant_handles: Mapped[list[str]] = mapped_column(
         ARRAY(Text), nullable=False, default=list
     )
+    # Role-specific addresses, denormalized for access-policy predicates.
+    from_handles: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list
+    )
+    to_handles: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list
+    )
+    cc_handles: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list
+    )
+    bcc_handles: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list
+    )
     direction: Mapped[str] = mapped_column(Text, nullable=False)
     has_attachment: Mapped[bool] = mapped_column(Boolean, nullable=False)
     is_trash_or_spam: Mapped[bool] = mapped_column(
@@ -116,6 +139,11 @@ class Chunk(Base):
     )
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Semantic sets for which an overlay row replaces this base chunk. The
+    # overlay builder maintains it in the same transaction as the finding.
+    replaced_in_sets: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list
+    )
 
     # Embedding: one column per model version, null until the embed job runs.
     # The companion hash records the text that was embedded, so staleness is
@@ -260,6 +288,16 @@ class SearchRequestLog(Base):
     )
     returned_item_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(Uuid), nullable=False, default=list
+    )
+    agent_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    policy_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    scope_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    policy_decision: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_levels: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    semantic_set_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    semantic_policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    semantic_levels: Mapped[list[str] | None] = mapped_column(
+        ARRAY(Text), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow

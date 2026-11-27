@@ -1,6 +1,7 @@
 import asyncio
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import sessionmaker
 
 import rosalind.adapters.inbound.mcp.server as mcp_server
+from rosalind import config
 from rosalind.adapters import composition
 from rosalind.adapters.inbound.mcp.schemas import (
     MyProfileResult,
@@ -19,7 +21,13 @@ from rosalind.adapters.inbound.mcp.schemas import (
     SearchResult,
 )
 from rosalind.adapters.inbound.mcp.search import SearchEmailsInput
+from rosalind.adapters.outbound.persistence import models
 from rosalind.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from rosalind.policy.adapters.persistence import (
+    PolicyModel,
+    PolicyRevisionModel,
+    PolicyVersionModel,
+)
 from tests._account import TEST_ISSUER, TEST_SUBJECT, ensure_account
 
 FIXTURE = (
@@ -161,3 +169,154 @@ def test_search_tool_returns_empty_scope_without_data(
 
     assert isinstance(result, SearchResult)
     assert result.short_circuit == "empty_scope"
+
+
+def test_search_access_enforcement_flag(migrated_engine: Engine, monkeypatch) -> None:
+    """The setting gates real access filtering without a restart in tests."""
+    factory = sessionmaker(
+        bind=migrated_engine, autoflush=False, expire_on_commit=False
+    )
+    john = "john.smith@acme.com"
+    mary = "mary@example.com"
+    sent_at = datetime(2026, 3, 17, 9, 32, tzinfo=UTC)
+
+    with factory() as db:
+        uow = SqlAlchemyUnitOfWork(db)
+        account = ensure_account(uow)
+        source = models.SourceAccount(
+            account_id=account.id, provider="google", name="enforcement-test"
+        )
+        db.add(source)
+        db.flush()
+
+        message = models.EmailMessage(
+            id=uuid.uuid4(),
+            source_account_id=source.id,
+            message_id="enforcement-message",
+            message_id_synthetic=False,
+            occurred_at=sent_at,
+            direction="received",
+            subject="Quarterly update",
+            has_attachments=False,
+            is_trash_or_spam=False,
+            parser_version="p/1",
+            canonicalizer_version="c/1",
+            metadata_={},
+        )
+        db.add(message)
+        db.flush()
+        db.add(
+            models.Chunk(
+                id=uuid.uuid4(),
+                email_id=message.id,
+                chunk_kind="email_body",
+                seq=0,
+                text_for_display="quarterly canary numbers",
+                text_for_index="quarterly canary numbers",
+                text_sha256="enforcement-canary",
+                language="en",
+                index_version="v1",
+                source_account_id=source.id,
+                source_account_num=source.num,
+                sent_at=sent_at,
+                sender_handle=john,
+                recipient_handles=[mary],
+                participant_handles=sorted([john, mary]),
+                from_handles=[john],
+                to_handles=[mary],
+                cc_handles=[],
+                bcc_handles=[],
+                direction="received",
+                has_attachment=False,
+                is_trash_or_spam=False,
+                tags=[],
+                meta={},
+            )
+        )
+
+        policy = PolicyModel(
+            account_id=account.id,
+            title="deny john",
+            principal_kind="all_agents",
+            policy_type="access",
+            status="active",
+            current_revision=1,
+        )
+        db.add(policy)
+        db.flush()
+        db.add(
+            PolicyRevisionModel(
+                policy_id=policy.id,
+                revision=1,
+                spec={
+                    "schema_version": "rosalind.policy.v2",
+                    "type": "access",
+                    "effect": "deny",
+                    "principal": {"type": "all_agents"},
+                    "resource": {
+                        "type": "email",
+                        "selector": {
+                            "operator": "all_of",
+                            "predicates": [
+                                {
+                                    "operator": "has_participant",
+                                    "roles": ["from"],
+                                    "addresses": [john],
+                                }
+                            ],
+                        },
+                    },
+                    "status": "active",
+                },
+                source_encrypted="test",
+                interpreter_version="test",
+                model_id="test",
+            )
+        )
+        db.add(PolicyVersionModel(account_id=account.id, version=1))
+        db.commit()
+        message_id = message.id
+
+    monkeypatch.setattr(mcp_server, "SessionLocal", factory)
+    reset = auth_context_var.set(AuthenticatedUser(_test_token()))
+    try:
+        monkeypatch.setattr(config.settings.policy, "access_enforcement_enabled", False)
+        off = asyncio.run(
+            mcp_server.search(SearchEmailsInput(query="canary", mode="lexical"))
+        )
+        assert off is not None
+        assert [result.item_id for result in off.results] == [message_id]
+
+        monkeypatch.setattr(config.settings.policy, "access_enforcement_enabled", True)
+        on = asyncio.run(
+            mcp_server.search(SearchEmailsInput(query="canary", mode="lexical"))
+        )
+        assert on is not None
+        assert on.results == []
+
+        levels = config.settings.policy.access_enforcement_levels
+        for name in (
+            "lexical",
+            "semantic",
+            "listing",
+            "metadata",
+            "thread",
+            "assembly",
+        ):
+            monkeypatch.setattr(levels, name, False)
+        monkeypatch.setattr(levels, "verification", True)
+        verification_only = asyncio.run(
+            mcp_server.search(SearchEmailsInput(query="canary", mode="lexical"))
+        )
+        assert verification_only is not None
+        assert verification_only.results == []
+
+        monkeypatch.setattr(levels, "verification", False)
+        monkeypatch.setattr(levels, "assembly", True)
+        assembly_only = asyncio.run(
+            mcp_server.search(SearchEmailsInput(query="canary", mode="lexical"))
+        )
+        assert assembly_only is not None
+        assert assembly_only.results == []
+    finally:
+        auth_context_var.reset(reset)

@@ -19,6 +19,21 @@ uv run uvicorn rosalind.adapters.inbound.http.app:app --reload
 
 The API is served at `http://localhost:8000`.
 
+## Policy service
+
+The policy engine is a separate deployable in the same package. It shares
+PostgreSQL but owns the `authz`, `semantic` and `audit` schemas and has its own
+Alembic chain. It never imports the RAG/search stack.
+
+```bash
+just policy-migrate   # alembic -c alembic-policy.ini upgrade head
+just policy-serve     # uv run rosalind-policy (default 127.0.0.1:8001)
+```
+
+Run it on the host (not in a container) during development so it can reach a
+local Ollama endpoint at `127.0.0.1:11434`. The model allowlist lives under
+`policy.models` in `rosalind.yaml` (see `rosalind.yaml.example`).
+
 ## Configuration
 
 Configuration is read from environment variables (prefix `ROSALIND_`):

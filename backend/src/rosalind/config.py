@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -35,6 +35,151 @@ class EvalSettings(BaseModel):
 
     enabled: bool = False
     runs_dir: Path = Path("runs")
+
+
+class ParserModelSettings(BaseModel):
+    """One prompt-parsing model the policy service is allowed to use.
+
+    Models are local Ollama models only. ``base_url`` is checked at startup and
+    must be a loopback address; hosted endpoints are never accepted.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    provider: Literal["ollama"] = "ollama"
+    model: str
+    base_url: str = "http://127.0.0.1:11434"
+    quantization: str | None = None
+    context_window: int = 8192
+    keep_alive: str = "5m"
+    enabled: bool = True
+
+
+class AccessEnforcementLevelSettings(BaseModel):
+    """Per-stage gates for access-policy enforcement.
+
+    Every level defaults to on. Turning a retrieval/metadata level off is a
+    degraded mode: output may still be filtered by ``assembly`` or
+    ``verification``, but ranking, counts or coverage can leak. The master
+    ``access_enforcement_enabled`` switch still gates everything above these.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    lexical: bool = True
+    semantic: bool = True
+    listing: bool = True
+    metadata: bool = True
+    thread: bool = True
+    assembly: bool = True
+    verification: bool = True
+
+
+class SemanticEnforcementLevelSettings(BaseModel):
+    """Per-stage gates for confidentiality (semantic) enforcement.
+
+    Every level defaults to on. The master ``semantic_enforcement_enabled``
+    switch gates everything above these. Disabling a retrieval, metadata or
+    rerank level is a degraded mode: output may still be sanitized by
+    ``assembly`` or ``final_gate``, but ranking, counts or existence signals can
+    leak. At least one of ``assembly``/``final_gate`` must remain enabled, and
+    at least one of ``sanitization``/``jit`` must remain enabled, when the
+    master flag is on.
+
+    The first three levels drive the offline worker; the rest shape the online
+    query path (and future tools).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    # Offline build.
+    candidate_generation: bool = True
+    verification: bool = True
+    sanitization: bool = True
+    # Online read path.
+    lexical: bool = True
+    semantic: bool = True
+    listing: bool = True
+    metadata: bool = True
+    thread: bool = True
+    rerank: bool = True
+    assembly: bool = True
+    jit: bool = True
+    final_gate: bool = True
+    derived: bool = True
+    term_features: bool = True
+    quoted_copy: bool = True
+
+
+class PolicySettings(BaseModel):
+    """Policy service settings.
+
+    ``models`` is the allowlist a client may choose from. Per-request model
+    selection is accepted, but the runtime keeps one model resident at a time
+    and records the choice in ``interpreter_version``.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    enabled: bool = True
+    default_model: str | None = None
+    models: list[ParserModelSettings] = Field(default_factory=list)
+    draft_ttl_seconds: int = 3600
+    request_timeout_seconds: float = 120.0
+    enforcement_live: bool = False
+    # Gates real access-policy enforcement in the RAG path. When off, search
+    # behaves exactly as before. Stored policies are not read or applied.
+    access_enforcement_enabled: bool = False
+    access_enforcement_levels: AccessEnforcementLevelSettings = Field(
+        default_factory=AccessEnforcementLevelSettings
+    )
+    # Gates real confidentiality (semantic) enforcement in the RAG path. When
+    # off, search behaves exactly as before. Confidentiality policies are not
+    # read or applied and no semantic tables are queried.
+    semantic_enforcement_enabled: bool = False
+    semantic_enforcement_levels: SemanticEnforcementLevelSettings = Field(
+        default_factory=SemanticEnforcementLevelSettings
+    )
+
+    @model_validator(mode="after")
+    def _validate_access_levels(self) -> PolicySettings:
+        levels = self.access_enforcement_levels
+        if self.access_enforcement_enabled and not (
+            levels.assembly or levels.verification
+        ):
+            raise ValueError(
+                "access enforcement requires assembly or verification to be enabled"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_semantic_levels(self) -> PolicySettings:
+        if not self.semantic_enforcement_enabled:
+            return self
+        levels = self.semantic_enforcement_levels
+        if not (levels.assembly or levels.final_gate):
+            raise ValueError(
+                "semantic enforcement requires assembly or final_gate to be enabled"
+            )
+        if not (levels.sanitization or levels.jit):
+            raise ValueError(
+                "semantic enforcement requires sanitization or jit to be enabled"
+            )
+        return self
+
+    def model_for(self, name: str) -> ParserModelSettings | None:
+        for candidate in self.models:
+            if candidate.name == name and candidate.enabled:
+                return candidate
+        return None
+
+    def resolve_model(self, name: str | None) -> ParserModelSettings | None:
+        if name is None:
+            if self.default_model is None:
+                return None
+            name = self.default_model
+        return self.model_for(name)
 
 
 class YamlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -89,6 +234,7 @@ class Settings(BaseSettings):
         )
 
     eval: EvalSettings = EvalSettings()
+    policy: PolicySettings = PolicySettings()
 
     database_url: str = "postgresql+psycopg://rosalind:rosalind@localhost:5432/rosalind"
     s3_bucket: str = "rosalind"

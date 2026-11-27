@@ -342,7 +342,9 @@ class PgVectorSemanticRetriever:
     ) -> list[ColumnElement[bool]]:
         chunk = models.Chunk
         conditions: list[ColumnElement[bool]] = [chunk.source_account_num.in_(nums)]
-        conditions.extend(filter_conditions(plan))
+        conditions.extend(
+            filter_conditions(plan, apply_access=plan.access_levels.semantic)
+        )
         conditions.append(cols.vector.is_not(None))
         conditions.append(cols.hash_ == chunk.text_sha256)
         return conditions

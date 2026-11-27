@@ -16,3 +16,51 @@ log_format: console
 eval:
   enabled: false
   runs_dir: runs
+
+# Policy service. Models are an allowlist of local Ollama endpoints only.
+# The CLI selects one per request with `--model`; the runtime keeps one model
+# resident at a time.
+policy:
+  enabled: true
+  default_model: qwen3.5-9b
+  enforcement_live: false
+  access_enforcement_enabled: false
+  access_enforcement_levels:
+    lexical: true
+    semantic: true
+    listing: true
+    metadata: true
+    thread: true
+    assembly: true
+    verification: true
+  semantic_enforcement_enabled: false
+  semantic_enforcement_levels:
+    candidate_generation: true
+    verification: true
+    sanitization: true
+    lexical: true
+    semantic: true
+    listing: true
+    metadata: true
+    thread: true
+    rerank: true
+    assembly: true
+    jit: true
+    final_gate: true
+    derived: true
+    term_features: true
+    quoted_copy: true
+  draft_ttl_seconds: 3600
+  models:
+    - name: qwen3.5-9b
+      provider: ollama
+      model: qwen3.5:9b
+      base_url: http://127.0.0.1:11434
+      quantization: Q4_K_M
+      context_window: 8192
+    - name: gemma4-e4b
+      provider: ollama
+      model: gemma4:e4b
+      base_url: http://127.0.0.1:11434
+      quantization: Q4_K_M
+      context_window: 8192

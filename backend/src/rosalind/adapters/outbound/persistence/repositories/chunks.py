@@ -47,6 +47,10 @@ _MUTABLE_COLUMNS = [
     "sender_handle",
     "recipient_handles",
     "participant_handles",
+    "from_handles",
+    "to_handles",
+    "cc_handles",
+    "bcc_handles",
     "direction",
     "has_attachment",
     "is_trash_or_spam",
@@ -156,6 +160,10 @@ class PostgresChunkRepository:
             parts = participants.get(message_id, [])
             sender_handle, sender_display = _sender(parts)
             recipient_handles, recipient_display = _recipients(parts)
+            role_handles = {
+                role: tuple(sorted(_role_handles(parts, role)))
+                for role in ("from", "to", "cc", "bcc")
+            }
             text = texts.get(message_id)
 
             attachments_for_message = []
@@ -202,6 +210,10 @@ class PostgresChunkRepository:
                     participant_handles=tuple(
                         sorted({p.addr_normalized for p in parts})
                     ),
+                    from_handles=role_handles["from"],
+                    to_handles=role_handles["to"],
+                    cc_handles=role_handles["cc"],
+                    bcc_handles=role_handles["bcc"],
                     direction=msg.direction,
                     has_attachment=msg.has_attachments,
                     is_trash_or_spam=msg.is_trash_or_spam,
@@ -520,6 +532,10 @@ def _recipients(
     return handles, display
 
 
+def _role_handles(participants: list[_ParticipantRow], role: str) -> set[str]:
+    return {p.addr_normalized for p in participants if p.role == role}
+
+
 def _display(name: str | None, addr: str) -> str:
     if name:
         return f"{name} <{addr}>"
@@ -545,6 +561,10 @@ def _draft_values(draft: ChunkDraft) -> dict[str, Any]:
         "sender_handle": draft.sender_handle,
         "recipient_handles": list(draft.recipient_handles),
         "participant_handles": list(draft.participant_handles),
+        "from_handles": list(draft.from_handles),
+        "to_handles": list(draft.to_handles),
+        "cc_handles": list(draft.cc_handles),
+        "bcc_handles": list(draft.bcc_handles),
         "direction": draft.direction,
         "has_attachment": draft.has_attachment,
         "is_trash_or_spam": draft.is_trash_or_spam,

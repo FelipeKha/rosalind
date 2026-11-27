@@ -13,6 +13,14 @@ def api_url() -> str:
     return settings.get_settings().api_url
 
 
+def policy_api_url() -> str:
+    return settings.get_settings().policy_api_url
+
+
+def policy_timeout() -> float:
+    return settings.get_settings().policy_timeout
+
+
 def search_timeout() -> float:
     return settings.get_settings().search_timeout
 

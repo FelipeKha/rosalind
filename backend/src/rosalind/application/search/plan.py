@@ -30,6 +30,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from rosalind.application.authz.models import (
+    AccessEnforcementLevels,
+    EffectiveScope,
+)
+from rosalind.application.authz.semantic_levels import SemanticEnforcementLevels
 from rosalind.application.search.request import (
     Direction,
     GroupBy,
@@ -37,6 +42,7 @@ from rosalind.application.search.request import (
     SearchMode,
     SortOrder,
 )
+from rosalind.application.semantic.models import SemanticScope
 
 MAX_LIMIT = 25
 """Hard cap on results returned per call (DESIGN.md section 10)."""
@@ -124,6 +130,7 @@ class RequestContext:
     request_id: uuid.UUID
     audit_id: uuid.UUID
     client_id: str
+    agent_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +409,14 @@ class SearchPlan:
     budgets: Budgets
     versions: IndexVersions
     fusion: FusionConfig = FusionConfig()
+    access_scope: EffectiveScope | None = None
+    access_levels: AccessEnforcementLevels = field(
+        default_factory=AccessEnforcementLevels
+    )
+    semantic_scope: SemanticScope | None = None
+    semantic_levels: SemanticEnforcementLevels = field(
+        default_factory=SemanticEnforcementLevels
+    )
     cursor: Cursor | None = None
     warnings: tuple[PlanWarning, ...] = ()
     hints: PlanHints = PlanHints()
@@ -536,6 +551,24 @@ class SearchPlan:
                 fu.convex_alpha,
                 fu.max_chunks_per_item,
             ],
+            "access_scope": (
+                self.access_scope.scope_fingerprint
+                if self.access_scope is not None
+                else None
+            ),
+            "access_levels": (
+                list(self.access_levels.enabled_names())
+                if self.access_scope is not None
+                else None
+            ),
+            "semantic_set": (
+                self.semantic_scope.set_id if self.semantic_scope is not None else None
+            ),
+            "semantic_levels": (
+                list(self.semantic_levels.enabled_names())
+                if self.semantic_scope is not None
+                else None
+            ),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
