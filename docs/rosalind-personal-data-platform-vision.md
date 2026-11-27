@@ -69,6 +69,26 @@ Connectors should use source credentials and permissions limited to reading and 
 
 Read-only access should be enforced by the source service's permissions where possible, not merely by application convention.
 
+### 2.7 Agent-scoped privacy and information filtering
+
+The owner must be able to decide which parts of their personal information may be made available to each connected agent or client. These controls must apply across all connected sources, not just within an individual application or search index.
+
+A user should be able to express a policy in terms of a sensitive topic, person, source, purpose or agent. For example: **"Agent A must not learn that I have cancer."** Rosalind should interpret this as a restriction on relevant information across emails, contacts, calendar events, notes, documents, photographs and any other connected source—not merely as a rule that hides records containing the word "cancer".
+
+Filtering must consider both direct disclosure and information that could reasonably contribute to a sensitive inference. A doctor's email, a medical document, a photograph from treatment, a family message, or a sequence of apparently unrelated absences and personal messages may each reveal or help infer the same sensitive fact.
+
+The policy boundary must therefore cover retrieval, context construction and the response returned to the agent. Removing an explicitly sensitive document from search results is not sufficient if other records can reconstruct the same information. Policies should be understandable, reviewable and specific to the agent or sharing context to which they apply.
+
+### 2.8 Disclosure auditing and retrospective review
+
+Rosalind must maintain an audit record of information actually disclosed to each agent, not just the records that were searched or considered. The audit should make it possible to establish who received what information, when, in response to which request, and under which privacy policy.
+
+Auditing is necessary because perfect filtering cannot be assumed. A single disclosure may violate a policy, and several individually innocuous disclosures may collectively reveal something sensitive. The platform should therefore support both event-level auditing and review of disclosure patterns over time.
+
+When a user creates or tightens a policy, Rosalind should be able to examine relevant prior disclosures and alert the user to potential conflicts. For example, a newly created health-related restriction could reveal that a medical document had already been shared with an agent the previous day. Ongoing review should also look for cumulative patterns—for example, repeated work absences, family check-ins and a message about hair loss—that may together expose a sensitive health situation.
+
+Audit records and alerts are themselves sensitive personal data. They must be protected, access-controlled and retained according to an explicit policy. Pattern detection should be presented as a risk signal for user review, not as a guarantee that every possible inference or breach can be detected.
+
 ---
 
 ## 3. Connected source services
@@ -149,6 +169,19 @@ flowchart TB
         ORCH["Cross-source query orchestration\nSQL · Keyword · Semantic · Visual retrieval"]
     end
 
+    subgraph GOVERNANCE["Cross-cutting governance and privacy control plane"]
+        IDENTITY["Agent identity and sharing context"]
+        POLICY["User-defined privacy policies
+Sensitive topics · Scope · Restrictions"]
+        ENFORCE["Policy enforcement
+Retrieval · Context · Response"]
+        AUDIT["Disclosure audit trail
+Actual context and responses shared"]
+        REVIEW["Retrospective and cumulative review
+Policy changes · Pattern detection · Alerts"]
+        IDENTITY --> POLICY --> ENFORCE --> AUDIT --> REVIEW
+    end
+
     subgraph ACCESS["5. Access and application layer"]
         API["Unified API"]
         MCP["MCP server"]
@@ -180,7 +213,10 @@ flowchart TB
     ES --> ORCH
     PG --> ORCH
     MODELS --> ORCH
-    ORCH --> API
+    ORCH --> ENFORCE
+    API --> IDENTITY
+    ENFORCE --> API
+    ENFORCE --> AUDIT
     API --> MCP
     API --> UI
     API --> AGENTS
@@ -242,6 +278,20 @@ Potential clients include:
 - Other local applications, dashboards and agents.
 
 The initial interface can be simple. The underlying data and access contracts are the more important long-term assets.
+
+### Cross-cutting layer — Governance, privacy and auditing
+
+Governance is not a sixth data-processing stage that can be bypassed by a particular connector or retrieval method. It is a control plane across the access and intelligence path. Every agent request should be associated with a known identity and sharing context, checked against the user's policies, and audited if information is disclosed.
+
+The control plane has three related responsibilities:
+
+1. **Policy definition:** let the owner define what each agent may and may not learn, including restrictions based on sensitive topics and information that could support an inference about those topics.
+2. **Policy enforcement:** apply restrictions before information is retrieved for an agent, while evidence is assembled into model context, and before an answer is returned. This must cover direct source records, derived content, summaries and cross-source combinations.
+3. **Disclosure auditing:** record the evidence and information actually made available to the agent, the policy applied and the response delivered. Use this history for retrospective checks, cumulative-risk detection and user alerts.
+
+A policy such as "Agent A must not learn that I have cancer" is an end-to-end information-sharing constraint. It should cover medical records, correspondence with doctors or family, treatment-related photographs, calendar patterns, work absences and other contextual clues that could reveal or support the same inference. The user should not have to identify every individual record in advance.
+
+Rosalind should aim to minimise the possibility of both direct and indirect disclosure, but it must not promise perfect prevention. Information can be ambiguous, context-dependent and cumulative; a model or recipient may infer sensitive facts from combinations that are not individually obvious. The product should make this limitation explicit and combine policy enforcement with comprehensive disclosure records and ongoing risk review.
 
 ---
 
@@ -368,15 +418,31 @@ Core requirements:
 2. **Read-only source credentials:** apply least-privilege access at each source.
 3. **No implicit external inference:** do not send private content to cloud LLM, embedding, OCR or vision services unless explicitly enabled.
 4. **Provenance:** every result must be traceable to source records.
-5. **Access-aware retrieval:** enforce source permissions and user-level access rules before content enters model context.
-6. **Untrusted content:** treat emails, documents, notes and other retrieved content as data, not instructions. Retrieved text must not be allowed to override system or application instructions.
-7. **Data lifecycle:** support deletion propagation, retention policies, backups and restore testing.
-8. **Secrets management:** keep source credentials out of code, logs and indexed content.
-9. **Auditability:** record connector activity, indexing errors and access to sensitive resources where appropriate.
+5. **Agent-scoped filtering:** let the owner define what each agent may access or infer. Apply policies across sources and across direct records, derived content, summaries and combined evidence.
+6. **Disclosure auditing:** record the actual information and evidence delivered to each agent, the request and policy context, and the response returned. Support retrospective review when policies change and cumulative-risk review across multiple disclosures.
+7. **Untrusted content:** treat emails, documents, notes and other retrieved content as data, not instructions. Retrieved text must not be allowed to override system or application instructions.
+8. **Data lifecycle:** support deletion propagation, retention policies, backups and restore testing.
+9. **Secrets management:** keep source credentials out of code, logs and indexed content.
+10. **Protected audit records:** treat disclosure logs and risk alerts as sensitive data, with their own access controls and retention rules.
 
 A local deployment reduces exposure to third parties, but it does not remove the need for authentication, operating-system security, encrypted backups and careful access control.
 
 ---
+
+### 9.1 Example: a sensitive health-information policy
+
+Suppose the owner creates the policy: **"Agent A must not know I have cancer."** This is a cross-source, agent-specific restriction.
+
+The intended behaviour is:
+
+- Direct medical records, test results and treatment documents should not be disclosed to Agent A.
+- Emails or notes involving doctors, family members or treatment should be considered even when the sensitive diagnosis is not explicitly stated.
+- Photos and calendar information should be considered where their content or pattern could reveal treatment.
+- Individually ordinary disclosures should be assessed in combination where they could expose the restricted fact.
+- If a relevant medical record was shared before the policy was created, Rosalind should identify that historical disclosure and alert the owner where possible.
+- After the policy is active, the audit and review process should look for cumulative patterns such as repeated absences, family check-ins and references to treatment side effects.
+
+The goal is not to claim that Rosalind can prove an agent has learned nothing. The goal is to enforce the owner's sharing policy as strongly as possible, reduce foreseeable disclosures, maintain evidence of what was shared and make potential policy failures visible.
 
 ## 10. Candidate technology direction
 
@@ -469,7 +535,11 @@ The platform should eventually make it possible to:
 - Change the RAG framework, search engine or local model without changing the source systems or canonical integration contracts.
 - Rebuild derived indexes from synchronised data.
 - Keep personal data and model inference local by default.
+- Let the owner define agent-specific restrictions over sensitive information across all connected sources.
+- Reduce direct and indirect disclosure, including inferences supported by combinations of records.
+- Maintain an auditable record of the information actually shared with each agent.
+- Review historical and cumulative disclosures when policies change or potential inference risks emerge.
 
-The defining characteristic of Rosalind is not a particular LLM, vector database or RAG framework. It is the ability to integrate independently managed personal data while preserving source ownership, provenance and privacy—and to make that information useful across application boundaries.
+The defining characteristic of Rosalind is not a particular LLM, vector database or RAG framework. It is the ability to integrate independently managed personal data while preserving source ownership, provenance and privacy—and to make that information useful across application boundaries under policies controlled by the owner.
 
 **The long-term objective is a unified, local-first interface to a person's digital life, built on top of independent services rather than replacing them.**
