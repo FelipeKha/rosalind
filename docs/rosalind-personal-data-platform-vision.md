@@ -3,14 +3,14 @@
 ## Vision and target architecture
 
 **Status:** Project vision and architectural direction  
-**Deployment ambition:** Cloud-capable by design; local development and self-hosted deployment are supported profiles, not architectural assumptions  
-**Primary principle:** Each source application remains the owner of its data; Rosalind makes that data consistently accessible, searchable and useful across services, under explicit privacy, security and disclosure controls.
+**Deployment ambition:** Each user has an independently controlled personal data environment; Rosalind's compute services, including the RAG engine, are independently deployable locally, in user-controlled cloud infrastructure or in Rosalind-managed cloud infrastructure.  
+**Primary principle:** Each source application remains the owner of its original data, each user controls the location of their Rosalind data environment, and compute can be placed independently without changing the platform's core data contracts. Privacy, security and disclosure controls apply across these boundaries.
 
 ---
 
 ## 1. The vision
 
-Rosalind is a personal data platform that connects independently managed personal information services and makes their data accessible through one unified interface. It should support local, self-hosted and managed-cloud deployments without changing its core data and governance model.
+Rosalind is a personal data platform that connects independently managed personal information services and makes their data accessible through one unified interface. Each user has an independent personal data environment and decides where that environment lives. Rosalind's control plane manages the product, while its data plane and compute plane remain separate: the RAG engine and related workloads can run locally, in the user's cloud account or in Rosalind-managed cloud infrastructure. These deployment choices should not require changing the canonical data model or source integrations.
 
 The goal is not to replace email, calendar, contacts, notes, photo or file-management applications. Each service continues to own and manage its own data, using its own storage model and application-specific features.
 
@@ -89,6 +89,34 @@ When a user creates or tightens a policy, Rosalind should be able to examine rel
 
 Audit records and alerts are themselves sensitive personal data. They must be protected, access-controlled and retained according to an explicit policy. Pattern detection should be presented as a risk signal for user review, not as a guarantee that every possible inference or breach can be detected.
 
+### 2.9 Each user has an independent personal data environment
+
+Every user should have a distinct Rosalind data environment containing that user's canonical data, synchronisation state, derived representations, search indexes and other persistent data required by the platform. The user should be able to choose where this environment is hosted: on a local machine or server, in a cloud account they control, or in an independently isolated Rosalind-managed environment.
+
+This requirement is broader than assigning each user a separate PostgreSQL database. The user's complete persistent data footprint—including search indexes, embeddings, extracted text, object storage, connector state and, when implemented, privacy policies and audit records—must follow the user's isolation, location, retention, deletion and portability requirements. The physical deployment may vary, but one user's data must never be treated as an ordinary shared pool with another user's data.
+
+Original content remains authoritative in its source application. Rosalind's personal data environment stores the canonical and derived representations needed to integrate and retrieve that content. The user should be able to export, rebuild, migrate and ultimately leave with their Rosalind data without depending on a proprietary platform-only format.
+
+### 2.10 Separate the control plane, data plane and compute plane
+
+Rosalind should be organised around three logical planes:
+
+- **Control plane:** the Rosalind product and management services. It handles user accounts, environment registration, configuration, deployment lifecycle, software updates and other platform-level management. It should not require unrestricted access to personal content to perform these functions.
+- **Personal data plane:** the user's independently controlled data environment. It contains canonical data, relationships, provenance, persistent search indexes, object storage references or cached objects, synchronisation state and, as governance is implemented, user-specific policies and audit records.
+- **Compute plane:** independently deployable execution services that synchronise sources, process content, build and query indexes, orchestrate retrieval and run model inference. This includes the RAG engine, such as FastAPI, Haystack pipelines, embedding and reranking workloads, and the selected LLM runtime.
+
+The RAG engine belongs to the compute plane. It is not inseparably embedded in the user's database environment, nor does it have to run in a central Rosalind application environment. It can execute locally, alongside the user's data, in the user's cloud account, or in Rosalind-managed cloud infrastructure. It accesses the user's personal data plane through authenticated and authorised interfaces.
+
+The control plane manages and configures these environments; the data plane owns persistent user data; and the compute plane performs work against that data. These are logical boundaries, not a requirement to deploy every component as a separate microservice.
+
+### 2.11 Compute location is independent of data location
+
+The location of a user's personal data environment and the location of RAG computation should be independently selectable, subject to the user's chosen trust and data-processing model. A user may run both locally, run both in their own cloud, or allow a local or cloud compute environment to access a separately hosted data environment.
+
+Moving the compute plane should not require migrating the user's canonical data or changing the source connectors' data contracts. The architecture must make the processing location and any transfer of plaintext or derived personal information explicit. A remote compute environment necessarily receives the information it processes, even when transport and storage are encrypted; this must be reflected in the product's privacy and deployment disclosures.
+
+The initial implementation should use a single local deployment for simplicity. The same logical components should remain portable so that cloud deployment and alternative compute placement can be introduced later without redesigning the data model.
+
 ---
 
 ## 3. Connected source services
@@ -132,109 +160,117 @@ Original images remain in the photo service. Derived descriptions and embeddings
 
 ## 4. Target architecture
 
-The logical architecture is organised into five layers.
+The target architecture is organised around three logical planes: the Rosalind control plane, each user's personal data plane, and an independently deployable compute plane. Independent source applications remain the systems of record, and user-facing applications and agents access capabilities through controlled APIs.
+
+The three planes describe ownership and responsibility. They do not require three separate infrastructure providers or a microservices deployment. In a local setup, all three may run on one machine. In a cloud setup, they may be operated by different parties and placed in different locations.
 
 ```mermaid
 flowchart TB
-    subgraph SOURCES["1. Independent source services — systems of record"]
-        EMAIL["Email\nStalwart"]
+    subgraph CONTROL["Rosalind control plane"]
+        ACC["User and environment management"]
+        REG["Environment registry and configuration"]
+        DEP["Deployment lifecycle and software updates"]
+    end
+
+    subgraph SOURCES["Independent source applications — systems of record"]
+        EMAIL["Email"]
         CAL["Calendar"]
         CONTACTS["Contacts"]
         NOTES["Notes"]
         PHOTOS["Photos"]
-        FILES["Documents and files\nDrive / iCloud / Dropbox / local"]
+        FILES["Documents and files"]
     end
 
-    subgraph INTEGRATION["2. Source integration layer"]
-        EC["Email connector"]
-        CC["Calendar connector"]
-        PCC["Contacts connector"]
-        NC["Notes connector"]
-        PC["Photos connector"]
-        FC["Document connector"]
-        SYNC["Shared sync services\nCheckpoints · change detection · retries\ncontent hashes · deletion handling"]
+    subgraph COMPUTE["Portable compute plane — local, user cloud or Rosalind cloud"]
+        CONNECT["Source connectors and synchronisation workers"]
+        PROCESS["Extraction, normalisation and indexing pipelines"]
+        API["RAG API and application services"]
+        HAYSTACK["Haystack retrieval and orchestration"]
+        MODELS["Embedding, reranking and LLM runtime"]
+        CLIENTS["Web UI · CLI · MCP · Agents"]
     end
 
-    subgraph DATA["3. Personal data platform"]
-        CANON["Canonical resource model\nEmails · Events · People · Notes\nPhotos · Documents · Locations · Organisations"]
-        REL["Entity resolution and relationships\nIdentity links · Mentions · References\nAttendance · Attachments · Event context"]
-        DERIVED["Derived content and metadata\nExtracted text · OCR · Captions\nThumbnails · Provenance"]
-        PG[("PostgreSQL\nCanonical data · Relationships\nSync state · Provenance")]
-    end
-
-    subgraph RETRIEVAL["4. Search and intelligence layer"]
-        PIPE["Ingestion and query pipelines\nHaystack or equivalent"]
+    subgraph DATA["Independent personal data plane — one environment per user"]
+        PG[("PostgreSQL\nCanonical data · Relationships\nProvenance · Sync state")]
         ES[("Elasticsearch\nFull-text · Metadata · Vectors")]
-        MODELS["Local models\nEmbeddings · Reranking · LLM\nVision and OCR where needed"]
-        ORCH["Cross-source query orchestration\nSQL · Keyword · Semantic · Visual retrieval"]
+        OBJ[("Object storage\nCached and derived files")]
+        GOV["User-specific privacy policies and audit records\nFuture governance capabilities"]
     end
 
-    subgraph GOVERNANCE["Cross-cutting security, privacy and governance control plane"]
-        TENANT["Tenant isolation and access boundaries"]
-        CRYPTO["Encryption · Key management · Secrets"]
-        IDENTITY["User, tenant and agent identity"]
-        POLICY["User-defined privacy policies
-Sensitive topics · Scope · Restrictions"]
-        ENFORCE["Policy enforcement
-Retrieval · Context · Response"]
-        AUDIT["Disclosure audit trail
-Actual context and responses shared"]
-        REVIEW["Retrospective and cumulative review
-Policy changes · Pattern detection · Alerts"]
-        TENANT --> IDENTITY
-        CRYPTO --> TENANT
-        IDENTITY --> POLICY --> ENFORCE --> AUDIT --> REVIEW
-    end
-
-    subgraph ACCESS["5. Access and application layer"]
-        API["Unified API"]
-        MCP["MCP server"]
-        UI["Web UI / CLI"]
-        AGENTS["AI assistants and agents"]
-    end
-
-    EMAIL --> EC
-    CAL --> CC
-    CONTACTS --> PCC
-    NOTES --> NC
-    PHOTOS --> PC
-    FILES --> FC
-    EC --> SYNC
-    CC --> SYNC
-    PCC --> SYNC
-    NC --> SYNC
-    PC --> SYNC
-    FC --> SYNC
-    SYNC --> CANON
-    CANON --> PG
-    CANON --> REL
-    CANON --> DERIVED
-    REL --> PG
-    DERIVED --> PG
-    PG --> PIPE
-    PIPE --> ES
-    MODELS <--> PIPE
-    ES --> ORCH
-    PG --> ORCH
-    MODELS --> ORCH
-    ORCH --> ENFORCE
-    API --> IDENTITY
-    ENFORCE --> API
-    ENFORCE --> AUDIT
-    API --> MCP
-    API --> UI
-    API --> AGENTS
+    CONTROL -->|"Manage configuration and deployment"| COMPUTE
+    CONTROL -->|"Register and locate environment"| DATA
+    EMAIL --> CONNECT
+    CAL --> CONNECT
+    CONTACTS --> CONNECT
+    NOTES --> CONNECT
+    PHOTOS --> CONNECT
+    FILES --> CONNECT
+    CONNECT --> PROCESS
+    PROCESS --> PG
+    PROCESS --> ES
+    PROCESS --> OBJ
+    API --> HAYSTACK
+    HAYSTACK <--> ES
+    HAYSTACK <--> PG
+    HAYSTACK <--> OBJ
+    HAYSTACK <--> MODELS
+    CLIENTS --> API
+    API --> GOV
 ```
 
-The diagram describes logical responsibilities, not a requirement to deploy every component as a separate process. The initial implementation should remain a modular monolith with a small number of deployable services.
+The diagram is conceptual. The source connectors and processing workers execute in the compute plane but maintain their synchronisation state and persistent outputs in the user's data plane. In an early local deployment, all components can run together through Docker Compose, with model inference running natively where appropriate.
 
-### Layer 1 — Independent source services
+### 4.1 Control plane — Rosalind product management
 
-These are the applications that own the original data. They can be self-hosted or external services, provided a suitable local or remote read-only integration is available.
+The control plane manages the Rosalind service and the relationship between users, their environments and the software that runs against those environments.
 
-### Layer 2 — Source integration
+Its responsibilities may include:
 
-Each source has a dedicated connector that understands its API, protocol, identifiers, pagination, rate limits and change semantics.
+- User accounts and product-level authentication.
+- Registration and discovery of each user's personal data environment.
+- Environment configuration and deployment lifecycle.
+- Software release and update management.
+- Product-level settings, entitlements and subscription management where applicable.
+
+The control plane should not need unrestricted access to personal content or the ability to query a user's complete data environment. Its role is to manage the service and coordinate access to the appropriate user environment, not to become the central repository for everyone's personal data.
+
+### 4.2 Personal data plane — one independently controlled environment per user
+
+Each user has a distinct personal data environment. The user chooses where it is hosted: locally, in a cloud account they control, or as an independently isolated environment operated by Rosalind.
+
+The personal data plane contains the user's persistent Rosalind data, including:
+
+- Canonical resources, metadata, relationships and provenance in PostgreSQL.
+- Search indexes, metadata indexes and embeddings in Elasticsearch or an equivalent search store.
+- Object storage for any deliberately cached originals, extracted artifacts, thumbnails or other derived files.
+- Connector configuration, synchronisation checkpoints and source revision state.
+- User-specific privacy policies and disclosure audit records as those governance capabilities are implemented.
+
+The user's data environment is more than a single database. Its complete persistent data footprint—including indexes, embeddings, extracted text, caches and backups—must follow the user's isolation, hosting, retention, deletion and portability requirements.
+
+The original data remains authoritative in the connected source services. Rosalind stores canonical and derived representations needed for integration and retrieval, and should avoid duplicating large original files unless caching or local availability is an explicit requirement. Search indexes are derived and rebuildable; they are not the source of truth.
+
+In a Rosalind-managed deployment, independent environments may be implemented using dedicated infrastructure or strongly isolated resources within shared infrastructure. The specific physical isolation model is a later deployment decision. Whatever model is selected must preserve user-level access boundaries and must not expose one user's data to another through queries, indexes, caches, storage, backups or operational tooling.
+
+### 4.3 Compute plane — portable RAG and processing services
+
+The compute plane contains the services that execute work against the personal data plane. It is independently deployable and may run:
+
+- Locally, on the user's computer or home server.
+- In a cloud account controlled by the user.
+- In Rosalind-managed cloud infrastructure, using an appropriately isolated execution environment.
+
+The compute plane includes source connector workers, synchronisation and extraction jobs, document normalisation, chunking and embedding pipelines, the RAG API, Haystack ingestion and retrieval pipelines, reranking and model inference.
+
+The RAG engine belongs in this plane. It should not be inseparably embedded in the user's database environment, and it does not have to run in a central Rosalind application environment. It accesses the personal data plane through authenticated, authorised interfaces and writes persistent data only to the appropriate user's environment.
+
+The initial implementation should use a simple deployment in which the compute plane and personal data plane run together locally. Their logical boundaries should nevertheless remain clear. This makes it possible to move the RAG engine to another machine or cloud environment without changing the canonical data model or migrating the user's source systems.
+
+If compute runs somewhere other than the user's data environment, the information required for processing must be transferred to that compute environment. Encryption in transit and at rest protects those transfers and stored data, but does not prevent an authorised compute service from accessing plaintext while processing it. The chosen processing location and trust model must therefore be explicit to the user.
+
+### 4.4 Source integration within the compute plane
+
+Each source connector understands its source API, protocol, identifiers, pagination, rate limits and change semantics. Connector execution is part of the compute plane; connector configuration, checkpoints and the resulting canonical records belong to the user's data environment.
 
 Connectors should share a small set of operational capabilities:
 
@@ -247,32 +283,11 @@ Connectors should share a small set of operational capabilities:
 - Source ID and revision preservation.
 - Read-only access enforcement.
 
-The connector is responsible for extracting source data and translating it into the platform's canonical representation. It should not implement RAG logic.
+The connector is responsible for extracting source data and translating it into the platform's canonical representation. It should not implement RAG logic or become the authoritative owner of the source records.
 
-### Layer 3 — Personal data platform
+### 4.5 Access and applications
 
-This is the durable integration core. It maintains canonical resources, source provenance, synchronisation state and relationships across applications.
-
-PostgreSQL is the initial candidate for canonical structured storage. It should retain the source identity of every record and support relationships between resources from different services.
-
-The platform may store extracted text and selected derived artifacts. It should not automatically duplicate all original files and media. Large originals should remain in their authoritative source services; local caching should be deliberate and governed by a retention policy.
-
-### Layer 4 — Search and intelligence
-
-This layer creates indexes and answers queries over the personal data platform.
-
-A candidate stack is:
-
-- Elasticsearch for full-text search, structured filters, aggregations and vector retrieval.
-- Haystack for explicit ingestion and query pipelines.
-- Local embedding, reranking and language models, initially through Ollama or another suitable local runtime.
-- A dedicated multimodal processing path for photos and other non-text resources.
-
-The search indexes are derived and rebuildable. They are not the authoritative store.
-
-### Layer 5 — Access and applications
-
-The platform exposes stable capabilities through an API. Other interfaces should reuse this API rather than connect directly to source services or search indexes.
+User-facing applications and agents should access Rosalind through stable APIs exposed by the compute plane or through an application gateway that routes requests to the correct user environment.
 
 Potential clients include:
 
@@ -281,23 +296,15 @@ Potential clients include:
 - An MCP server for compatible AI clients.
 - Other local applications, dashboards and agents.
 
-The initial interface can be simple. The underlying data, security and access contracts are the more important long-term assets.
+Clients should not connect directly to PostgreSQL, Elasticsearch or object storage. This preserves a consistent application boundary and provides a place to enforce authentication, authorization and future privacy policies.
 
-### Cross-cutting layer — Governance, privacy and security
+### 4.6 Governance, privacy and security across the planes
 
-Governance and security are not optional stages that can be bypassed by a particular connector or retrieval method. They form a control plane across identity, source integration, storage, indexing, inference and access. Every request must have a verified user, tenant, agent identity and sharing context; every data access and disclosure must be authorised under the applicable policies; and sensitive operations must be auditable.
+Governance and security apply across the control, data and compute planes. The control plane manages identities and environment configuration; the personal data plane holds user-specific policies and audit records; and the compute plane enforces access restrictions when it retrieves, processes or discloses information.
 
-The control plane has three related responsibilities:
+The end-state architecture should support agent-scoped privacy policies, context-level information filtering, disclosure auditing and retrospective or cumulative-risk review. These are platform-level capabilities, not features limited to one RAG pipeline or one search index.
 
-1. **Policy definition:** let the owner define what each agent may and may not learn, including restrictions based on sensitive topics and information that could support an inference about those topics.
-2. **Policy enforcement:** apply restrictions before information is retrieved for an agent, while evidence is assembled into model context, and before an answer is returned. This must cover direct source records, derived content, summaries and cross-source combinations.
-3. **Disclosure auditing:** record the evidence and information actually made available to the agent, the policy applied and the response delivered. Use this history for retrospective checks, cumulative-risk detection and user alerts.
-
-A policy such as "Agent A must not learn that I have cancer" is an end-to-end information-sharing constraint. It should cover medical records, correspondence with doctors or family, treatment-related photographs, calendar patterns, work absences and other contextual clues that could reveal or support the same inference. The user should not have to identify every individual record in advance.
-
-Rosalind should aim to minimise the possibility of both direct and indirect disclosure, but it must not promise perfect prevention. Information can be ambiguous, context-dependent and cumulative; a model or recipient may infer sensitive facts from combinations that are not individually obvious. The product should make this limitation explicit and combine policy enforcement with comprehensive disclosure records and ongoing risk review.
-
----
+The first RAG implementation will not build the full governance engine. It should establish only the basic security and architectural foundations needed for a safe single-user MVP, such as read-only source access, protected credentials, authenticated application boundaries and resource provenance. Advanced semantic filtering, agent-specific policies, the disclosure ledger and cumulative disclosure analysis can be implemented after the initial RAG workflow has been validated.
 
 ## 5. Canonical resource model and relationships
 
@@ -562,13 +569,17 @@ Health data and other special-category information require particular care under
 
 ### 9.11 Deployment profiles and honest privacy claims
 
-The same privacy and security principles should apply to every deployment profile:
+Data location and compute location are separate deployment decisions. A user's personal data plane may live locally, in a cloud account the user controls, or in a Rosalind-managed environment. The compute plane may independently run locally, in the user's cloud account or in Rosalind-managed cloud infrastructure. Not every combination needs to be supported in the first release, but the architecture should not make them inseparable.
 
-- **Local/self-hosted:** the user operates the environment and controls local infrastructure, while still needing secure credentials, access control, backups and device protection.
-- **Managed cloud:** Rosalind operates the service and is responsible for strong tenant isolation, cloud security, operational controls, data lifecycle management and transparent subprocessor arrangements.
-- **Dedicated or customer-controlled deployment:** an option for users requiring stronger infrastructure isolation, customer-managed keys or control over processing location.
+Examples of deployment profiles include:
 
-These profiles may differ in who can access infrastructure and where keys are held, but the product must clearly explain those differences. Local-first is a useful deployment option, not a substitute for a cloud security architecture.
+- **Fully local:** personal data and compute run on the user's own machine or server.
+- **User-controlled cloud:** personal data and compute run in the user's cloud account, with the user controlling the infrastructure and deployment.
+- **User data with remote compute:** personal data remains in the user's chosen environment while RAG workloads execute elsewhere, subject to explicit approval and secure access.
+- **Rosalind-managed:** Rosalind operates the compute plane and an independently isolated personal data environment for each user.
+- **Dedicated or hybrid deployment:** selected components run in dedicated or customer-controlled infrastructure to meet stronger isolation, key-management or processing-location requirements.
+
+These profiles differ in who operates the infrastructure, who can access plaintext during processing, where keys are held and which subprocessors are involved. A remote compute plane must receive the information it processes, so encryption in transit and at rest must not be presented as preventing the compute operator from accessing plaintext. The product must explain these trust differences accurately. Local execution is one supported profile, not a substitute for a secure cloud architecture.
 
 ## 10. Candidate technology direction
 
@@ -586,36 +597,53 @@ The following is a pragmatic starting point, not a permanent commitment. Interfa
 | Deployment | Docker Compose initially; cloud orchestration when justified | Supports local development without constraining the cloud target |
 | Interfaces | API, MCP, CLI and web UI | Multiple clients over shared capabilities |
 
+The components map to the three planes as follows: PostgreSQL, Elasticsearch and object storage form the persistent personal data plane; FastAPI, Haystack, connector workers and model runtimes form the compute plane; Rosalind account, environment and deployment management form the control plane. The exact physical placement of these components is a deployment choice, not a change to their logical responsibility.
+
 LlamaIndex remains a valid alternative to Haystack, particularly if the project becomes dominated by heterogeneous document ingestion. The project should select one primary pipeline framework rather than combine multiple orchestration frameworks without a clear need.
 
 Elasticsearch is a candidate search engine, not the canonical data store. If its local resource cost is too high on the target Mac, PostgreSQL Full-Text Search and pgvector are a viable simpler starting point. Retrieval quality and memory consumption should be measured before committing to either option.
 
+The RAG compute plane must remain portable. Model inference should sit behind an abstraction so that local Ollama can be used during development while a different local or cloud model runtime can be selected in another deployment. Similarly, the data plane should use replaceable storage interfaces where practical, including an S3-compatible interface for object storage.
+
 ### Initial development environment
 
-The first implementation may run on a MacBook Pro M2 with 16 GB unified memory. This is a development and validation environment, not a constraint on the target cloud architecture. The codebase should favour a modular monolith and a small number of deployable components initially, while keeping clear boundaries around connectors, data access, retrieval, policy enforcement and audit.
+The first implementation may run on a MacBook Pro M2 with 16 GB unified memory. This is a development and validation environment, not a constraint on the target cloud architecture. For the MVP, the compute plane and personal data plane can run together locally through a small Docker Compose deployment, with Ollama running natively on macOS if useful. Their logical boundaries should remain explicit even when they share one machine.
 
-Avoid introducing Kubernetes, distributed processing, a dedicated graph database or multiple overlapping search systems before they are justified. The logical architecture should be cloud-capable without requiring a distributed physical architecture during early development.
+The first version should be a modular monolith with a small number of deployable components. Keep clear boundaries around connectors, canonical data access, search, retrieval and model inference. Do not introduce Kubernetes, distributed processing, a dedicated graph database or multiple overlapping search systems before they are justified. The logical architecture should be cloud-capable without requiring a distributed physical architecture during early development.
 
 ---
 
 ## 11. Delivery roadmap
 
-The roadmap should validate the platform incrementally while keeping the long-term resource model in view.
+The roadmap should validate the core RAG workflow first, while establishing the data ownership and deployment boundaries needed for the broader platform. Advanced governance is an explicit later capability: its architectural requirements remain in the vision, but the full engine is not a prerequisite for the first working RAG version.
 
-### Phase 1 — Platform foundation and email
+### Phase 1 — Email RAG MVP
 
-- Define an initial threat model, trust boundaries and security baseline before ingesting real personal data.
-- Establish user, tenant, service and agent identity concepts, even if the first deployment has only one user.
-- Set up secrets management, encrypted storage, access-controlled environments and privacy-conscious logging.
-- Define the connector contract and canonical resource envelope.
+- Establish the initial project structure, configuration and local Docker Compose deployment.
+- Define the canonical resource envelope, source identity and provenance conventions.
 - Implement the read-only Stalwart/JMAP connector.
 - Synchronise mailboxes, messages, threads and attachments.
-- Introduce PostgreSQL for canonical data, provenance and sync state.
+- Introduce PostgreSQL for canonical email metadata, provenance and synchronisation state.
 - Extract and normalise email and attachment content.
-- Add search indexing and a first retrieval workflow.
-- Validate completeness, incremental updates and deletion handling.
+- Set up Elasticsearch and the Haystack ingestion pipeline.
+- Implement chunking, embeddings, hybrid retrieval and a basic RAG API.
+- Integrate local LLM inference and return answers with source references.
+- Build a small evaluation set and measure ingestion completeness, retrieval quality and answer grounding.
 
-### Phase 2 — Contacts and calendar
+The MVP should include basic security appropriate to a single-user local deployment: read-only source permissions, protected credentials, an authenticated application boundary where needed, and clear separation between source data and derived indexes. It should not yet implement the full agent-scoped privacy engine or cumulative disclosure analysis.
+
+### Phase 2 — Governance and privacy capabilities
+
+- Define and implement agent identities and the first version of agent-scoped access policies.
+- Add policy checks to the common access and retrieval boundaries.
+- Introduce sensitive-information filtering across source resources and derived representations.
+- Add disclosure records that distinguish retrieved evidence, model context and information returned to an agent.
+- Add retrospective review when a user creates or tightens a policy.
+- Explore cumulative disclosure-risk detection and user alerts.
+
+This phase should build on the working RAG application rather than being embedded inside one specific retrieval framework. The policy and audit capabilities should eventually protect every data access path, including structured queries and future non-RAG APIs.
+
+### Phase 3 — Contacts and calendar
 
 - Add an independent contacts connector.
 - Add calendar synchronisation and temporal normalisation.
@@ -623,7 +651,7 @@ The roadmap should validate the platform incrementally while keeping the long-te
 - Link senders, recipients and attendees to people conservatively.
 - Support structured questions alongside semantic retrieval.
 
-### Phase 3 — Notes and document storage
+### Phase 4 — Notes and document storage
 
 - Add a notes connector.
 - Add one document-storage connector, selected according to available local/API access.
@@ -631,15 +659,15 @@ The roadmap should validate the platform incrementally while keeping the long-te
 - Extract text from common document formats.
 - Link attachments and cloud-drive files without incorrectly treating matching filenames as identical documents.
 
-### Phase 4 — Photos and multimodal retrieval
+### Phase 5 — Photos and multimodal retrieval
 
 - Add a photo-library connector.
 - Extract EXIF metadata and location information.
 - Add local OCR and image captioning where useful.
-- Evaluate visual embedding models compatible with the local hardware.
+- Evaluate visual embedding models compatible with the selected compute environment.
 - Support text-to-image and image-similarity retrieval.
 
-### Phase 5 — Cross-source intelligence
+### Phase 6 — Cross-source intelligence
 
 - Improve person, organisation, event and location resolution.
 - Build relationship-aware retrieval and query planning.
@@ -648,16 +676,18 @@ The roadmap should validate the platform incrementally while keeping the long-te
 - Expose the platform through MCP and other clients.
 - Benchmark ingestion, retrieval and end-to-end answer quality across sources.
 
-### Phase 6 — Cloud security and launch readiness
+### Phase 7 — Cloud deployment and operational readiness
 
-- Select the cloud deployment and tenant-isolation model.
+- Implement the control plane for user and environment management.
+- Support independently managed personal data environments.
+- Deploy the compute plane independently in local, user-controlled cloud and Rosalind-managed cloud configurations.
+- Decide which components can be shared safely and which require dedicated or per-user isolated resources.
 - Validate isolation across databases, object storage, search indexes, queues, caches, model context, audit records and backups.
-- Complete independent security reviews and penetration testing of authorization, tenant boundaries and agent disclosure paths.
-- Establish incident response, vulnerability management, backup restoration and operational monitoring.
+- Establish secure software delivery, monitoring, incident response, vulnerability management and backup restoration.
 - Complete privacy documentation, subprocessor and data-transfer reviews, retention rules and any required impact assessment before handling customer data in a managed cloud service.
 - Publish accurate descriptions of encryption, operator access, model processing, data residency and the limits of inference filtering.
 
----
+The specific deployment topology, shared-versus-dedicated compute model and managed-service choices should be studied when the cloud implementation is in scope. They should not constrain the local RAG MVP.
 
 ## 12. What success looks like
 
@@ -673,6 +703,8 @@ The platform should eventually make it possible to:
 - Change the RAG framework, search engine or local model without changing the source systems or canonical integration contracts.
 - Rebuild derived indexes from synchronised data.
 - Make processing location and external data transfers explicit, user-controlled and auditable across local, self-hosted and cloud deployments.
+- Let each user choose where their independent personal data environment is hosted.
+- Deploy or move the RAG compute plane independently of the user's data plane, subject to explicit processing and trust choices.
 - Let the owner define agent-specific restrictions over sensitive information across all connected sources.
 - Reduce direct and indirect disclosure, including inferences supported by combinations of records.
 - Maintain an auditable record of the information actually shared with each agent.
@@ -680,7 +712,7 @@ The platform should eventually make it possible to:
 
 The defining characteristic of Rosalind is not a particular LLM, vector database or RAG framework. It is the ability to integrate independently managed personal data while preserving source ownership, provenance, security and privacy—and to make that information useful across application boundaries under policies controlled by the owner.
 
-**The long-term objective is a unified, privacy-preserving interface to a person's digital life, built on top of independent services rather than replacing them, and deployable locally, self-hosted or in a secure cloud environment.**
+**The long-term objective is a unified, privacy-preserving interface to a person's digital life, built on top of independent source services rather than replacing them. Each user controls the location of their personal data environment, while Rosalind's RAG and processing compute can run locally, in user-controlled infrastructure or in Rosalind-managed cloud infrastructure. The control plane, data plane and compute plane remain distinct so that deployment choices can evolve without changing the platform's core data model.**
 
 
 ---
