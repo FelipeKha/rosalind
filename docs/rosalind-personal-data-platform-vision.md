@@ -3,14 +3,14 @@
 ## Vision and target architecture
 
 **Status:** Project vision and architectural direction  
-**Deployment ambition:** Local-first, self-hosted, initially on an Apple Silicon Mac  
-**Primary principle:** Each source application remains the owner of its data; Rosalind makes that data consistently accessible, searchable and useful across services.
+**Deployment ambition:** Cloud-capable by design; local development and self-hosted deployment are supported profiles, not architectural assumptions  
+**Primary principle:** Each source application remains the owner of its data; Rosalind makes that data consistently accessible, searchable and useful across services, under explicit privacy, security and disclosure controls.
 
 ---
 
 ## 1. The vision
 
-Rosalind is a local-first personal data platform that connects independently managed personal information services and makes their data accessible through one unified interface.
+Rosalind is a personal data platform that connects independently managed personal information services and makes their data accessible through one unified interface. It should support local, self-hosted and managed-cloud deployments without changing its core data and governance model.
 
 The goal is not to replace email, calendar, contacts, notes, photo or file-management applications. Each service continues to own and manage its own data, using its own storage model and application-specific features.
 
@@ -57,11 +57,11 @@ Every synchronised resource and every derived representation must remain traceab
 
 Data synchronisation, normalisation and relationship management must work independently of any LLM or RAG framework. Search, RAG, agents, dashboards and other applications should consume the same platform capabilities.
 
-### 2.5 Local-first and privacy by design
+### 2.5 Deployment-independent privacy by design
 
-The target is to run the platform locally, initially on an Apple Silicon Mac. Source data, derived content, indexes, embeddings and inference should remain on the machine unless an explicitly configured integration requires otherwise.
+Local execution is a useful development and self-hosting profile, but it is not the security model. The target architecture must also support a cloud deployment that protects personal data against external attackers, cross-tenant exposure, compromised credentials, malicious integrations, excessive internal access and unintended disclosure to AI agents or model providers. Privacy and security controls must be part of the platform architecture and remain consistent across local, self-hosted and managed-cloud deployments.
 
-Cloud APIs should not be used for embeddings, document processing or LLM inference by default. The system should make any external data transfer explicit.
+The deployment model may change where data is processed and who operates the infrastructure, but it must not weaken the user-facing privacy guarantees. Any transfer to an external source, model provider, subprocessor or agent must be explicit, governed and auditable.
 
 ### 2.6 Read-only source access
 
@@ -104,7 +104,7 @@ The platform should support distinct services, each with its own storage and lif
 | Photos | Apple Photos-, Google Photos- or similar service | Original images, albums, timestamps, locations, metadata | Large binary objects, EXIF metadata, visual content and multimodal search |
 | Documents and files | Google Drive, iCloud Drive, Dropbox or local files | Documents, spreadsheets, PDFs, presentations, folders and versions | File hierarchy, revisions, sharing permissions, content extraction and duplicate files |
 
-The list is intentionally extensible. Other sources—tasks, bookmarks, messages, health records or personal finance data, for example—could be added later, subject to privacy, local-access and integration requirements.
+The list is intentionally extensible. Other sources—tasks, bookmarks, messages, health records or personal finance data, for example—could be added later, subject to privacy, security, access and integration requirements.
 
 ### 3.1 Contacts are a first-class source
 
@@ -169,8 +169,10 @@ flowchart TB
         ORCH["Cross-source query orchestration\nSQL · Keyword · Semantic · Visual retrieval"]
     end
 
-    subgraph GOVERNANCE["Cross-cutting governance and privacy control plane"]
-        IDENTITY["Agent identity and sharing context"]
+    subgraph GOVERNANCE["Cross-cutting security, privacy and governance control plane"]
+        TENANT["Tenant isolation and access boundaries"]
+        CRYPTO["Encryption · Key management · Secrets"]
+        IDENTITY["User, tenant and agent identity"]
         POLICY["User-defined privacy policies
 Sensitive topics · Scope · Restrictions"]
         ENFORCE["Policy enforcement
@@ -179,6 +181,8 @@ Retrieval · Context · Response"]
 Actual context and responses shared"]
         REVIEW["Retrospective and cumulative review
 Policy changes · Pattern detection · Alerts"]
+        TENANT --> IDENTITY
+        CRYPTO --> TENANT
         IDENTITY --> POLICY --> ENFORCE --> AUDIT --> REVIEW
     end
 
@@ -277,11 +281,11 @@ Potential clients include:
 - An MCP server for compatible AI clients.
 - Other local applications, dashboards and agents.
 
-The initial interface can be simple. The underlying data and access contracts are the more important long-term assets.
+The initial interface can be simple. The underlying data, security and access contracts are the more important long-term assets.
 
-### Cross-cutting layer — Governance, privacy and auditing
+### Cross-cutting layer — Governance, privacy and security
 
-Governance is not a sixth data-processing stage that can be bypassed by a particular connector or retrieval method. It is a control plane across the access and intelligence path. Every agent request should be associated with a known identity and sharing context, checked against the user's policies, and audited if information is disclosed.
+Governance and security are not optional stages that can be bypassed by a particular connector or retrieval method. They form a control plane across identity, source integration, storage, indexing, inference and access. Every request must have a verified user, tenant, agent identity and sharing context; every data access and disclosure must be authorised under the applicable policies; and sensitive operations must be auditable.
 
 The control plane has three related responsibilities:
 
@@ -408,41 +412,163 @@ Search indexes should be rebuildable from canonical data and derived content. Th
 
 ---
 
-## 9. Privacy, security and trust
+## 9. Data privacy, security and trust
 
-Personal data from these sources can be highly sensitive. Security must apply across connectors, canonical storage, derived indexes, model inference and client interfaces.
+Privacy and security are foundational product requirements, not deployment options and not features that can be delegated entirely to the privacy-filtering engine. Rosalind will hold a highly concentrated representation of a person's life across email, contacts, calendar, notes, documents and photographs. A cloud version must therefore be designed on the assumption that the platform is an attractive target and that a single access-control failure could expose information from several parts of a person's life.
 
-Core requirements:
+The goal is not to claim that risk can be eliminated. The goal is to minimise the data collected and exposed, enforce clear trust boundaries, make access decisions consistently, detect and contain failures, and give the user credible evidence about how their information has been used.
 
-1. **Local-first processing:** keep source data and inference local by default.
-2. **Read-only source credentials:** apply least-privilege access at each source.
-3. **No implicit external inference:** do not send private content to cloud LLM, embedding, OCR or vision services unless explicitly enabled.
-4. **Provenance:** every result must be traceable to source records.
-5. **Agent-scoped filtering:** let the owner define what each agent may access or infer. Apply policies across sources and across direct records, derived content, summaries and combined evidence.
-6. **Disclosure auditing:** record the actual information and evidence delivered to each agent, the request and policy context, and the response returned. Support retrospective review when policies change and cumulative-risk review across multiple disclosures.
-7. **Untrusted content:** treat emails, documents, notes and other retrieved content as data, not instructions. Retrieved text must not be allowed to override system or application instructions.
-8. **Data lifecycle:** support deletion propagation, retention policies, backups and restore testing.
-9. **Secrets management:** keep source credentials out of code, logs and indexed content.
-10. **Protected audit records:** treat disclosure logs and risk alerts as sensitive data, with their own access controls and retention rules.
+### 9.1 Threat model and security objectives
 
-A local deployment reduces exposure to third parties, but it does not remove the need for authentication, operating-system security, encrypted backups and careful access control.
+The architecture should explicitly account for at least these risks:
 
----
+- An external attacker compromises an account, API, connector, application or cloud workload.
+- One customer or tenant gains access to another customer's data through an indexing, query, cache, storage or authorization defect.
+- A compromised agent, leaked token or over-permissioned integration accesses more information than intended.
+- A malicious or compromised source document contains prompt-injection instructions or content intended to manipulate an AI model.
+- An employee, operator, support process or subprocessor accesses personal data without a legitimate need.
+- Data is exposed through logs, traces, analytics, crash reports, backups, exports or model-provider requests.
+- A deletion, policy change or source-permission change is not propagated to derived data and indexes.
+- A privacy policy fails to prevent an indirect or cumulative inference, or the audit system fails to detect it.
 
-### 9.1 Example: a sensitive health-information policy
+The core security objectives are confidentiality, integrity, availability, tenant isolation, least privilege, accountability and user control. These objectives apply to original data, canonical records, extracted text, embeddings, derived media, search indexes, prompts, model context, outputs, audit records and backups.
 
-Suppose the owner creates the policy: **"Agent A must not know I have cancer."** This is a cross-source, agent-specific restriction.
+### 9.2 Data minimisation and lifecycle control
 
-The intended behaviour is:
+Rosalind should collect and retain only what is needed for the features the user has enabled. The platform should distinguish source data from derived representations and make the lifecycle of each explicit.
 
-- Direct medical records, test results and treatment documents should not be disclosed to Agent A.
-- Emails or notes involving doctors, family members or treatment should be considered even when the sensitive diagnosis is not explicitly stated.
-- Photos and calendar information should be considered where their content or pattern could reveal treatment.
-- Individually ordinary disclosures should be assessed in combination where they could expose the restricted fact.
-- If a relevant medical record was shared before the policy was created, Rosalind should identify that historical disclosure and alert the owner where possible.
-- After the policy is active, the audit and review process should look for cumulative patterns such as repeated absences, family check-ins and references to treatment side effects.
+- Keep original records in their authoritative source whenever practical; avoid copying all original binaries into Rosalind by default.
+- Make caching, full-content replication, OCR, captioning and other derived processing explicit product choices with clear purposes.
+- Retain source identifiers, revisions and provenance so that derived records can be updated or removed when the source changes.
+- Propagate source deletion, revoked permissions and user deletion requests to canonical data, extracted content, indexes, embeddings, caches and downstream copies, subject to clearly disclosed backup-retention windows.
+- Provide understandable retention controls for synchronised data, derived data, audit evidence and backups.
+- Do not use customer personal data to train shared models or improve services by default. Any exceptional use would require a separate, explicit and informed choice and an appropriate legal basis.
 
-The goal is not to claim that Rosalind can prove an agent has learned nothing. The goal is to enforce the owner's sharing policy as strongly as possible, reduce foreseeable disclosures, maintain evidence of what was shared and make potential policy failures visible.
+Data minimisation is a security measure as well as a privacy principle: information that is never collected or retained cannot be exposed by a later breach.
+
+### 9.3 Identity, authentication and authorization
+
+Rosalind must distinguish the human account owner, the tenant or personal workspace, connected source accounts, applications, service identities and individual AI agents. An agent is a distinct security principal, not merely a label supplied in a prompt.
+
+Access should follow least privilege and default-deny principles:
+
+- Strong user authentication, with multi-factor authentication for cloud accounts and privileged actions.
+- Short-lived, revocable credentials and narrowly scoped tokens for agents and integrations.
+- Separate credentials and permissions for each connected source and background service.
+- Explicit consent and clear scopes when connecting a source or granting an agent access.
+- Immediate revocation when a token, integration, agent or user session is disabled.
+- Authorization checks on every request and every resource, not only at login or at the user-interface boundary.
+- Separate administrative access from customer data access, with privileged access restricted, justified and audited.
+
+The platform should follow a zero-trust approach: being inside the cloud network, authenticated to the application or previously authorised does not automatically grant access to a resource. Authorization must be evaluated using the identity, tenant, resource, action, purpose and applicable privacy policy for each request.
+
+### 9.4 Tenant isolation for the cloud service
+
+A managed-cloud version must provide strong isolation between customers. Authentication alone is not tenant isolation. Tenant boundaries must hold consistently across every place where customer data or derived data can exist:
+
+- Canonical databases and relational records.
+- Object storage and cached source files.
+- Search indexes, vector representations and retrieval results.
+- Queues, background jobs and temporary processing areas.
+- Model context, conversation history and agent sessions.
+- Logs, traces, analytics and support tooling.
+- Audit records, exports, snapshots and backups.
+
+The architecture should make tenant context explicit and enforce it centrally and at relevant storage boundaries, rather than relying on developers to remember to add a tenant filter to every query. Isolation strength should be selectable according to risk and product tier: shared infrastructure can be appropriate when isolation is enforced and tested rigorously, while dedicated databases, indexes, encryption keys or deployment environments may be offered where stronger separation is required.
+
+A cross-tenant access failure should be treated as a critical security incident. Tenant isolation must be tested continuously, including negative tests that attempt to access another tenant's resources by changing identifiers, filters, index names or job parameters.
+
+### 9.5 Encryption, key management and secrets
+
+All network communication should use modern TLS. Stored data should be encrypted at rest, including databases, object storage, search indexes, queues, snapshots and backups. Encryption keys and application secrets must be managed separately from the data they protect, with controlled access, rotation, revocation and auditable administrative operations.
+
+The architecture should support envelope encryption and per-tenant key separation as a baseline direction, with customer-managed keys or stronger isolation options considered for higher-assurance deployments.
+
+An important product distinction must remain explicit: encryption at rest and in transit does not mean that Rosalind's cloud application operator is cryptographically unable to read customer data. If the service performs server-side parsing, indexing, retrieval or LLM inference, the relevant processing components must access plaintext at some point. True end-to-end encryption, where the service operator cannot access plaintext, is a different architecture and generally requires processing and key control on the user's device or another trusted execution boundary. Rosalind must describe its actual confidentiality model accurately and must not market ordinary server-side encryption as end-to-end encryption.
+
+Secrets such as source refresh tokens, API keys, signing keys and database credentials must never be embedded in code, images, source documents or logs. They should be stored in a dedicated secrets-management system and exposed only to the workload that needs them.
+
+### 9.6 Privacy policies and agent-scoped information control
+
+The owner must be able to decide what each agent may access or infer across all connected sources. Policies should be scoped to a specific agent or sharing context and may concern sensitive topics, people, sources, resource types, purposes or combinations of information.
+
+A policy such as **"Agent A must not learn that I have cancer"** is not equivalent to hiding documents containing the word "cancer". It is an information-sharing constraint across medical records, correspondence, calendar patterns, work absences, family messages, photographs and other contextual clues that could reveal or support the inference.
+
+Policy enforcement should cover the complete disclosure path:
+
+1. Before retrieval, constrain which resources and derived representations may be considered.
+2. During retrieval and context construction, assess the combined evidence and remove or minimise material that violates the policy.
+3. Before an answer is returned, check that the response does not disclose restricted information or a prohibited inference.
+4. Before any external tool, model provider or agent receives data, apply the relevant sharing and transfer policy.
+
+If policy evaluation is uncertain or unavailable, the safe behaviour should be to withhold the potentially restricted information or ask the user for clarification, rather than silently allow disclosure. Policies, policy changes and enforcement outcomes should be understandable and reviewable by the owner.
+
+The product must be honest about the limits: no system can guarantee that an agent will never infer a sensitive fact from permitted information, prior knowledge or information obtained elsewhere. Rosalind should reduce foreseeable disclosure, minimise the information shared, apply conservative controls and make residual risk visible.
+
+### 9.7 Disclosure auditing and breach detection
+
+Rosalind should maintain a disclosure ledger for information made available to agents and external processing services. It should record more than a list of retrieved document IDs. The record should make it possible to reconstruct what information crossed a trust boundary, for which request, to which recipient, under which identity and policy, and what response was returned.
+
+The audit model should distinguish:
+
+- Data considered or retrieved internally.
+- Data supplied to an internal model or processing component.
+- Data sent to an external model provider or subprocessor.
+- Data returned to an agent or client.
+- Data denied, filtered or withheld by policy.
+
+Audit evidence is itself sensitive. The system should avoid turning ordinary application logs into a second ungoverned copy of personal data. A suitable product direction is to keep a minimal, tamper-evident event record containing identities, timestamps, policy decisions, source references, resource versions and cryptographic hashes, with any exact disclosure snapshot stored separately in a strongly protected, encrypted evidence store where justified. Access to audit evidence should be restricted and itself audited. Retention and deletion rules must be explicit.
+
+The platform should support:
+
+- User-visible history of what each agent was given.
+- Retrospective review when a policy is created or tightened.
+- Detection of disclosures that conflict with current policies.
+- Analysis of cumulative disclosures that may reveal sensitive information when combined.
+- Alerts for suspicious access patterns, unexpected volume or unusual recipients.
+- Incident investigation, evidence preservation and user notification.
+
+Risk detection is not proof that an agent has inferred a fact, and the absence of an alert is not proof that no disclosure occurred. The interface should distinguish confirmed policy violations, suspicious patterns and uncertain inferences.
+
+### 9.8 AI-specific security
+
+Emails, notes, documents, calendar descriptions, contact fields, images and OCR output are untrusted data. They may contain malicious instructions, hidden text or content designed to manipulate an AI model.
+
+Retrieved content must never be treated as system instructions or granted authority to change policies, call tools, access other resources or override the user's permissions. Tool execution should be separately authorised, narrowly scoped and subject to the same identity, tenant and privacy checks as ordinary retrieval.
+
+The platform should minimise the context sent to models, separate instructions from retrieved evidence, validate structured model outputs and apply policy checks to both tool results and generated answers. Model-provider selection, retention behaviour, training terms, region and subprocessors should be treated as security and privacy decisions, not merely model-quality choices.
+
+### 9.9 Cloud operations and secure engineering
+
+Cloud security is an ongoing operational responsibility, not a one-time architecture task. The target operating model should include:
+
+- Infrastructure as code, hardened deployment configurations and network segmentation.
+- Separate development, test and production environments, with synthetic or appropriately sanitised test data.
+- Secure software development, dependency and container scanning, patch management and vulnerability disclosure handling.
+- Independent security reviews and penetration tests, especially for tenant isolation, authorization and agent disclosure paths.
+- Central security monitoring with privacy-conscious logs that avoid unnecessary personal content.
+- Encrypted backups, tested restoration and documented disaster-recovery objectives.
+- Incident response procedures for credential compromise, data exposure, cross-tenant access and subprocessor incidents.
+- Restricted, time-limited and audited support access; customer content should not be routinely visible to support personnel.
+- A documented inventory of data flows, subprocessors, processing regions and retention periods.
+
+Security controls should be continuously tested. The development process should follow an established secure software development framework, and API design should be reviewed against recognised API security risks such as broken object-level authorization, broken authentication and excessive data exposure.
+
+### 9.10 Legal and regulatory readiness
+
+For a cloud service handling personal information, privacy engineering must be accompanied by a clear legal and operational model. The project should be designed with GDPR requirements in mind, including data protection by design and by default, security of processing, transparency, purpose limitation, data minimisation, retention, user rights and appropriate processor/controller arrangements.
+
+Health data and other special-category information require particular care under GDPR Article 9. The product should not assume that the user's ownership of a data source automatically resolves the legal basis or conditions for every processing activity. Before a public cloud launch, the company should assess its roles for each processing purpose, lawful bases and applicable Article 9 conditions, data-processing agreements, international transfers, subprocessor arrangements and whether a Data Protection Impact Assessment is required. This section is an architectural direction, not legal advice or a claim of compliance.
+
+### 9.11 Deployment profiles and honest privacy claims
+
+The same privacy and security principles should apply to every deployment profile:
+
+- **Local/self-hosted:** the user operates the environment and controls local infrastructure, while still needing secure credentials, access control, backups and device protection.
+- **Managed cloud:** Rosalind operates the service and is responsible for strong tenant isolation, cloud security, operational controls, data lifecycle management and transparent subprocessor arrangements.
+- **Dedicated or customer-controlled deployment:** an option for users requiring stronger infrastructure isolation, customer-managed keys or control over processing location.
+
+These profiles may differ in who can access infrastructure and where keys are held, but the product must clearly explain those differences. Local-first is a useful deployment option, not a substitute for a cloud security architecture.
 
 ## 10. Candidate technology direction
 
@@ -455,20 +581,20 @@ The following is a pragmatic starting point, not a permanent commitment. Interfa
 | Canonical structured data | PostgreSQL | Relational data, source identity, sync state and relationships |
 | Search and indexing | Elasticsearch | Full-text search, filtering, aggregations and vector retrieval |
 | RAG pipeline framework | Haystack | Explicit, testable ingestion and query pipelines |
-| Local model runtime | Ollama or equivalent | Local LLM and embedding inference |
+| Model runtime | Ollama or equivalent local/private model serving | LLM and embedding inference under the selected deployment and data-residency policy |
 | Migrations | Alembic | Versioned PostgreSQL schema changes |
-| Deployment | Docker Compose, with model runtime on macOS if advantageous | Simple single-machine operation |
+| Deployment | Docker Compose initially; cloud orchestration when justified | Supports local development without constraining the cloud target |
 | Interfaces | API, MCP, CLI and web UI | Multiple clients over shared capabilities |
 
 LlamaIndex remains a valid alternative to Haystack, particularly if the project becomes dominated by heterogeneous document ingestion. The project should select one primary pipeline framework rather than combine multiple orchestration frameworks without a clear need.
 
 Elasticsearch is a candidate search engine, not the canonical data store. If its local resource cost is too high on the target Mac, PostgreSQL Full-Text Search and pgvector are a viable simpler starting point. Retrieval quality and memory consumption should be measured before committing to either option.
 
-### Local hardware constraint
+### Initial development environment
 
-The initial target is a MacBook Pro M2 with 16 GB unified memory. The implementation should therefore favour a modular monolith, a small number of long-running services and queued/batched processing for expensive tasks such as embedding and photo analysis.
+The first implementation may run on a MacBook Pro M2 with 16 GB unified memory. This is a development and validation environment, not a constraint on the target cloud architecture. The codebase should favour a modular monolith and a small number of deployable components initially, while keeping clear boundaries around connectors, data access, retrieval, policy enforcement and audit.
 
-Avoid introducing Kubernetes, distributed processing, a dedicated graph database or multiple overlapping search systems in the initial deployment. The logical architecture should be extensible without requiring a distributed physical architecture from day one.
+Avoid introducing Kubernetes, distributed processing, a dedicated graph database or multiple overlapping search systems before they are justified. The logical architecture should be cloud-capable without requiring a distributed physical architecture during early development.
 
 ---
 
@@ -478,6 +604,9 @@ The roadmap should validate the platform incrementally while keeping the long-te
 
 ### Phase 1 — Platform foundation and email
 
+- Define an initial threat model, trust boundaries and security baseline before ingesting real personal data.
+- Establish user, tenant, service and agent identity concepts, even if the first deployment has only one user.
+- Set up secrets management, encrypted storage, access-controlled environments and privacy-conscious logging.
 - Define the connector contract and canonical resource envelope.
 - Implement the read-only Stalwart/JMAP connector.
 - Synchronise mailboxes, messages, threads and attachments.
@@ -519,6 +648,15 @@ The roadmap should validate the platform incrementally while keeping the long-te
 - Expose the platform through MCP and other clients.
 - Benchmark ingestion, retrieval and end-to-end answer quality across sources.
 
+### Phase 6 — Cloud security and launch readiness
+
+- Select the cloud deployment and tenant-isolation model.
+- Validate isolation across databases, object storage, search indexes, queues, caches, model context, audit records and backups.
+- Complete independent security reviews and penetration testing of authorization, tenant boundaries and agent disclosure paths.
+- Establish incident response, vulnerability management, backup restoration and operational monitoring.
+- Complete privacy documentation, subprocessor and data-transfer reviews, retention rules and any required impact assessment before handling customer data in a managed cloud service.
+- Publish accurate descriptions of encryption, operator access, model processing, data residency and the limits of inference filtering.
+
 ---
 
 ## 12. What success looks like
@@ -534,12 +672,26 @@ The platform should eventually make it possible to:
 - Add a new source through a connector without redesigning the core platform.
 - Change the RAG framework, search engine or local model without changing the source systems or canonical integration contracts.
 - Rebuild derived indexes from synchronised data.
-- Keep personal data and model inference local by default.
+- Make processing location and external data transfers explicit, user-controlled and auditable across local, self-hosted and cloud deployments.
 - Let the owner define agent-specific restrictions over sensitive information across all connected sources.
 - Reduce direct and indirect disclosure, including inferences supported by combinations of records.
 - Maintain an auditable record of the information actually shared with each agent.
 - Review historical and cumulative disclosures when policies change or potential inference risks emerge.
 
-The defining characteristic of Rosalind is not a particular LLM, vector database or RAG framework. It is the ability to integrate independently managed personal data while preserving source ownership, provenance and privacy—and to make that information useful across application boundaries under policies controlled by the owner.
+The defining characteristic of Rosalind is not a particular LLM, vector database or RAG framework. It is the ability to integrate independently managed personal data while preserving source ownership, provenance, security and privacy—and to make that information useful across application boundaries under policies controlled by the owner.
 
-**The long-term objective is a unified, local-first interface to a person's digital life, built on top of independent services rather than replacing them.**
+**The long-term objective is a unified, privacy-preserving interface to a person's digital life, built on top of independent services rather than replacing them, and deployable locally, self-hosted or in a secure cloud environment.**
+
+
+---
+
+## 13. Security and privacy reference frameworks
+
+The following are reference points for future design reviews. They are not certifications or evidence that Rosalind is compliant by default.
+
+- [NIST SP 800-207 — Zero Trust Architecture](https://csrc.nist.gov/pubs/sp/800/207/final): identity- and context-aware access decisions, policy decision and enforcement concepts.
+- [OWASP API Security Top 10](https://owasp.org/www-project-api-security/): API-specific risks including broken object-level authorization, authentication failures and excessive data exposure.
+- [OWASP Cloud Tenant Isolation](https://owasp.org/www-project-cloud-tenant-isolation/): risks and mitigations for cross-tenant access in cloud services.
+- [NIST SP 800-218 — Secure Software Development Framework](https://csrc.nist.gov/pubs/sp/800/218/final): security practices integrated throughout the software development lifecycle.
+- [GDPR — Regulation (EU) 2016/679](https://eur-lex.europa.eu/eli/reg/2016/679/oj/eng/): in particular Articles 5, 9, 25, 28, 32 and, where applicable, 35, covering principles, special-category data, data protection by design, processor arrangements, security and impact assessments.
+- [AWS SaaS Architecture Fundamentals — Tenant Isolation](https://docs.aws.amazon.com/whitepapers/latest/saas-architecture-fundamentals/tenant-isolation.html): an implementation-oriented explanation of tenant isolation as a distinct requirement from authentication and general authorization.
